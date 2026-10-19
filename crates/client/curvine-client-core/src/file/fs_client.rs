@@ -80,6 +80,12 @@ impl FsClient {
         &self.context.conf
     }
 
+    /// HSM control uses dedicated semantics; callers must negotiate capabilities
+    /// before requesting an effect and must preserve operation identities on retry.
+    pub async fn hsm_control(&self, request: HsmControlRequest) -> FsResult<HsmControlResponse> {
+        self.rpc(RpcCode::HsmControl, request).await
+    }
+
     pub async fn mkdir(&self, path: &Path, opts: MkdirOpts) -> FsResult<FileStatus> {
         let header = MkdirRequest {
             path: path.encode(),

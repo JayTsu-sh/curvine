@@ -87,6 +87,8 @@ pub enum RpcCode {
     SubmitFencedReplication = 58,
 
     MetricsReport = 60,
+    // Versioned HSM control handshake. Data effects require native capabilities.
+    HsmControl = 61,
 
     // block interface.
     WriteBlock = 80,

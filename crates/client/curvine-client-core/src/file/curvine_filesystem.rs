@@ -85,6 +85,13 @@ impl CurvineFileSystem {
         self.fs_context.rpc_conf()
     }
 
+    pub async fn hsm_control(
+        &self,
+        request: curvine_proto::HsmControlRequest,
+    ) -> FsResult<curvine_proto::HsmControlResponse> {
+        self.fs_client.hsm_control(request).await
+    }
+
     pub async fn mkdir_with_opts(&self, path: &Path, opts: MkdirOpts) -> FsResult<FileStatus> {
         self.fs_client.mkdir(path, opts).await
     }

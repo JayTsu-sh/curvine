@@ -7,6 +7,17 @@ option java_outer_classname = "MasterProto";
 
 import "common.proto";
 
+// Versioned control envelope. Ordinary filesystem operations are not HSM effects.
+message HsmControlRequest {
+    required uint32 protocol_version = 1;
+    required bytes payload = 2;
+}
+
+message HsmControlResponse {
+    required uint32 protocol_version = 1;
+    required bytes payload = 2;
+}
+
 message MkdirOptsProto {
     required bool create_parent = 1;
     required uint32 mode = 2;

@@ -98,6 +98,8 @@ pub use self::transfer::*;
 mod metrics;
 pub use self::metrics::*;
 
+pub mod hsm;
+
 mod open_flags;
 pub use self::open_flags::*;
 

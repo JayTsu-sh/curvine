@@ -1095,6 +1095,10 @@ impl MessageHandler for MasterHandler {
                 RpcCode::GetMountInfo => self.get_mount_info(ctx),
 
                 RpcCode::MetricsReport => self.metrics_report(ctx),
+                RpcCode::HsmControl => {
+                    let request: HsmControlRequest = ctx.parse_header()?;
+                    ctx.response(curvine_model::hsm::control_response(request))
+                }
 
                 // Worker related requests
                 RpcCode::WorkerHeartbeat => self.worker_heartbeat(ctx),
