@@ -1,6 +1,6 @@
 # Curvine HSM 详细设计
 
-版本：v0.1，2026-10-19。本文是目标设计，代码基线、调查范围和验证限制见 [说明](README.md)。协议和故障处理分别见 [Interface](interfaces.md) 与 [实施计划](implementation-plan.md)。
+版本：v0.2，2026-10-19。本文是目标设计，代码基线、调查范围和验证限制见 [说明](README.md)。协议和故障处理分别见 [Interface](interfaces.md) 与 [实施计划](implementation-plan.md)。当前实施先做通用 hsm-rs 与本地文件系统/data-mover 对接，再接 Curvine，带库后置；不保留旧专有实现兼容路径。
 
 ## 1. 设计决定
 
@@ -269,9 +269,9 @@ GC 只消费已提交精确 intent，副作用至少一次执行；effect ID、A
 
 ## 15. 外部核心和执行器接入
 
-Curvine Adapter 实现 HSM 核心需要的控制/记录、事件、DataView、Release/Recall Interface。hsm-rs 从原来 Lustre cookie/FID 适配形态抽取通用 EntityKey/DataKey；原 Lustre 支持作为另一 Adapter 保留。核心启动后先取得 ControlGrant，枚举非终态 operation、pending intent/event，再向后端查询未知提交结果。
+Curvine Adapter 实现 HSM 核心需要的控制/记录、事件、DataView、Release/Recall Interface。hsm-rs 直接改为通用 EntityKey/DataKey 与 ManagedStorage / ArchiveBackend / DataMover，不保留旧 Lustre/copytool/v1 插件兼容实现。首个实际 Adapter 是本地专用 managed namespace 和本地 archive，验证 data-mover 有界搬运及归档/释放/恢复。Curvine 生产核心启动后需先取得 ControlGrant，枚举非终态 operation、pending intent/event，再向后端查询未知提交结果。
 
-data-mover-rs 仍是库，由 hsm-rs worker 宿主承载。新增 Curvine view source 和 Recall layout destination；支持 capability 续签，禁止普通路径 fallback；源/目标取消后报告 uncertain 或 stopped，不假装全局事务回滚。
+data-mover-rs 仍是库。当前本地实现由通用 hsm-engine 组合 hsm-local 执行器直接调用；未来再按扩展需求分离 worker 宿主。Curvine 需要新增 view source 和 Recall layout destination，支持 capability 续签，禁止普通路径 fallback；源/目标取消后报告 uncertain 或 stopped，不假装全局事务回滚。
 
 Tape Adapter 内置 data-mover-rs 并依赖 tape-rs 客户端，提供 Archive / InspectArchive / ReadArchive / RetireArchive。归档 ID 在第一次提交前固定，换 attempt 不换 archive identity；并发重复写必须由后端幂等/冲突检测处理。具体库版本要先对齐现有插件接口代差。
 

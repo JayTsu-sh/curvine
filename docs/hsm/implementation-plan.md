@@ -30,6 +30,24 @@
 
 每阶段包含实现、相关测试和格式/升级说明；可拆为多次小提交。这里不创建远程 issue 或 PR。
 
+### I0：首先交付通用接口和本地对接
+
+此包先于 Curvine P0–P6，不依赖带库，也不等待全部生命周期策略完成：
+
+1. hsm-rs 移除旧 Lustre 模型、copytool daemon、旧 store/scheduler 和插件协议，以通用 hsm-core/hsm-engine 为唯一入口，不保留兼容路径。
+2. 公开 ManagedStorage / ArchiveBackend / DataMover；身份使用 EntityKey/DataKey/ArchiveKey，工作流用 OperationContext。
+3. 本地 managed source 保存自身 native 记录、view/private layout、成功结果及 GC；不对任意 POSIX namespace 做外部镜像。
+4. 本地 archive 以不可变 key、持久 receipt 和精确 inspect 提供提交事实；data-mover 使用实际 Checkpointed 有界复制。
+5. 运行本地 Archive → 双驻留 → Release → 物理 GC → Recall/发布，验证身份、内容、重开、原结果重试、Pending 与损坏拒绝。
+
+本地能力必须明确报告：单主机、独占目录、无透明 POSIX Recall、无持久容量预留、无跨节点 authority。它验证通用 Interface 和实际搬运，不能当作 Curvine 数据保护的替代证明。实现入口为 [hsm-rs 通用分支](https://github.com/JayTsu-sh/hsm-rs/tree/feat/generic-hsm-interface)。
+
+### I1/I2：随后对接 Curvine
+
+I1 首先接非破坏性 Archive 和原生记录查询，但源仍必须是真正固定 DataView；不得把普通 open+mtime 检查伪装为完成。Curvine 对应权威记录、视图和 data-mover 装配入口按 P0–P3 分阶段完成。
+
+I2 在 P0–P4 保护通过后再启用实际 Release/Recall；先显式调用验收，再接 P5 自动策略。可以先单节点开发接口，但必须标注没有跨节点保证，HA 验收仍不可省略。P6 带库不阻塞 I0/I1/I2。
+
 ### P0：统一权威提交
 
 1. 添加可控制的复制/应用故障点与 journal 状态诊断，先复现普通 RPC 与 committed ack 的关系。
@@ -61,7 +79,7 @@
 
 ### P3：软件后端 Archive 闭环
 
-1. hsm-rs 抽取通用 storage/backend Interface，保留 Lustre Adapter；去除其作为唯一状态源的本地 DB 假设。
+1. 复用 I0 的通用 hsm-rs storage/backend Interface，接 Curvine authority Adapter；旧专有实现不作为兼容层保留。
 2. data-mover-rs 对齐现有插件 Interface，增加 view source 和可控软件归档后端。
 3. 固定 ArchiveKey、精确状态查询、algorithm-tagged digest、receipt/profile、锚点提交。
 4. 在无磁带环境注入 Pending/Unknown、已提交丢回包、同 ID 参数冲突，验证接管。
@@ -145,7 +163,7 @@
 
 ## 5. 发布门槛与回退
 
-发布状态依次为 `DESIGN -> IMPLEMENTED -> SOFTWARE_FAULT_VALIDATED -> MEDIA_VALIDATED -> LIMITED_PRODUCTION`。当前仅 DESIGN。
+每种 storage/backend profile 独立经历 `DESIGN -> IMPLEMENTED -> SOFTWARE_FAULT_VALIDATED -> BACKEND_DURABILITY_VALIDATED -> LIMITED_PRODUCTION`。Curvine 新增原语当前仍为 DESIGN；本地参考实现的状态单独记录，磁带的 MEDIA 验收不阻塞本地 profile 开发。
 
 启用顺序为能力部署、schema/提交模式验证、scope 清退与迁移、dry-run、软件后端归档、显式受控 Release/Recall、自动策略、实际带库。每次扩展 scope/layout/backend profile 都要核实相应验收。
 

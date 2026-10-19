@@ -1,6 +1,6 @@
 # Curvine HSM 设计
 
-状态：设计提案 v0.1，2026-10-19；本目录没有声称任何新增能力已实现。
+状态：设计提案 v0.2，2026-10-19；Curvine 新增原语尚未实现。首个实施包调整为 hsm-rs 通用 Interface 与本地文件系统闭环，随后接 Curvine，带库后置。
 
 目标是在 Curvine 内保存权威事实、生命周期策略和受保护的数据效果，由外部 hsm-rs 协调 Archive / Release / Recall；data-mover-rs 内置 Tape Adapter 并依赖 tape-rs 客户端，tape-rs 服务负责实际带库及其他介质相关工作。
 
@@ -9,6 +9,8 @@
 | [详细设计](design.md) | 决策、职责、权威记录、版本、稳定视图、策略、访问、容量和 GC |
 | [Interface 与操作协议](interfaces.md) | 命令封装、错误、幂等、Archive / Release / Recall、Worker fencing |
 | [实施与验收](implementation-plan.md) | 源码落点、依赖顺序、故障矩阵、升级与发布门槛 |
+
+首个对接实现见 [hsm-rs 通用分支](https://github.com/JayTsu-sh/hsm-rs/tree/feat/generic-hsm-interface)。hsm-rs 直接替换旧专有实现，不保留 Lustre/copytool/v1 插件兼容路径；以 ManagedStorage / ArchiveBackend / DataMover 为唯一核心 Interface。本地 reference Adapter 的单主机保证不等于 Curvine 生产权威保证。
 
 仓库：[JayTsu-sh/curvine](https://github.com/JayTsu-sh/curvine)，fork 自 [CurvineIO/curvine](https://github.com/CurvineIO/curvine)。设计分支：`docs/hsm-design`；fork 的默认分支保留上游代码。
 
@@ -30,5 +32,6 @@
 5. Release 与归档分开；Recall 以 `CommitRecall` 成功为完成，空间物理回收另行观察。
 6. 先证明 committed command/apply，再启用唯一在线副本释放。
 7. 磁带只是一个后端；存储记录稳定 ArchiveKey，不解释条码、extent 或 repack 位置。
+8. 对接优先：本地 managed source + 本地 archive + 真实 data-mover → Curvine Adapter → 自动生命周期与完整故障验收 → 带库。
 
 第一版限制及未来路线见 [设计范围](design.md#2-第一版范围与明确限制)。
