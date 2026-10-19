@@ -1,27 +1,28 @@
 # Curvine HSM 设计
 
-状态：设计提案 v0.2，2026-10-19；Curvine 新增原语尚未实现。首个实施包调整为 hsm-rs 通用 Interface 与本地文件系统闭环，随后接 Curvine，带库后置。
+状态：设计提案 v0.3，2026-10-19。通用 Interface 与本地闭环已实现；Curvine 已增加原生 HsmControl/SDK 入口，处于接入第一阶段。权威记录、稳定视图和 Release/Recall 数据效果尚未实现，带库后置。
 
 目标是在 Curvine 内保存权威事实、生命周期策略和受保护的数据效果，由外部 hsm-rs 协调 Archive / Release / Recall；data-mover-rs 内置 Tape Adapter 并依赖 tape-rs 客户端，tape-rs 服务负责实际带库及其他介质相关工作。
 
 | 文档 | 内容 |
 |---|---|
+| [Adapter 实施状态](adapter-status.md) | 已有控制入口、真实数据桥接及尚未启用的保证 |
 | [详细设计](design.md) | 决策、职责、权威记录、版本、稳定视图、策略、访问、容量和 GC |
 | [Interface 与操作协议](interfaces.md) | 命令封装、错误、幂等、Archive / Release / Recall、Worker fencing |
 | [实施与验收](implementation-plan.md) | 源码落点、依赖顺序、故障矩阵、升级与发布门槛 |
 
 首个对接实现见 [hsm-rs 通用分支](https://github.com/JayTsu-sh/hsm-rs/tree/feat/generic-hsm-interface)。hsm-rs 直接替换旧专有实现，不保留 Lustre/copytool/v1 插件兼容路径；以 ManagedStorage / ArchiveBackend / DataMover 为唯一核心 Interface。本地 reference Adapter 的单主机保证不等于 Curvine 生产权威保证。
 
-仓库：[JayTsu-sh/curvine](https://github.com/JayTsu-sh/curvine)，fork 自 [CurvineIO/curvine](https://github.com/CurvineIO/curvine)。设计分支：`docs/hsm-design`；fork 的默认分支保留上游代码。
+仓库：[JayTsu-sh/curvine](https://github.com/JayTsu-sh/curvine)，fork 自 [CurvineIO/curvine](https://github.com/CurvineIO/curvine)。设计分支：`docs/hsm-design`；接入分支：`feat/hsm-adapter`；fork 的默认分支保留上游代码。
 
 ## 源码基线
 
 - 原始深入调查：`964b98f6a36e12230b97e07ef871b918eb5a73d5`。
 - 本设计分支的代码基线：`feb3c9e20617d5c3f36c67d44033239b6ac92470`。
 - 两者相差一个提交：多块位置查询改用有界 RocksDB iterator，缩短 Worker 状态锁持有范围，并增加对应测试。已静态核对四个变更文件；该差异未增加 HSM 权威提交、稳定版本视图或 Recall 发布能力。
-- 本轮只读源码和既有测试、核对差异并检查文档；未编译、运行集群、做故障注入或访问带库。
+- 设计阶段只读源码和核对文档；后续新增控制入口与编译/集群验证的范围见 [Adapter 实施状态](adapter-status.md)。未访问带库。
 
-所有新增类型、字段、模块、配置及方法均为目标设计。文中的状态表是需要实施的语义约束；具体 Rust/protobuf 定义在实现时按本基线验证。
+除实施状态列明的控制/SDK 入口外，设计中的新增类型、字段、模块、配置及方法均为目标设计。文中的状态表是需要实施的语义约束；具体 Rust/protobuf 定义在实现时按本基线验证。
 
 ## 固定决策
 
