@@ -1,0 +1,34 @@
+# Curvine HSM 设计
+
+状态：设计提案 v0.1，2026-10-19；本目录没有声称任何新增能力已实现。
+
+目标是在 Curvine 内保存权威事实、生命周期策略和受保护的数据效果，由外部 hsm-rs 协调 Archive / Release / Recall；data-mover-rs 内置 Tape Adapter 并依赖 tape-rs 客户端，tape-rs 服务负责实际带库及其他介质相关工作。
+
+| 文档 | 内容 |
+|---|---|
+| [详细设计](design.md) | 决策、职责、权威记录、版本、稳定视图、策略、访问、容量和 GC |
+| [Interface 与操作协议](interfaces.md) | 命令封装、错误、幂等、Archive / Release / Recall、Worker fencing |
+| [实施与验收](implementation-plan.md) | 源码落点、依赖顺序、故障矩阵、升级与发布门槛 |
+
+仓库：[JayTsu-sh/curvine](https://github.com/JayTsu-sh/curvine)，fork 自 [CurvineIO/curvine](https://github.com/CurvineIO/curvine)。设计分支：`docs/hsm-design`；fork 的默认分支保留上游代码。
+
+## 源码基线
+
+- 原始深入调查：`964b98f6a36e12230b97e07ef871b918eb5a73d5`。
+- 本设计分支的代码基线：`feb3c9e20617d5c3f36c67d44033239b6ac92470`。
+- 两者相差一个提交：多块位置查询改用有界 RocksDB iterator，缩短 Worker 状态锁持有范围，并增加对应测试。已静态核对四个变更文件；该差异未增加 HSM 权威提交、稳定版本视图或 Recall 发布能力。
+- 本轮只读源码和既有测试、核对差异并检查文档；未编译、运行集群、做故障注入或访问带库。
+
+所有新增类型、字段、模块、配置及方法均为目标设计。文中的状态表是需要实施的语义约束；具体 Rust/protobuf 定义在实现时按本基线验证。
+
+## 固定决策
+
+1. 不维护外部全量 namespace / 文件属性镜像；策略直接查询 Curvine 原生记录。
+2. HSM 工作流检查点与正确性记录保存在 Curvine 的复制权威域；外部核心拥有工作流逻辑。
+3. 生命周期筛选在 Master 后台；复杂重试、后端选择、对账由 hsm-rs 承担。
+4. 第一版只归档已完成文件，采用持久 freeze/pin；受管范围禁用短路数据访问，使用新协议客户端。
+5. Release 与归档分开；Recall 以 `CommitRecall` 成功为完成，空间物理回收另行观察。
+6. 先证明 committed command/apply，再启用唯一在线副本释放。
+7. 磁带只是一个后端；存储记录稳定 ArchiveKey，不解释条码、extent 或 repack 位置。
+
+第一版限制及未来路线见 [设计范围](design.md#2-第一版范围与明确限制)。

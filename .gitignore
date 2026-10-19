@@ -46,8 +46,10 @@ curvine-libsdk/java/target/
 .summary/
 .claude/*
 !.claude/skills
-# Repo-root design notes (keep local); allow per-crate docs/ (e.g. curvine-lancedb-rs/docs).
-/docs
+# Repo-root design notes stay local except the versioned HSM proposal.
+# Per-crate docs/ (e.g. curvine-lancedb-rs/docs) remain unaffected.
+/docs/*
+!/docs/hsm/
 
 __pycache__
 
