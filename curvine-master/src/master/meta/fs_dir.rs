@@ -40,6 +40,10 @@ const MODE_SETGID: u32 = 0o2000;
 
 /// Note: The modification operation uses &mut self, which is a necessary improvement. We use the unsafe API to perform modifications.
 pub struct FsDir {
+    pub(crate) hsm_local_apply: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    pub(crate) hsm_enabled: bool,
+    pub(crate) hsm_distributed: bool,
+    pub(crate) hsm_rpc_conf: curvine_rpc::client::ClientConf,
     pub(crate) root_dir: InodeView,
     pub(crate) inode_id: InodeId,
     pub(crate) store: InodeStore,
@@ -82,13 +86,44 @@ impl FsDir {
         ttl_bucket_list: Arc<TtlBucketList>,
         evictor: Arc<dyn Evictor>,
     ) -> FsResult<Self> {
+        crate::master::hsm::validate_boot(conf)?;
+        // An enabled HSM volume keeps its format requirement even when the
+        // derived RocksDB metadata is rebuilt after a crash.
+        let hsm_marker = std::path::Path::new(&conf.master.meta_dir).join("hsm-format-v1");
+        if hsm_marker.exists() && !conf.master.hsm_enabled {
+            return err_box!("native HSM volume requires hsm_enabled=true");
+        }
+        if conf.master.hsm_enabled && !journal_writer.hsm_ready {
+            return err_box!("HSM requires testing=false, journal.enable=true, writer_channel_size=0 and leader_create_snapshot=false");
+        }
+        if conf.master.hsm_enabled {
+            std::fs::create_dir_all(&conf.master.meta_dir)?;
+            if !hsm_marker.exists() {
+                let file = std::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&hsm_marker)?;
+                file.sync_all()?;
+                std::fs::File::open(&conf.master.meta_dir)?.sync_all()?;
+            }
+        }
         let db_conf = conf.db_conf();
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;
+        if !conf.testing {
+            if !conf.journal.enable && store.hsm_get(b"\x03hsm:namespace:v1")?.is_some() {
+                return err_box!("existing managed HSM files require committed journal recovery");
+            }
+            store.reset_hsm_projection()?;
+        }
         let state = InodeStore::new(store, ttl_bucket_list)?;
         let (last_inode_id, root_dir) = state.create_blank_tree()?;
 
         let fs_dir = Self {
+            hsm_local_apply: Default::default(),
+            hsm_enabled: conf.master.hsm_enabled,
+            hsm_distributed: conf.journal.journal_addrs.len() >= 3,
+            hsm_rpc_conf: conf.client_rpc_conf(),
             root_dir,
             inode_id: InodeId::new(),
             store: state,
@@ -188,6 +223,7 @@ impl FsDir {
     }
 
     pub fn mkdir(&mut self, mut inp: InodePath, opts: MkdirOpts) -> FsResult<InodePath> {
+        self.hsm_guard_path(inp.path())?;
         // Create parent directory
         inp = self.create_parent_dir(inp, opts.parent_opts())?;
 
@@ -262,6 +298,7 @@ impl FsDir {
 
     // Delete files or directories
     pub fn delete(&mut self, inp: &InodePath, recursive: bool) -> FsResult<DeleteResult> {
+        self.hsm_guard_path(inp.path())?;
         let op_ms = LocalTime::mills();
 
         if inp.is_root() {
@@ -288,6 +325,9 @@ impl FsDir {
         inp: &InodePath,
         mtime: i64,
     ) -> FsResult<DeleteResult> {
+        if let Some(inode) = inp.get_last_inode() {
+            self.hsm_guard_tree(inode)?;
+        }
         let target = match inp.get_last_inode() {
             Some(v) => v,
             None => return err_box!("Path not exists: {}", inp.path()),
@@ -351,6 +391,7 @@ impl FsDir {
     }
 
     pub fn free(&mut self, inp: &InodePath, recursive: bool) -> FsResult<FreeResult> {
+        self.hsm_guard_path(inp.path())?;
         let op_ms = LocalTime::mills() as i64;
 
         if inp.is_root() {
@@ -375,6 +416,7 @@ impl FsDir {
         mtime: i64,
         recursive: bool,
     ) -> FsResult<FreeResult> {
+        self.hsm_guard_tree(inode.clone())?;
         let mut free_res = FreeResult::default();
         let mut change_inodes = vec![];
 
@@ -417,6 +459,14 @@ impl FsDir {
         dst_inp: &InodePath,
         flags: RenameFlags,
     ) -> FsResult<Option<DeleteResult>> {
+        self.hsm_guard_path(src_inp.path())?;
+        self.hsm_guard_path(dst_inp.path())?;
+        if let Some(inode) = src_inp.get_last_inode() {
+            self.hsm_guard_tree(inode)?;
+        }
+        if let Some(inode) = dst_inp.get_last_inode() {
+            self.hsm_guard_tree(inode)?;
+        }
         let op_ms = LocalTime::mills();
         let exchange_pre_swap_ids = if flags.exchange_mode() {
             let src_id = src_inp
@@ -630,6 +680,7 @@ impl FsDir {
         mut inp: InodePath,
         mut opts: CreateFileOpts,
     ) -> FsResult<InodePath> {
+        self.hsm_guard_path(inp.path())?;
         if inp.get_last_inode().is_some() {
             return err_ext!(FsError::file_exists(inp.path()));
         }
@@ -780,6 +831,7 @@ impl FsDir {
         choose_workers: &[WorkerAddress],
         file_len: i64,
     ) -> FsResult<ExtendedBlock> {
+        self.hsm_guard_id(inode.id())?;
         let file = inode.as_file_mut()?;
 
         let new_block_id = file.next_block_id()?;
@@ -816,6 +868,7 @@ impl FsDir {
         only_flush: bool,
         set_attr_opts: Option<SetAttrOpts>,
     ) -> FsResult<bool> {
+        self.hsm_guard_id(inode.id())?;
         let file = inode.as_file_mut()?;
         let id = file.id();
         file.complete(len, &commit_block, client_name, only_flush)?;
@@ -842,6 +895,7 @@ impl FsDir {
         &self,
         file: &InodeFile,
     ) -> FsResult<HashMap<i64, Vec<BlockLocation>>> {
+        self.hsm_guard_id(file.id())?;
         let locs = self.store.get_file_locations(file)?;
         self.evictor.on_access(file.id());
         Ok(locs)
@@ -908,6 +962,10 @@ impl FsDir {
         inp: &InodePath,
         client_name: impl AsRef<str>,
     ) -> FsResult<FileStatus> {
+        self.hsm_guard_path(inp.path())?;
+        if let Some(inode) = inp.get_last_inode() {
+            self.hsm_guard_tree(inode)?;
+        }
         let inode_ptr = match inp.get_last_inode() {
             None => return err_ext!(FsError::file_not_found(inp.path())),
             Some(v) => v,
@@ -958,6 +1016,10 @@ impl FsDir {
         inp: &InodePath,
         opts: CreateFileOpts,
     ) -> FsResult<DeleteResult> {
+        self.hsm_guard_path(inp.path())?;
+        if let Some(inode) = inp.get_last_inode() {
+            self.hsm_guard_tree(inode)?;
+        }
         let op_ms = LocalTime::mills();
         let mut delete_result = DeleteResult::new();
 
@@ -1194,6 +1256,7 @@ impl FsDir {
     }
 
     pub fn set_attr(&mut self, inp: InodePath, mut opts: SetAttrOpts) -> FsResult<FileStatus> {
+        self.hsm_guard_path(inp.path())?;
         let inode = match inp.get_last_inode() {
             Some(v) => v,
             None => return err_ext!(FsError::file_not_found(inp.path())),
@@ -1214,6 +1277,7 @@ impl FsDir {
     }
 
     pub fn unprotected_set_attr(&mut self, inode: InodePtr, opts: SetAttrOpts) -> FsResult<()> {
+        self.hsm_guard_tree(inode.clone())?;
         if inode.is_file_entry() {
             return err_box!("set_attr is not supported on unresolved FileEntry inodes; resolve/load the full inode before calling set_attr");
         }
@@ -1268,6 +1332,7 @@ impl FsDir {
         owner: Option<String>,
         group: Option<String>,
     ) -> FsResult<()> {
+        self.hsm_guard_path(link.path())?;
         let op_ms = LocalTime::mills();
 
         let new_inode = InodeFile::with_link(
@@ -1329,6 +1394,14 @@ impl FsDir {
 
     // Create a link to an existing file
     pub fn link(&mut self, src_path: InodePath, dst_path: InodePath) -> FsResult<()> {
+        self.hsm_guard_path(src_path.path())?;
+        self.hsm_guard_path(dst_path.path())?;
+        if let Some(inode) = src_path.get_last_inode() {
+            self.hsm_guard_tree(inode)?;
+        }
+        if let Some(inode) = dst_path.get_last_inode() {
+            self.hsm_guard_tree(inode)?;
+        }
         let op_ms = LocalTime::mills();
 
         // Get the original inode ID and update nlink in memory if it's a direct File
@@ -1427,6 +1500,7 @@ impl FsDir {
     /// 3. Collect locations of blocks to be deleted
     /// 4. Persist changes to store and write journal entry
     pub fn resize(&mut self, inp: &InodePath, opts: FileAllocOpts) -> FsResult<DeleteResult> {
+        self.hsm_guard_path(inp.path())?;
         let mut inode = match inp.get_last_inode() {
             Some(v) => v,
             None => return err_ext!(FsError::file_not_found(inp.path())),
@@ -1440,6 +1514,7 @@ impl FsDir {
         inode: &mut InodePtr,
         opts: FileAllocOpts,
     ) -> FsResult<DeleteResult> {
+        self.hsm_guard_id(inode.id())?;
         let file = inode.as_file_mut()?;
 
         if file.len == opts.len {
@@ -1482,6 +1557,7 @@ impl FsDir {
         block_id: i64,
         workers: &[WorkerAddress],
     ) -> FsResult<(ExtendedBlock, bool)> {
+        self.hsm_guard_id(inode.id())?;
         let file = inode.as_file_mut()?;
 
         let block = file.search_block_mut_check(block_id)?;

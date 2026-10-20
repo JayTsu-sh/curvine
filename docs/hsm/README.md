@@ -1,12 +1,12 @@
 # Curvine HSM 设计
 
-状态：设计提案 v0.3，2026-10-19。通用 Interface 与本地闭环已实现；Curvine 已增加原生 HsmControl/SDK 入口，处于接入第一阶段。权威记录、稳定视图和 Release/Recall 数据效果尚未实现，带库后置。
+状态：实现 v0.4，2026-10-20。Curvine 已实现不可变受管文件的 Archive / Release / Recall 闭环及原生权威记录；数据通过 file-backed Worker 和本地归档后端验证，带库后置。详见 [实现状态与限制](adapter-status.md)。
 
 目标是在 Curvine 内保存权威事实、生命周期策略和受保护的数据效果，由外部 hsm-rs 协调 Archive / Release / Recall；data-mover-rs 内置 Tape Adapter 并依赖 tape-rs 客户端，tape-rs 服务负责实际带库及其他介质相关工作。
 
 | 文档 | 内容 |
 |---|---|
-| [Adapter 实施状态](adapter-status.md) | 已有控制入口、真实数据桥接及尚未启用的保证 |
+| [Adapter 实施状态](adapter-status.md) | 已实现闭环、提交/读取保护、配置与限制 |
 | [详细设计](design.md) | 决策、职责、权威记录、版本、稳定视图、策略、访问、容量和 GC |
 | [Interface 与操作协议](interfaces.md) | 命令封装、错误、幂等、Archive / Release / Recall、Worker fencing |
 | [实施与验收](implementation-plan.md) | 源码落点、依赖顺序、故障矩阵、升级与发布门槛 |
@@ -22,7 +22,7 @@
 - 两者相差一个提交：多块位置查询改用有界 RocksDB iterator，缩短 Worker 状态锁持有范围，并增加对应测试。已静态核对四个变更文件；该差异未增加 HSM 权威提交、稳定版本视图或 Recall 发布能力。
 - 设计阶段只读源码和核对文档；后续新增控制入口与编译/集群验证的范围见 [Adapter 实施状态](adapter-status.md)。未访问带库。
 
-除实施状态列明的控制/SDK 入口外，设计中的新增类型、字段、模块、配置及方法均为目标设计。文中的状态表是需要实施的语义约束；具体 Rust/protobuf 定义在实现时按本基线验证。
+除实施状态列明的已实现功能外，设计中的新增类型、字段、模块、配置及方法均为目标设计。文中的状态表是需要实施的语义约束；具体 Rust/protobuf 定义在实现时按本基线验证。
 
 ## 固定决策
 

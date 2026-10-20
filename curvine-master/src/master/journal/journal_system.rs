@@ -273,6 +273,7 @@ impl JournalSystem {
     }
 
     pub fn from_conf(conf: &ClusterConf) -> FsResult<Self> {
+        crate::master::hsm::validate_boot(conf)?;
         // Check the persistent marker before any directory formatting, even if
         // the configuration flag was removed during an interrupted recovery.
         let local_id = conf.journal.node_id()?;

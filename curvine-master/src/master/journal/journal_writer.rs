@@ -28,11 +28,15 @@ use curvine_runtime::common::{FileUtils, LocalTime};
 use curvine_runtime::sync::channel::{BlockingChannel, BlockingReceiver, BlockingSender};
 use curvine_runtime::sync::AtomicCounter;
 use log::{debug, info, warn};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+pub type HsmWaiters =
+    Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<Result<(), String>>>>;
 
 // Write metadata operation logs.
 pub struct JournalWriter {
     enable: bool,
+    pub(crate) hsm_ready: bool,
+    pub(crate) hsm_waiters: HsmWaiters,
     node_id: u64,
     sender: BlockingSender<JournalEntry>,
     metrics: &'static MasterMetrics,
@@ -51,9 +55,11 @@ impl JournalWriter {
         let metrics = Master::get_metrics()?;
         let (sender, receiver) = BlockingChannel::new(conf.writer_channel_size).split();
 
+        let hsm_waiters = HsmWaiters::default();
         let receiver = if !testing {
             // Start the send log thread.
-            let task = SenderTask::new(client, conf, 0)?;
+            let mut task = SenderTask::new(client, conf, 0)?;
+            task.hsm_waiters = hsm_waiters.clone();
             task.spawn(receiver)?;
             None
         } else {
@@ -62,6 +68,11 @@ impl JournalWriter {
 
         Ok(Self {
             enable: conf.enable,
+            hsm_ready: !testing
+                && conf.enable
+                && conf.writer_channel_size == 0
+                && !conf.leader_creates_snapshot(),
+            hsm_waiters,
             node_id,
             sender,
             metrics,
@@ -72,6 +83,23 @@ impl JournalWriter {
             last_snapshot_ms: AtomicCounter::new(0),
             entries_since_snapshot: AtomicCounter::new(0),
         })
+    }
+
+    pub fn submit_hsm(
+        &self,
+        entry: HsmEntry,
+    ) -> FsResult<tokio::sync::oneshot::Receiver<Result<(), String>>> {
+        if !self.hsm_ready {
+            return err_box!("HSM requires a normal committed journal, unbounded queue and no speculative leader snapshots");
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let ticket = entry.ticket.clone();
+        self.hsm_waiters.insert(ticket.clone(), tx);
+        if let Err(e) = self.send_inner(JournalEntry::Hsm(entry)) {
+            self.hsm_waiters.remove(&ticket);
+            return Err(e);
+        }
+        Ok(rx)
     }
 
     fn send_inner(&self, entry: JournalEntry) -> FsResult<()> {

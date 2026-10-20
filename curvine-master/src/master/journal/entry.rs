@@ -185,6 +185,21 @@ pub struct SnapshotEntry {
     pub(crate) dir: String,
 }
 
+#[derive(Deserialize, Serialize, Clone)]
+pub struct HsmEntry {
+    pub op_id: u64,
+    pub ticket: String,
+    pub payload: Vec<u8>,
+}
+impl std::fmt::Debug for HsmEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HsmEntry")
+            .field("op_id", &self.op_id)
+            .field("payload", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum JournalEntry {
     Mkdir(MkdirEntry),
@@ -206,6 +221,7 @@ pub enum JournalEntry {
     Snapshot(SnapshotEntry),
     // Keep new variants appended so existing journal discriminants remain stable.
     CacheInvalidation(CacheInvalidationEntry),
+    Hsm(HsmEntry),
 }
 
 impl JournalEntry {
@@ -229,6 +245,7 @@ impl JournalEntry {
             JournalEntry::CacheInvalidation(e) => e.op_id,
             JournalEntry::UfsApplied(e) => e.op_id,
             JournalEntry::Snapshot(e) => e.op_id,
+            JournalEntry::Hsm(e) => e.op_id,
         }
     }
 
@@ -252,6 +269,7 @@ impl JournalEntry {
             JournalEntry::CacheInvalidation(e) => e.rpc_id,
             JournalEntry::UfsApplied(e) => e.rpc_id,
             JournalEntry::Snapshot(e) => e.rpc_id,
+            JournalEntry::Hsm(_) => 0,
         }
     }
 

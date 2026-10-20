@@ -147,6 +147,24 @@ impl RocksInodeStore {
         Ok(result)
     }
 
+    /// Rebuild the HSM authority from committed journal/snapshot on each boot.
+    /// Unsynced derived metadata must not suppress replay of committed outcomes.
+    pub fn reset_hsm_projection(&self) -> CommonResult<()> {
+        let keys = self
+            .db
+            .prefix_scan(Self::CF_COMMON, b"\x03hsm:")?
+            .map(|item| item.map(|(key, _)| key.to_vec()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut batch = self.new_batch();
+        for key in keys {
+            batch.delete_cf(Self::CF_COMMON, key)?;
+        }
+        batch.commit()
+    }
+    pub fn hsm_get(&self, key: &[u8]) -> CommonResult<Option<Vec<u8>>> {
+        Ok(self.db.get_cf(Self::CF_COMMON, key)?.map(|v| v.to_vec()))
+    }
+
     pub fn new_batch(&self) -> InodeWriteBatch<'_> {
         InodeWriteBatch::new(&self.db)
     }
@@ -409,6 +427,10 @@ impl<'a> InodeWriteBatch<'a> {
 
         let key = RocksUtils::u32_i64_to_bytes(worker_id, id);
         self.delete_cf(RocksInodeStore::CF_LOCATION, key)
+    }
+
+    pub fn hsm_put(&mut self, key: &[u8], value: &[u8]) -> CommonResult<()> {
+        self.put_cf(RocksInodeStore::CF_COMMON, key, value)
     }
 
     pub fn commit(self) -> CommonResult<()> {

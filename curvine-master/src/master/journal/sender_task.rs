@@ -27,6 +27,7 @@ use std::time::Duration;
 
 pub struct SenderTask {
     pub(crate) client: RaftClient,
+    pub(crate) hsm_waiters: super::HsmWaiters,
     pub(crate) batch: JournalBatch,
     pub(crate) flush_batch_ms: u64,
     pub(crate) flush_batch_size: u64,
@@ -38,6 +39,7 @@ impl SenderTask {
     pub fn new(client: RaftClient, conf: &JournalConf, batch_seq_id: u64) -> CommonResult<Self> {
         let sender = Self {
             client,
+            hsm_waiters: Default::default(),
             batch: JournalBatch::new(batch_seq_id),
             flush_batch_ms: conf.writer_flush_batch_ms,
             flush_batch_size: conf.writer_flush_batch_size,
@@ -83,7 +85,10 @@ impl SenderTask {
 
     pub fn handle(&mut self, entry: Option<JournalEntry>) -> FsResult<()> {
         let force = if let Some(v) = entry {
-            let force = matches!(v, JournalEntry::Snapshot(_));
+            if matches!(v, JournalEntry::Hsm(_)) {
+                self.flush_pending()?;
+            }
+            let force = matches!(v, JournalEntry::Snapshot(_) | JournalEntry::Hsm(_));
             self.batch.push(v);
             self.metrics.journal_queue_len.dec();
             force
@@ -115,7 +120,34 @@ impl SenderTask {
         let spend = TimeSpent::new();
 
         let bytes = SerdeUtils::serialize(&self.batch)?;
-        self.client.block_on_send_propose(bytes)?;
+        let tickets: Vec<_> = self
+            .batch
+            .batch
+            .iter()
+            .filter_map(|e| match e {
+                JournalEntry::Hsm(e) => Some(e.ticket.clone()),
+                _ => None,
+            })
+            .collect();
+        if tickets.is_empty() {
+            self.client.block_on_send_propose(bytes)?;
+        } else {
+            let result = self.client.block_on_send_propose_response(bytes);
+            let ack = match &result {
+                Ok(reply) if reply.applied_index.is_some_and(|index| index > 0) => Ok(()),
+                Ok(_) => Err(
+                    "proposal returned no committed apply index; query original outcome"
+                        .to_string(),
+                ),
+                Err(e) => Err(format!("proposal outcome unknown: {}", e)),
+            };
+            for ticket in tickets {
+                if let Some((_, tx)) = self.hsm_waiters.remove(&ticket) {
+                    let _ = tx.send(ack.clone());
+                }
+            }
+            result?;
+        }
 
         self.metrics.journal_flush_count.inc();
         self.metrics

@@ -92,6 +92,10 @@ impl RaftClient {
         self.rt.block_on(self.send_propose(data))
     }
 
+    pub fn block_on_send_propose_response(&self, data: Vec<u8>) -> RaftResult<ProposeResponse> {
+        self.rt.block_on(self.send_propose_response(data))
+    }
+
     // Join the cluster.
     pub async fn join_cluster(&self, id: NodeId, addr: &InetAddr) -> RaftResult<()> {
         let change = ConfChange {

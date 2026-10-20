@@ -243,6 +243,9 @@ impl JournalLoader {
             }
         }
 
+        if let JournalEntry::Hsm(e) = entry {
+            return self.fs_dir.write().apply_hsm_entry(e);
+        }
         if is_leader {
             self.ufs_loader.apply_entry(entry).await
         } else {
@@ -302,12 +305,19 @@ impl JournalLoader {
                     continue;
                 }
 
-                JournalEntry::CacheInvalidation(_) | JournalEntry::UfsApplied(_) => (),
+                JournalEntry::CacheInvalidation(_)
+                | JournalEntry::UfsApplied(_)
+                | JournalEntry::Hsm(_) => (),
 
                 _ => has_ufs_affecting = true,
             }
 
             if let Err(e) = self.replay_entry(is_leader, &op_entry).await {
+                if matches!(op_entry, JournalEntry::Hsm(_)) {
+                    // A failed authority apply may never be skipped while serving.
+                    error!("fatal HSM authority apply failure: {}", e);
+                    std::process::abort();
+                }
                 if self.ignore_reply_error {
                     error!(
                         "skip failed journal replay, entry index={}, term={}, journal={:?}, error={}",
@@ -644,6 +654,7 @@ impl JournalLoader {
         debug!("replay entry: {:?}", entry);
 
         match entry {
+            JournalEntry::Hsm(e) => self.fs_dir.write().apply_hsm_entry(&e),
             JournalEntry::Mkdir(e) => self.mkdir(e),
 
             JournalEntry::CreateFile(e) => self.create_file(e),

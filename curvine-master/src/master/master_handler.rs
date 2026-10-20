@@ -1035,6 +1035,7 @@ impl MessageHandler for MasterHandler {
                 | RpcCode::CancelJob
                 | RpcCode::ReportTask
                 | RpcCode::GetCvMetadataSnapshotPage
+                | RpcCode::HsmControl
         )
     }
 
@@ -1095,10 +1096,6 @@ impl MessageHandler for MasterHandler {
                 RpcCode::GetMountInfo => self.get_mount_info(ctx),
 
                 RpcCode::MetricsReport => self.metrics_report(ctx),
-                RpcCode::HsmControl => {
-                    let request: HsmControlRequest = ctx.parse_header()?;
-                    ctx.response(curvine_model::hsm::control_response(request))
-                }
 
                 // Worker related requests
                 RpcCode::WorkerHeartbeat => self.worker_heartbeat(ctx),
@@ -1147,6 +1144,10 @@ impl MessageHandler for MasterHandler {
             Err(FsError::not_leader_master(ctx.code, self.client_ip()))
         } else {
             match code {
+                RpcCode::HsmControl => {
+                    let request: HsmControlRequest = ctx.parse_header()?;
+                    ctx.response(self.fs.hsm_control(request).await)
+                }
                 RpcCode::SubmitJob => self.job_handler.submit_job(ctx).await,
                 RpcCode::GetJobStatus => self.job_handler.get_load_status(ctx),
                 RpcCode::CancelJob => self.job_handler.cancel_job(ctx).await,
