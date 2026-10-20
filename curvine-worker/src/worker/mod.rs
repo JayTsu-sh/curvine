@@ -25,3 +25,5 @@ pub use self::worker_metrics::WorkerMetrics;
 pub mod handler;
 mod replication;
 pub mod task;
+
+pub mod hsm;

@@ -61,6 +61,7 @@ impl Drop for BlockWriteLease {
 
 #[derive(Clone)]
 pub struct BlockStore {
+    pub(crate) hsm: Option<Arc<crate::worker::hsm::HsmStore>>,
     state: Arc<RwLock<BlockDataset>>,
     block_locks: Arc<Vec<Mutex<()>>>,
     uses: Arc<Vec<Mutex<HashMap<i64, BlockUse>>>>,
@@ -70,7 +71,21 @@ pub struct BlockStore {
 impl BlockStore {
     pub fn new(cluster_id: &str, conf: &ClusterConf) -> CommonResult<Self> {
         let dataset = BlockDataset::from_conf(cluster_id, conf)?;
+        let hsm = if conf.master.hsm_enabled {
+            let first = conf
+                .worker
+                .data_dir
+                .first()
+                .ok_or("HSM requires a file-backed Worker data root")?;
+            let dir = curvine_config::WorkerDataDir::from_str(first)?;
+            Some(Arc::new(crate::worker::hsm::HsmStore::open(
+                std::path::Path::new(&dir.path).join("hsm-v1"),
+            )?))
+        } else {
+            None
+        };
         let block_store = BlockStore {
+            hsm,
             state: Arc::new(RwLock::new(dataset)),
             uses: Arc::new(
                 (0..BLOCK_LOCK_STRIPES)

@@ -101,6 +101,35 @@ impl MessageHandler for WorkerHandler {
         self.record_peer_component_info(msg)?;
 
         match code {
+            RpcCode::HsmData => {
+                let ctx = curvine_data_transfer::RpcContext::new(msg);
+                let request: HsmControlRequest = ctx.parse_header()?;
+                let response =
+                    if request.protocol_version != 1 || request.payload.len() > 512 * 1024 {
+                        curvine_model::hsm::native::WorkerReply::Error {
+                            code: "invalid".into(),
+                            message: "invalid HSM data envelope".into(),
+                        }
+                    } else if let Some(store) = &self.store.hsm {
+                        match serde_json::from_slice(&request.payload) {
+                            Ok(req) => store.execute(req),
+                            Err(_) => curvine_model::hsm::native::WorkerReply::Error {
+                                code: "invalid".into(),
+                                message: "invalid HSM data request".into(),
+                            },
+                        }
+                    } else {
+                        curvine_model::hsm::native::WorkerReply::Error {
+                            code: "unsupported".into(),
+                            message: "Worker HSM disabled".into(),
+                        }
+                    };
+                ctx.response(HsmControlResponse {
+                    protocol_version: 1,
+                    payload: serde_json::to_vec(&response)
+                        .map_err(|e| FsError::common(e.to_string()))?,
+                })
+            }
             RpcCode::SubmitTask => self.task_submit(msg),
 
             RpcCode::QueryTransferTask => self.query_transfer_task(msg),
