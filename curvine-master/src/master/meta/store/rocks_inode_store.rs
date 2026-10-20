@@ -161,6 +161,24 @@ impl RocksInodeStore {
         }
         batch.commit()
     }
+    pub fn hsm_scan(
+        &self,
+        prefix: &[u8],
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> CommonResult<Vec<(Vec<u8>, Vec<u8>)>> {
+        let mut end = prefix.to_vec();
+        *end.last_mut().ok_or("empty HSM prefix")? += 1;
+        let mut start = after.unwrap_or(prefix).to_vec();
+        if after.is_some() {
+            start.push(0);
+        }
+        self.db
+            .range_scan(Self::CF_COMMON, start, end)?
+            .take(limit)
+            .map(|r| r.map(|(k, v)| (k.to_vec(), v.to_vec())).map_err(Into::into))
+            .collect()
+    }
     pub fn hsm_get(&self, key: &[u8]) -> CommonResult<Option<Vec<u8>>> {
         Ok(self.db.get_cf(Self::CF_COMMON, key)?.map(|v| v.to_vec()))
     }
@@ -429,6 +447,9 @@ impl<'a> InodeWriteBatch<'a> {
         self.delete_cf(RocksInodeStore::CF_LOCATION, key)
     }
 
+    pub fn hsm_delete(&mut self, key: &[u8]) -> CommonResult<()> {
+        self.delete_cf(RocksInodeStore::CF_COMMON, key)
+    }
     pub fn hsm_put(&mut self, key: &[u8], value: &[u8]) -> CommonResult<()> {
         self.put_cf(RocksInodeStore::CF_COMMON, key, value)
     }

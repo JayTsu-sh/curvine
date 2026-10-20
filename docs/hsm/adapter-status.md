@@ -56,4 +56,4 @@ GC 在 committed detach 后使用唯一 allocation ID 和 admin 权限删除；�
 
 运行命令见 [hsm-curvine 文档](https://github.com/JayTsu-sh/hsm-rs/blob/feat/curvine-adapter/crates/hsm-curvine/README.md)。Worker 单元测试验证重开后的 sealed/deleted 权限和坏内容拒绝；旧 journal 兼容测试验证既有 enum 编号未变化。
 
-第一版仍限定：直接子文件、内容不可变、file-backed Worker、本地归档、显式 Recall、attempt epoch 1。普通 SDK/FUSE open 对该作用域明确拒绝，在线数据经 HSM view 读取。尚无自动生命周期候选批次/intent daemon、透明访问召回、容量预留、普通块统计/副本修复集成、SPDK 或带库；未做断电/盘损坏及完整生产故障矩阵。失败 import 以原输入和操作 ID 重试；失败资源不会按超时自动删除。后续按原设计扩展，不把当前闭环当成全部生产能力完成。
+第一版仍限定：直接子文件、内容不可变、file-backed Worker、本地归档、显式 Recall、attempt epoch 1。普通 SDK/FUSE open 对该作用域明确拒绝，在线数据经 HSM view 读取。已增加原生生命周期规则/候选批次/持久任务与外部轮询 worker，详见 [生命周期实现](lifecycle.md)。尚无访问热度/容量水位策略、透明访问召回、容量预留、普通块统计/副本修复集成、SPDK 或带库；未做断电/盘损坏及完整生产故障矩阵。失败 import 以原输入和操作 ID 重试；失败资源不会按超时自动删除。后续按原设计扩展，不把当前闭环当成全部生产能力完成。

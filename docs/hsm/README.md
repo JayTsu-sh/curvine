@@ -1,11 +1,12 @@
 # Curvine HSM 设计
 
-状态：实现 v0.4，2026-10-20。Curvine 已实现不可变受管文件的 Archive / Release / Recall 闭环及原生权威记录；数据通过 file-backed Worker 和本地归档后端验证，带库后置。详见 [实现状态与限制](adapter-status.md)。
+状态：实现 v0.5，2026-10-20。Curvine 已实现不可变受管文件的 Archive / Release / Recall 闭环及原生权威记录；数据通过 file-backed Worker 和本地归档后端验证，带库后置。详见 [实现状态与限制](adapter-status.md)。
 
 目标是在 Curvine 内保存权威事实、生命周期策略和受保护的数据效果，由外部 hsm-rs 协调 Archive / Release / Recall；data-mover-rs 内置 Tape Adapter 并依赖 tape-rs 客户端，tape-rs 服务负责实际带库及其他介质相关工作。
 
 | 文档 | 内容 |
 |---|---|
+| [生命周期实现](lifecycle.md) | 原生策略、有界候选批次、持久任务、claim/finish 与恢复 |
 | [Adapter 实施状态](adapter-status.md) | 已实现闭环、提交/读取保护、配置与限制 |
 | [详细设计](design.md) | 决策、职责、权威记录、版本、稳定视图、策略、访问、容量和 GC |
 | [Interface 与操作协议](interfaces.md) | 命令封装、错误、幂等、Archive / Release / Recall、Worker fencing |

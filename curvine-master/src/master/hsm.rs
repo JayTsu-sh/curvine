@@ -32,6 +32,7 @@ pub fn validate_boot(conf: &curvine_config::ClusterConf) -> curvine_error::FsRes
     Ok(())
 }
 
+const LIFECYCLE_MAGIC: &[u8] = b"hsm-lifecycle-v1\n";
 const NS: &[u8] = b"\x03hsm:namespace:v1";
 fn record_key(id: i64) -> Vec<u8> {
     format!("\u{3}hsm:record:{id}").into_bytes()
@@ -144,7 +145,7 @@ impl FsDir {
     }
     /// Executed for BOTH leader and follower, only from committed journal apply.
     pub fn apply_hsm(&mut self, payload: &[u8]) -> CommonResult<()> {
-        let tx: Transaction = decode(payload)?;
+        let tx: Transaction = decode(payload.strip_prefix(LIFECYCLE_MAGIC).unwrap_or(payload))?;
         if self.hsm_outcome(&tx.outcome)?.is_some() {
             return Ok(());
         }
@@ -170,6 +171,18 @@ impl FsDir {
             {
                 valid = false;
                 response = failure("conflict", "operation ID already bound to another workflow");
+            }
+        }
+        for change in &tx.controls {
+            if self.get_rocks_store().hsm_get(&change.key)? != change.expected {
+                valid = false;
+                response = failure("conflict", "lifecycle control changed before apply");
+            }
+        }
+        for (id, version) in &tx.record_checks {
+            if self.hsm_record(*id)?.as_ref().map(|r| r.version) != Some(*version) {
+                valid = false;
+                response = failure("conflict", "candidate changed before admission");
             }
         }
         // Reserve the inode ID in queue order even if the conditional create fails.
@@ -261,7 +274,22 @@ impl FsDir {
                 }
             }
             if let Some(record) = &tx.record {
+                let mut record = record.clone();
+                let old = self.hsm_record(tx.inode.unwrap())?;
+                if record.published.is_some() && old.as_ref().is_none_or(|r| r.published.is_none())
+                    || old
+                        .as_ref()
+                        .is_some_and(|r| r.state.residency != record.state.residency)
+                {
+                    record.state_since_ms = tx.time;
+                }
                 batch.hsm_put(&record_key(tx.inode.unwrap()), &pack(record)?)?;
+            }
+            for change in &tx.controls {
+                match &change.value {
+                    Some(value) => batch.hsm_put(&change.key, value)?,
+                    None => batch.hsm_delete(&change.key)?,
+                }
             }
             if let Some(child) = &changed_inode {
                 batch.write_inode(child.as_ref())?;
@@ -335,7 +363,14 @@ impl MasterFilesystem {
         let entry = HsmEntry {
             op_id,
             ticket: token(),
-            payload: pack(tx).map_err(io)?,
+            payload: {
+                let bytes = pack(tx).map_err(io)?;
+                if tx.controls.is_empty() {
+                    bytes
+                } else {
+                    [LIFECYCLE_MAGIC, bytes.as_slice()].concat()
+                }
+            },
         };
         let waiter = writer.submit_hsm(entry).map_err(io)?;
         let ack = tokio::time::timeout(std::time::Duration::from_secs(60), waiter)
@@ -371,6 +406,8 @@ impl MasterFilesystem {
             epoch: 1,
         };
         let tx = Transaction {
+            controls: vec![],
+            record_checks: vec![],
             workflow: None,
             outcome: format!("namespace:init:{}", token()),
             fingerprint: "init-v1".into(),
@@ -478,6 +515,9 @@ impl MasterFilesystem {
             return Err(HsmError::Unsupported(
                 "first native workflow requires attempt epoch 1".into(),
             ));
+        }
+        if op.starts_with("policy_") || op.starts_with("intent_") {
+            return self.hsm_lifecycle(&namespace, &context, &request).await;
         }
         if op == "completed_import" {
             let old = self
@@ -608,7 +648,7 @@ impl MasterFilesystem {
                     .map_err(io)?
                     .ok_or_else(|| HsmError::NotFound("managed entity".into()))?;
                 if let Some((owner, pending, layout)) = &record.pending {
-                    if owner != &context || pending != &target {
+                    if !same_attempt(owner, &context) || pending != &target {
                         return Err(HsmError::Fenced);
                     }
                     let evidence: TransferEvidence = field(&request, "evidence")?;
@@ -712,6 +752,8 @@ impl MasterFilesystem {
         let op = request["op"].as_str().unwrap();
         let fs = self.fs_dir.read();
         let mut tx = Transaction {
+            controls: vec![],
+            record_checks: vec![],
             workflow: None,
             outcome: key.into(),
             fingerprint: fingerprint.into(),
@@ -809,6 +851,7 @@ impl MasterFilesystem {
             tx.response = reply("recall", &target);
             allocate = Some(layout.clone());
             Record {
+                state_since_ms: 0,
                 version: 1,
                 state: EntityState {
                     data,
@@ -854,7 +897,7 @@ impl MasterFilesystem {
                     .pending
                     .take()
                     .ok_or_else(|| HsmError::Conflict("no private layout".into()))?;
-                if owner != *ctx || pending != target {
+                if !same_attempt(&owner, ctx) || pending != target {
                     return Err(HsmError::Fenced);
                 }
                 if op == "commit_recall" {
@@ -1051,6 +1094,8 @@ impl MasterFilesystem {
             let expected = record.version;
             record.version += 1;
             let tx = Transaction {
+                controls: vec![],
+                record_checks: vec![],
                 workflow: None,
                 outcome: format!("gc:{}:{}", layout.id, token()),
                 fingerprint: layout.id,
@@ -1129,6 +1174,8 @@ fn rejected(
             data,
         });
     Transaction {
+        controls: vec![],
+        record_checks: vec![],
         workflow,
         outcome: key.into(),
         fingerprint: fingerprint.into(),
@@ -1158,6 +1205,11 @@ fn workflow_kind(op: &str) -> &str {
 
 fn request_fingerprint(request: &Value) -> HsmResult<String> {
     let mut canonical = request.clone();
+    // Qualification fences admission/apply, but is not the logical effect identity.
+    // Canonical epoch 1 also preserves fingerprints from the initial implementation.
+    if let Some(context) = canonical.get_mut("context").and_then(Value::as_object_mut) {
+        context.insert("controller_epoch".into(), Value::from(1));
+    }
     canonical.sort_all_objects();
     Ok(blake3::hash(&serde_json::to_vec(&canonical).map_err(io)?)
         .to_hex()
@@ -1193,3 +1245,8 @@ mod tests {
         assert!(!root.path().join("journal").exists());
     }
 }
+
+fn same_attempt(a: &OperationContext, b: &OperationContext) -> bool {
+    a.operation_id == b.operation_id && a.attempt_epoch == b.attempt_epoch
+}
+mod lifecycle;

@@ -4,8 +4,9 @@
 use crate::WorkerAddress;
 pub use hsm_core::{
     ArchiveKey, ArchiveReceipt, ContentDigest, DataEndpoint, DataKey, DataView, EntityKey,
-    EntityState, HsmError, HsmResult, ManagedAction, OperationContext, RecallTarget, Residency,
-    TransferEvidence,
+    EntityState, HsmError, HsmResult, IntentClaim, IntentCompletion, IntentStatus, LifecycleIntent,
+    LifecyclePage, LifecyclePolicy, ManagedAction, OperationContext, PolicyAction, RecallTarget,
+    Residency, ScanBatch, TransferEvidence,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -94,6 +95,8 @@ pub struct Endpoint {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
+    #[serde(default)]
+    pub state_since_ms: i64,
     pub version: u64,
     pub state: EntityState,
     pub path: String,
@@ -118,6 +121,10 @@ pub struct WorkflowBinding {
 /// A committed compare-and-swap, not a speculative inode update.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Transaction {
+    #[serde(default)]
+    pub controls: Vec<ControlChange>,
+    #[serde(default)]
+    pub record_checks: Vec<(i64, u64)>,
     pub workflow: Option<WorkflowBinding>,
     pub outcome: String,
     pub fingerprint: String,
@@ -183,4 +190,12 @@ impl WorkerReply {
             value => Ok(value),
         }
     }
+}
+
+/// Internal control-key CAS, applied in the native authority batch.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ControlChange {
+    pub key: Vec<u8>,
+    pub expected: Option<Vec<u8>>,
+    pub value: Option<Vec<u8>>,
 }
