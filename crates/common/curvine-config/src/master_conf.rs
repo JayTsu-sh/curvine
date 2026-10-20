@@ -23,6 +23,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MasterConf {
+    /// Enable immutable managed-file HSM. Requires normal journal, an unbounded
+    /// writer queue and disabled speculative leader snapshots.
+    pub hsm_enabled: bool,
     pub hostname: String,
     pub rpc_port: u16,
     pub web_port: u16,
@@ -288,6 +291,7 @@ impl Default for MasterConf {
         let rocksdb = Self::rocksdb_default().set_dir(&dir);
 
         let mut conf = Self {
+            hsm_enabled: false,
             hostname: ClusterConf::DEFAULT_HOSTNAME.to_string(),
             rpc_port: ClusterConf::DEFAULT_MASTER_PORT,
             web_port: ClusterConf::DEFAULT_MASTER_WEB_PORT,

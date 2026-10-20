@@ -2516,8 +2516,10 @@ name = "curvine-master"
 version = "0.2.2"
 dependencies = [
  "axum 0.7.9",
+ "blake3",
  "bytes",
  "curvine-alloc",
+ "curvine-client-core",
  "curvine-config",
  "curvine-core-error",
  "curvine-data-transfer",
@@ -2551,8 +2553,10 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2589,6 +2593,7 @@ version = "0.2.2"
 dependencies = [
  "bincode",
  "bitflags 2.10.0",
+ "blake3",
  "chrono",
  "clap",
  "curvine-core-error",
@@ -2598,12 +2603,14 @@ dependencies = [
  "curvine-proto",
  "curvine-runtime",
  "curvine-sys",
+ "hsm-core",
  "indexmap 2.14.0",
  "log",
  "num_enum",
  "prost 0.11.9",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -3022,6 +3029,7 @@ name = "curvine-worker"
 version = "0.2.2"
 dependencies = [
  "axum 0.7.9",
+ "blake3",
  "bytes",
  "curvine-alloc",
  "curvine-client-core",
@@ -3043,11 +3051,14 @@ dependencies = [
  "curvine-sys",
  "curvine-web",
  "dashmap 5.5.3",
+ "fs2",
  "log",
  "once_cell",
  "parking_lot",
  "prost 0.11.9",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -4999,6 +5010,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589533453244b0995c858700322199b2becb13b627df2851f64a2775d024abcf"
 dependencies = [
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "hsm-core"
+version = "0.0.1"
+source = "git+https://github.com/JayTsu-sh/hsm-rs.git?rev=2909ceb71b7a1cd8e2db1238fcff9253761ad74d#2909ceb71b7a1cd8e2db1238fcff9253761ad74d"
+dependencies = [
+ "serde",
+ "thiserror 2.0.16",
 ]
 
 [[package]]

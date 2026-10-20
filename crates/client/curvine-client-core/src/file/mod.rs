@@ -50,3 +50,5 @@ pub use self::fs_writer_buffer::FsWriterBuffer;
 
 mod read_detector;
 pub use self::read_detector::*;
+
+pub mod hsm_io;
