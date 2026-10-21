@@ -77,9 +77,19 @@ impl ReadBatcher {
     async fn run(self: Arc<Self>, fs: MasterFilesystem) {
         loop {
             tokio::task::yield_now().await;
+            if let Err(error) = fs.hsm_ensure_read_namespace().await {
+                let Some(requests) = self.take() else {
+                    return;
+                };
+                let response = error_value(error);
+                for request in requests {
+                    let _ = request.response.send(response.clone());
+                }
+                continue;
+            }
             let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
             let wait = std::time::Instant::now();
-            let _serial = gate.lock().await;
+            let _serial = gate.read().await;
             let metrics = crate::master::Master::get_metrics()
                 .expect("Master metrics initialized before read coordinator");
             metrics
@@ -133,7 +143,15 @@ impl ReadBatcher {
             if term != fs.master_monitor.journal_term.load(Ordering::Acquire) {
                 return Err(HsmError::Unknown("read batch leader term changed".into()));
             }
-            let namespace = fs.hsm_namespace_init().await?;
+            let namespace = fs
+                .fs_dir
+                .read()
+                .hsm_namespace()
+                .map_err(io)?
+                .filter(|namespace| namespace.ordinary_format >= 2)
+                .ok_or_else(|| {
+                    HsmError::Unknown("read namespace requires initialization".into())
+                })?;
             if term != fs.master_monitor.journal_term.load(Ordering::Acquire) {
                 return Err(HsmError::Unknown(
                     "read batch leader term changed during namespace initialization".into(),

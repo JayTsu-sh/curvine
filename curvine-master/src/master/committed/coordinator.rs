@@ -114,7 +114,7 @@ impl NativeCoordinator {
             tokio::task::yield_now().await;
             let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
             let gate_at = std::time::Instant::now();
-            let _serial = gate.lock().await;
+            let _serial = gate.read().await;
             let Some(pending) = self.take() else {
                 return;
             };
@@ -135,10 +135,16 @@ impl NativeCoordinator {
                 fs.hsm_read_barrier()
                     .await
                     .map_err(|error| FsError::common(error.to_string()))?;
+                // Bound calls cannot bootstrap namespace state while sharing
+                // the projection boundary with other owned command families.
                 let ns = fs
-                    .hsm_namespace_init()
-                    .await
-                    .map_err(|error| FsError::common(error.to_string()))?;
+                    .fs_dir
+                    .read()
+                    .hsm_namespace()?
+                    .filter(|ns| ns.ordinary_format >= 2)
+                    .ok_or_else(|| {
+                        FsError::common("native namespace requires binding or upgrade")
+                    })?;
                 if term == 0 || term != fs.master_monitor.journal_term.load(Ordering::Acquire) {
                     return Err(FsError::common("native preparation leader changed"));
                 }

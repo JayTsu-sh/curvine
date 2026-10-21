@@ -624,6 +624,35 @@ impl MasterFilesystem {
         }
         Ok(results)
     }
+    /// Called by owned coordinators before entering shared preparation. The
+    /// rare namespace creation/upgrade remains exclusive and fenced on error.
+    pub(crate) async fn hsm_ensure_read_namespace(&self) -> HsmResult<()> {
+        if self
+            .fs_dir
+            .read()
+            .hsm_namespace()
+            .map_err(io)?
+            .is_some_and(|namespace| namespace.ordinary_format >= 2)
+        {
+            return Ok(());
+        }
+        let gate = self.fs_dir.read().hsm_mutation_gate.clone();
+        let _bootstrap = gate.write().await;
+        let result = async {
+            self.hsm_read_barrier().await?;
+            self.hsm_namespace_init().await?;
+            Ok(())
+        }
+        .await;
+        if matches!(&result, Err(HsmError::Unknown(_))) {
+            if let Err(error) = self.hsm_read_barrier().await {
+                log::error!("uncertain read namespace initialization could not be fenced: {error}; aborting master");
+                std::process::abort();
+            }
+        }
+        result
+    }
+
     pub(crate) async fn hsm_namespace_init(&self) -> HsmResult<Namespace> {
         let current = self.fs_dir.read().hsm_namespace().map_err(io)?;
         if let Some(namespace) = current {

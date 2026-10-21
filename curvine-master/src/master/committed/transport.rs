@@ -119,7 +119,7 @@ impl MasterFilesystem {
     ) -> FsResult<NativeMutationResponse> {
         if request.incarnation.is_empty() {
             let gate = self.fs_dir.read().hsm_mutation_gate.clone();
-            let _serial = gate.lock().await;
+            let _serial = gate.write().await;
             self.hsm_read_barrier()
                 .await
                 .map_err(|error| FsError::common(error.to_string()))?;

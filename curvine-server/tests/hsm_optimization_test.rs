@@ -135,6 +135,10 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
     cluster.start_cluster();
     let fs = cluster.new_fs();
     cluster.clone_client_rt().block_on(async {
+        let bootstrap_read = control(&fs, &json!({"op":"open_path","path":"/missing-before-namespace",
+            "context":{"operation_id":request_id(),"controller_epoch":1,"attempt_epoch":1}})).await?;
+        assert_eq!(bootstrap_read["kind"], "error");
+        assert!(fs.exists(&Path::from_str("/.hsm")?).await?, "first read did not initialize the namespace");
         fs.hsm_control(HsmControlRequest {
             protocol_version: 1,
             payload: br#"{"op":"namespace"}"#.to_vec(),
@@ -178,7 +182,7 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         // Cancel a query while projection coordination is paused. No handler
         // runs over speculative metadata and no vanished ticket pins the gate.
         let gate = cluster.get_active_master_fs().fs_dir().read().hsm_test_mutation_gate();
-        let hold = gate.lock().await;
+        let hold = gate.write().await;
         let cancelled_path = Path::from_str("/native-batch-0")?;
         let mut cancelled = Box::pin(fs.exists(&cancelled_path));
         assert!(futures::poll!(&mut cancelled).is_pending());
@@ -323,6 +327,25 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert!(bundles > 0 && bundles < 32 && commands >= 32.0,
             "nonrecursive setattr did not use native committed batches");
         assert_eq!(fs.get_status(&Path::from_str("/native-file-0")?).await?.owner, "policy-owner");
+        // A shared projection boundary represents an in-flight owned query
+        // or committed command. Other owned families progress; legacy
+        // speculative namespace handlers remain excluded until it finishes.
+        let gate = cluster.get_active_master_fs().fs_dir().read().hsm_test_mutation_gate();
+        let shared = gate.read().await;
+        let online_path = Path::from_str("/native-file-0")?;
+        let mut concurrent_reader = tokio::time::timeout(std::time::Duration::from_secs(2), fs.open(&online_path)).await??;
+        concurrent_reader.complete().await?;
+        tokio::time::timeout(std::time::Duration::from_secs(2),
+            fs.mkdir(&Path::from_str("/owned-during-shared-query")?, false)).await??;
+        tokio::time::timeout(std::time::Duration::from_secs(2), fs.get_status(&online_path)).await??;
+        let source_dir = Path::from_str("/native-batch-1")?;
+        let moved_dir = Path::from_str("/legacy-after-shared-query")?;
+        let mut legacy = Box::pin(fs.rename(&source_dir, &moved_dir));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(25), &mut legacy).await.is_err(),
+            "legacy speculative rename entered a shared projection boundary");
+        drop(shared);
+        tokio::time::timeout(std::time::Duration::from_secs(5), &mut legacy).await??;
+        assert!(fs.exists(&moved_dir).await?);
         let before_delete = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
         stream::iter(0..32).map(|i| {
             let fs = &fs;
@@ -712,7 +735,7 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         let namespace = control(&fs, &json!({"op":"namespace"})).await?;
         let epoch = namespace["data"]["epoch"].as_u64().unwrap();
         let gate = active.fs_dir().read().hsm_test_mutation_gate();
-        let pause = gate.lock().await;
+        let pause = gate.write().await;
         let claim = json!({"op":"claim_controller", "expected_epoch":epoch,
             "context":{"operation_id":format!("cancelled-{}", request_id()), "controller_epoch":epoch,"attempt_epoch":1}});
         let mut caller = Box::pin(active.hsm_control(HsmControlRequest { protocol_version: 1, payload: serde_json::to_vec(&claim)? }));

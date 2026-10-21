@@ -41,7 +41,7 @@ const MODE_SETGID: u32 = 0o2000;
 /// Note: The modification operation uses &mut self, which is a necessary improvement. We use the unsafe API to perform modifications.
 pub struct FsDir {
     pub(crate) hsm_replaying: bool,
-    pub(crate) hsm_mutation_gate: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) hsm_mutation_gate: Arc<tokio::sync::RwLock<()>>,
     pub(crate) hsm_control_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) hsm_metadata_reads: Arc<crate::master::committed::MetadataReads>,
     pub(crate) hsm_read_batcher: Arc<crate::master::hsm::read_batch::ReadBatcher>,
@@ -254,7 +254,7 @@ impl FsDir {
     }
 
     #[cfg(feature = "hsm-scale-test")]
-    pub fn hsm_test_mutation_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
+    pub fn hsm_test_mutation_gate(&self) -> Arc<tokio::sync::RwLock<()>> {
         self.hsm_mutation_gate.clone()
     }
 

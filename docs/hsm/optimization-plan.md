@@ -300,3 +300,12 @@ Native journal v4 激活删除效果，保留 v3 字段编码并继续读取 v1/
 逻辑元数据 RPC 现进入 MetadataReads：每批取资格后才授予同步只读 handler；协调 gate 保持到该批查询完成，避免旧式 writer 的未提交投影。客户端取消关闭只读 ticket，不会留下未确认修改；不记录永久结果，不替代文件内容读取的租约。GetFilesystemInfo/心跳等派生容量状态继续原有路径。
 
 验证：Master 242 项、两个真实集群用例及完整 HSM workspace 的 30 项功能/全部文档测试通过。集群用例检查 32 个元数据查询合批、不增加空 barrier 或工作流结果，以及取消后后续元数据操作可完成。增强的进程重启用例要求首次 Exists 自身正确，随后检查 Record 不存在、退休清单仍被处理并最终收到 Worker 删除确认；不借助预先执行 HSM 查询掩盖旧前缀。此场景是保留数据目录的全进程重启，并非单节点在线故障或磁盘丢失验收。
+
+
+### 追加里程碑：owned 路径共享投影边界
+
+过渡投影 gate 改为读写边界：Native owned 命令、读取保护批处理、纯元数据查询和策略快照取共享资格；旧式 handler/background 修改、普通 HSM 控制、策略入队及 namespace 初始化取独占资格。共享路径只准备 owned 变更，仍等待实际 commit/local apply，按 inode/HSM version 条件发布；同 inode 的并发变化可以被 CAS 拒绝，不把它描述成无冲突并发。旧式先修改投影的代码不能进入共享段。
+
+Native 已绑定请求只读取现有 ordinary_format>=2 的 namespace。读取及扫描在进入共享段前，由 owned 协调任务完成必要的独占 namespace 创建/升级，不确定时在独占资格内确认前缀。Writer/reader/progress 的实际状态机顺序仍由 Raft 决定。此改造没有更改磁盘编码，旧式路径未迁移前仍需保留独占边界。
+
+验证：Master 242 项、两个真实集群用例通过。新增共享资格持有期间 Native mkdir、数据读/close 和 FileStatus 均可完成，旧式 rename 等待共享资格释放后才执行；首次直接 open_path 能完成 namespace 初始化。完整组合 HSM 回归随相邻 prepared 日志合批一起执行。

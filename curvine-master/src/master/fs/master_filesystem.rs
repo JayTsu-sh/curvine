@@ -131,7 +131,7 @@ impl MasterFilesystem {
         if !enabled {
             return action();
         }
-        let _serial = gate.blocking_lock();
+        let _serial = gate.blocking_write();
         let term = self
             .master_monitor
             .journal_term

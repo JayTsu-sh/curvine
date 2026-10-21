@@ -4,17 +4,17 @@
 use crate::master::fs::MasterFilesystem;
 use curvine_model::hsm::native::*;
 use std::{future::Future, sync::Arc};
-use tokio::sync::{Mutex, OwnedMutexGuard};
+use tokio::sync::{OwnedRwLockWriteGuard, RwLock};
 
 pub(super) struct AuthorityTurn {
-    gate: Arc<Mutex<()>>,
-    guard: Option<OwnedMutexGuard<()>>,
+    gate: Arc<RwLock<()>>,
+    guard: Option<OwnedRwLockWriteGuard<()>>,
     invalidated: bool,
 }
 impl AuthorityTurn {
     pub(super) async fn acquire(fs: &MasterFilesystem) -> Self {
         let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
-        let guard = gate.clone().lock_owned().await;
+        let guard = gate.clone().write_owned().await;
         Self {
             gate,
             guard: Some(guard),
@@ -46,7 +46,7 @@ impl AuthorityTurn {
                 .observe(started.elapsed().as_micros() as f64);
         }
         let waiting = std::time::Instant::now();
-        self.guard = Some(self.gate.clone().lock_owned().await);
+        self.guard = Some(self.gate.clone().write_owned().await);
         if let Ok(metrics) = crate::master::Master::get_metrics() {
             metrics
                 .hsm_stage_duration

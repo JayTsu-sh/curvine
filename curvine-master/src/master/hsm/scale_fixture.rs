@@ -33,7 +33,7 @@ impl MasterFilesystem {
             ));
         }
         let gate = self.fs_dir.read().hsm_mutation_gate.clone();
-        let _serial = gate.lock().await;
+        let _serial = gate.write().await;
         if self.exists(root).map_err(io)? {
             return Err(HsmError::Conflict(
                 "scale fixture prefix already exists".into(),

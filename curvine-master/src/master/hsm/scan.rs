@@ -34,11 +34,17 @@ impl MasterFilesystem {
             .map_err(io)?;
         let context: OperationContext = field(&request, "context")?;
         context.validate()?;
+        self.hsm_ensure_read_namespace().await?;
         let gate = self.fs_dir.read().hsm_mutation_gate.clone();
-        let serial = gate.lock().await;
+        let serial = gate.read().await;
         let readiness = async {
             self.hsm_read_barrier().await?;
-            self.hsm_namespace_init().await
+            self.fs_dir
+                .read()
+                .hsm_namespace()
+                .map_err(io)?
+                .filter(|namespace| namespace.ordinary_format >= 2)
+                .ok_or_else(|| HsmError::Unknown("scan namespace requires initialization".into()))
         }
         .await;
         let namespace = match readiness {
@@ -67,7 +73,7 @@ impl MasterFilesystem {
         ready?;
         let page = work.await.map_err(io)??;
         let wait = Instant::now();
-        let _serial = gate.lock().await;
+        let _serial = gate.write().await;
         self.hsm_read_barrier().await?;
         let current = self.fs_dir.read().hsm_namespace().map_err(io)?;
         let current = current.ok_or(HsmError::Fenced)?;

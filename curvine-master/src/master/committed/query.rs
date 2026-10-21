@@ -120,7 +120,7 @@ impl MetadataReads {
             tokio::task::yield_now().await;
             let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
             let waiting = Instant::now();
-            let _serial = gate.lock().await;
+            let _serial = gate.read().await;
             let Some(mut batch) = self.take() else {
                 return;
             };

@@ -933,8 +933,8 @@ mod tests {
             Some(monitor.journal_term.clone()),
         )?);
         let batcher = Arc::new(HsmMutationBatcher::default());
-        let gate = Arc::new(tokio::sync::Mutex::new(()));
-        let held = gate.lock().await;
+        let gate = Arc::new(tokio::sync::RwLock::new(()));
+        let held = gate.write().await;
         let (mutated, observed) = tokio::sync::oneshot::channel();
         let mut mutated = Some(mutated);
         let mut tasks = Vec::new();
@@ -987,7 +987,7 @@ mod tests {
         observed.await.unwrap();
         tasks[0].abort();
         assert!(
-            tokio::time::timeout(Duration::from_millis(25), gate.lock())
+            tokio::time::timeout(Duration::from_millis(25), gate.write())
                 .await
                 .is_err(),
             "a canceled caller must not expose speculative state"
