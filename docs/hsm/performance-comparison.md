@@ -136,6 +136,8 @@ on 组另以普通 SDK 预置 2048 个空文件，随后在同一规模、同一
 
 ## 影响来源与后续优化方向
 
+具体接口、实施顺序和安全验收要求见 [性能优化方案](optimization-plan.md)。这是设计建议，不是已实现的优化结果。
+
 1. 元数据修改的全局串行协调、额外 Raft barrier 与强制 flush 批次，是当前每文件操作的主要结构性成本。该解释来自 [MasterHandler](../../curvine-master/src/master/master_handler.rs)、[hsm_read_barrier](../../curvine-master/src/master/hsm.rs) 和 [SenderTask](../../curvine-master/src/master/journal/sender_task.rs)；本次没有用 tracing 精确分摊各部分耗时。
 2. 受保护读取打开、关闭会更新访问观察/读取租约并等待提交，在线大文件也有固定成本。原版纯查询式 open 的性能不能直接保留到当前实现。
 3. Record JSON、真实 atime 候选迁移和持久控制结果增加写入与日志量；前轮差量索引优化减少冗余写，但没有移除全局 gate 或每 RPC barrier。

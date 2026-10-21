@@ -44,3 +44,5 @@
 2026-10-21 增加有界启动清理、差量派生索引维护和元数据条件前置。百万 Record 三轮对比、隔离 MiniCluster 的百万 namespace/策略/召回/checkpoint 恢复，以及 PVE FUSE 复测的范围与原始数据见 [规模测试记录](scale-validation.md)。百万 namespace 通过内部正常钩子批量预置，不代表百万普通客户端写入吞吐验收。
 
 原版 Curvine、HSM 关闭、HSM 开启的前台性能差异、策略扫描影响与复现方法，另见 [引入 HSM 的性能对比](performance-comparison.md)。这与前文“已有 HSM 的优化前后”属于不同对比。
+
+按实测瓶颈排序的 [性能优化方案](optimization-plan.md) 描述自身日志回执、统一提交微批、读取保护和策略扫描改造；状态为设计建议，尚未实现收益。
