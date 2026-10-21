@@ -192,3 +192,141 @@ fn lost_ack_returns_unknown_without_reproposing_speculative_journal() {
     assert_eq!(peer.proposals.lock().unwrap().len(), 1);
     assert_eq!(sender.batch.len(), 1);
 }
+
+fn authority(op_id: u64, ticket: &str, term: u64, native_entry: bool) -> JournalMessage {
+    let entry = if native_entry {
+        JournalEntry::Native(NativeEntry {
+            op_id,
+            ticket: ticket.into(),
+            payload: vec![1, 2, 3],
+        })
+    } else {
+        JournalEntry::Hsm(crate::master::journal::HsmEntry {
+            op_id,
+            ticket: ticket.into(),
+            payload: vec![4, 5, 6],
+        })
+    };
+    JournalMessage::Entry {
+        entry,
+        term: Some(term),
+    }
+}
+fn ready_receiver(messages: Vec<JournalMessage>) -> BlockingReceiver<JournalMessage> {
+    let (send, receiver) = curvine_runtime::sync::channel::BlockingChannel::new(0).split();
+    for message in messages {
+        send.send(message).unwrap();
+    }
+    receiver
+}
+#[test]
+fn ready_native_and_hsm_entries_share_one_proposal_and_each_original_receipt() {
+    let (mut sender, peer) = sender(Some(42));
+    let (a, mut ar) = tokio::sync::oneshot::channel();
+    let (b, mut br) = tokio::sync::oneshot::channel();
+    sender.hsm_waiters.insert("a".into(), a);
+    sender.hsm_waiters.insert("b".into(), b);
+    // Idle time must not force the first authority entry out before draining
+    // its already-ready neighbour.
+    sender.last_flush_ms = 0;
+    let queue = ready_receiver(vec![authority(2, "b", 7, false)]);
+    sender
+        .handle_ready(Some(authority(1, "a", 7, true)), &queue)
+        .unwrap();
+    assert_eq!(ar.try_recv().unwrap(), Ok(()));
+    assert_eq!(br.try_recv().unwrap(), Ok(()));
+    let proposals = peer.proposals.lock().unwrap();
+    assert_eq!(proposals.len(), 1);
+    let batch: JournalBatch = SerdeUtils::deserialize(&proposals[0].data).unwrap();
+    assert_eq!(batch.len(), 2);
+    assert_eq!(proposals[0].expected_term, Some(7));
+    assert!(matches!(&batch.batch[0],JournalEntry::Native(entry) if entry.ticket=="a"));
+    assert!(matches!(&batch.batch[1],JournalEntry::Hsm(entry) if entry.ticket=="b"));
+}
+#[test]
+fn ready_authority_burst_preserves_legacy_and_term_boundaries() {
+    let (mut sender, peer) = sender(Some(42));
+    sender.handle(Some(native(1))).unwrap();
+    let queue = ready_receiver(vec![authority(3, "b", 8, false), native(4)]);
+    sender
+        .handle_ready(Some(authority(2, "a", 7, true)), &queue)
+        .unwrap();
+    assert_eq!(sender.batch.len(), 1); // following legacy entry keeps normal batching
+    sender.handle(None).unwrap();
+    let proposals = peer.proposals.lock().unwrap();
+    assert_eq!(proposals.len(), 3);
+    assert_eq!(proposals[0].expected_term, Some(7));
+    assert_eq!(proposals[1].expected_term, Some(7));
+    assert_eq!(proposals[2].expected_term, Some(8));
+    for proposal in proposals.iter() {
+        let batch: JournalBatch = SerdeUtils::deserialize(&proposal.data).unwrap();
+        assert_eq!(batch.len(), 1);
+    }
+}
+#[test]
+fn ready_authority_commit_fence_and_cancelled_receipt_keep_fifo_commit() {
+    let (mut sender, peer) = sender(Some(42));
+    let (a, ar) = tokio::sync::oneshot::channel();
+    drop(ar);
+    let (b, mut br) = tokio::sync::oneshot::channel();
+    let (fence, mut done) = tokio::sync::oneshot::channel();
+    sender.hsm_waiters.insert("a".into(), a);
+    sender.hsm_waiters.insert("b".into(), b);
+    let queue = ready_receiver(vec![
+        authority(2, "b", 7, false),
+        JournalMessage::Commit(fence),
+    ]);
+    sender
+        .handle_ready(Some(authority(1, "a", 7, true)), &queue)
+        .unwrap();
+    assert_eq!(br.try_recv().unwrap(), Ok(()));
+    assert_eq!(done.try_recv().unwrap(), Ok(()));
+    assert!(sender.hsm_waiters.is_empty());
+    assert!(sender.batch.is_empty());
+    assert_eq!(peer.proposals.lock().unwrap().len(), 1);
+}
+#[test]
+fn ready_authority_missing_commit_proof_rejects_all_receipts_without_reproposal() {
+    let (mut sender, peer) = sender(None);
+    let (a, mut ar) = tokio::sync::oneshot::channel();
+    let (b, mut br) = tokio::sync::oneshot::channel();
+    sender.hsm_waiters.insert("a".into(), a);
+    sender.hsm_waiters.insert("b".into(), b);
+    let queue = ready_receiver(vec![authority(2, "b", 7, false)]);
+    assert!(sender
+        .handle_ready(Some(authority(1, "a", 7, true)), &queue)
+        .is_err());
+    assert!(ar
+        .try_recv()
+        .unwrap()
+        .unwrap_err()
+        .contains("no committed apply index"));
+    assert!(br
+        .try_recv()
+        .unwrap()
+        .unwrap_err()
+        .contains("no committed apply index"));
+    assert_eq!(sender.batch.len(), 2);
+    assert_eq!(peer.proposals.lock().unwrap().len(), 1);
+}
+#[test]
+fn ready_authority_burst_leaves_requests_beyond_its_count_bound_in_the_queue() {
+    let (mut sender, peer) = sender(Some(42));
+    let queue = ready_receiver(
+        (2..=33)
+            .map(|id| authority(id, &id.to_string(), 7, id % 2 == 0))
+            .collect(),
+    );
+    sender
+        .handle_ready(Some(authority(1, "first", 7, true)), &queue)
+        .unwrap();
+    assert_eq!(peer.proposals.lock().unwrap().len(), 1);
+    let next = queue.try_recv().unwrap();
+    sender.handle_ready(Some(next), &queue).unwrap();
+    let proposals = peer.proposals.lock().unwrap();
+    assert_eq!(proposals.len(), 2);
+    let first: JournalBatch = SerdeUtils::deserialize(&proposals[0].data).unwrap();
+    let second: JournalBatch = SerdeUtils::deserialize(&proposals[1].data).unwrap();
+    assert_eq!(first.len(), 32);
+    assert_eq!(second.len(), 1);
+}

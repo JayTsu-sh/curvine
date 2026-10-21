@@ -1,6 +1,6 @@
 # HSM 性能优化方案
 
-状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open、非递归 SetAttr 和非递归 Delete 接入真实 committed 命令与 SDK 会话去重，其余 namespace 修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open、非递归 SetAttr 和非递归 Delete 接入真实 committed 命令与 SDK 会话去重，其余 namespace 修改仍走过渡微批；owned 路径共享投影资格，相邻 prepared Native/HSM 条目可共用 proposal，队列级统一调度仍未完成；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
 
 ## 当前实现与完成门槛（2026-10-22）
 
@@ -309,3 +309,12 @@ Native journal v4 激活删除效果，保留 v3 字段编码并继续读取 v1/
 Native 已绑定请求只读取现有 ordinary_format>=2 的 namespace。读取及扫描在进入共享段前，由 owned 协调任务完成必要的独占 namespace 创建/升级，不确定时在独占资格内确认前缀。Writer/reader/progress 的实际状态机顺序仍由 Raft 决定。此改造没有更改磁盘编码，旧式路径未迁移前仍需保留独占边界。
 
 验证：Master 242 项、两个真实集群用例通过。新增共享资格持有期间 Native mkdir、数据读/close 和 FileStatus 均可完成，旧式 rename 等待共享资格释放后才执行；首次直接 open_path 能完成 namespace 初始化。完整组合 HSM 回归随相邻 prepared 日志合批一起执行。
+
+
+### 追加里程碑：相邻 prepared Native/HSM 条目共用 proposal
+
+发送线程只收集当前已经就绪的 Native/HSM entry，不增加固定等待定时器。每轮最多取 32 条，以 8 MiB 为 proposal 收集预算；单项可单独进展，后续项超预算时拆开提交。Native/HSM 的原始 ticket 仍分别对应自身本地 apply 结果，并共同等待该 proposal 的真实 committed/apply 回执。此处的 entry 是一个已经准备好的命令批，不能与每批内部最多 32 个逻辑命令混淆。
+
+遇到 legacy entry、任期变化、提交 fence 或 snapshot 保留原顺序与边界；不将先修改投影的旧 handler 混入 owned 提案。不确定/缺少 applied index 时整批 ticket 返回未知并保留待处理批，运行线程停止当前 Master，不能重提 speculative 内容。`authority_proposals/authority_entries/mixed_authority_proposals` 用于记录实际结构指标。
+
+验证：Master 247 项、两个真实集群用例通过。新增 transport 测试检查混合顺序、各自回执、legacy/term/fence 边界、取消回执、缺失提交证明及 32 条上限。真实集群同时执行独立 inode 上的 64 次创建和 64 次受保护读取，再关闭所有读者，验证结果及后续操作；不以单元测试证明实际工作负载必然出现混合 proposal，也不将合并能力直接称为实测吞吐收益。独立队列的调度、其余 namespace/background 修改仍待收敛。

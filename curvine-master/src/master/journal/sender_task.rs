@@ -26,6 +26,9 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::thread;
 use std::time::Duration;
 
+const MAX_AUTHORITY_BURST: usize = 32;
+const MAX_AUTHORITY_BYTES: usize = 8 * 1024 * 1024;
+
 pub struct SenderTask {
     pub(crate) client: RaftClient,
     pub(crate) hsm_waiters: super::HsmWaiters,
@@ -88,11 +91,65 @@ impl SenderTask {
                     return Ok(());
                 }
             };
-            task.handle(event)?;
+            task.handle_ready(event, &receiver)?;
         }
     }
 
+    /// Collect only already-ready committed Native/HSM entries. This adds no
+    /// timer to a lone request, preserves FIFO fences/term boundaries, and
+    /// never mixes speculative legacy entries into the authority proposal.
+    fn handle_ready(
+        &mut self,
+        first: Option<JournalMessage>,
+        receiver: &BlockingReceiver<JournalMessage>,
+    ) -> FsResult<()> {
+        let Some(mut bytes) = first.as_ref().and_then(Self::authority_bytes) else {
+            return self.handle(first);
+        };
+        self.handle_mode(first, true)?;
+        for _ in 1..MAX_AUTHORITY_BURST {
+            if bytes >= MAX_AUTHORITY_BYTES {
+                break;
+            }
+            let Ok(next) = receiver.try_recv() else {
+                break;
+            };
+            let Some(next_bytes) = Self::authority_bytes(&next) else {
+                return self.handle(Some(next));
+            };
+            if bytes.saturating_add(next_bytes) > MAX_AUTHORITY_BYTES {
+                self.flush_pending()?;
+                return self.handle(Some(next));
+            }
+            bytes += next_bytes;
+            self.handle_mode(Some(next), true)?;
+        }
+        self.flush_pending()
+    }
+    fn authority_bytes(message: &JournalMessage) -> Option<usize> {
+        let payload = match message {
+            JournalMessage::Entry {
+                entry: JournalEntry::Native(entry),
+                ..
+            } => &entry.payload,
+            JournalMessage::Entry {
+                entry: JournalEntry::Hsm(entry),
+                ..
+            } => &entry.payload,
+            _ => return None,
+        };
+        // Envelope fields are bounded tickets and integer IDs; leave ample
+        // space without serializing each payload a second time just to count.
+        Some(payload.len().saturating_add(128))
+    }
     pub fn handle(&mut self, message: Option<JournalMessage>) -> FsResult<()> {
+        self.handle_mode(message, false)
+    }
+    fn handle_mode(
+        &mut self,
+        message: Option<JournalMessage>,
+        defer_authority: bool,
+    ) -> FsResult<()> {
         let entry = match message {
             Some(JournalMessage::CommitBlocking(tx)) => {
                 self.metrics.journal_commit_fences.inc();
@@ -108,8 +165,20 @@ impl SenderTask {
                 return result;
             }
             Some(JournalMessage::Entry { entry, term }) => {
-                if entry.committed_ticket().is_some()
-                    || (!self.batch.is_empty() && self.batch_term != term)
+                let authority = entry.committed_ticket().is_some();
+                let has_authority = self
+                    .batch
+                    .batch
+                    .iter()
+                    .any(|entry| entry.committed_ticket().is_some());
+                let has_legacy = self
+                    .batch
+                    .batch
+                    .iter()
+                    .any(|entry| entry.committed_ticket().is_none());
+                if (!self.batch.is_empty() && self.batch_term != term)
+                    || (authority && (!defer_authority || has_legacy))
+                    || (!authority && has_authority)
                 {
                     self.flush_pending()?;
                 }
@@ -119,7 +188,8 @@ impl SenderTask {
             None => None,
         };
         let force = if let Some(v) = entry {
-            let force = matches!(v, JournalEntry::Snapshot(_)) || v.committed_ticket().is_some();
+            let force = matches!(v, JournalEntry::Snapshot(_))
+                || (!defer_authority && v.committed_ticket().is_some());
             self.batch.push(v);
             self.metrics.journal_queue_len.dec();
             force
@@ -132,7 +202,16 @@ impl SenderTask {
             return Ok(());
         }
 
-        if force || len >= self.flush_batch_size || self.flush_interval_elapsed() {
+        let collecting_authority = defer_authority
+            && self
+                .batch
+                .batch
+                .iter()
+                .any(|entry| entry.committed_ticket().is_some());
+        if force
+            || len >= self.flush_batch_size
+            || (!collecting_authority && self.flush_interval_elapsed())
+        {
             self.flush_pending()?;
         }
 
@@ -162,6 +241,17 @@ impl SenderTask {
             .iter()
             .filter_map(|entry| entry.committed_ticket().map(str::to_owned))
             .collect();
+        let authority_count = tickets.len();
+        let mixed_authority = self
+            .batch
+            .batch
+            .iter()
+            .any(|entry| matches!(entry, JournalEntry::Native(_)))
+            && self
+                .batch
+                .batch
+                .iter()
+                .any(|entry| matches!(entry, JournalEntry::Hsm(_)));
         let result = if let Some(term) = self.batch_term {
             self.client
                 .block_on_send_local_propose(self.node_id, term, bytes)
@@ -184,6 +274,18 @@ impl SenderTask {
             return err_box!("{}", e);
         }
 
+        if authority_count > 0 {
+            self.metrics
+                .hsm_batch_size
+                .with_label_values(&["authority_submit"])
+                .observe(authority_count as f64);
+            if mixed_authority {
+                self.metrics
+                    .hsm_batch_size
+                    .with_label_values(&["mixed_authority_submit"])
+                    .observe(authority_count as f64);
+            }
+        }
         self.metrics.journal_flush_count.inc();
         self.metrics
             .journal_flush_time

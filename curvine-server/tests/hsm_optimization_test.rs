@@ -327,6 +327,19 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert!(bundles > 0 && bundles < 32 && commands >= 32.0,
             "nonrecursive setattr did not use native committed batches");
         assert_eq!(fs.get_status(&Path::from_str("/native-file-0")?).await?.owner, "policy-owner");
+        // Real cross-family load touches independent inodes. Both pipelines
+        // must preserve their results when ready entries share a proposal.
+        let writes = stream::iter(0..64).map(|i| {
+            let fs = &fs;
+            async move { fs.mkdir(&Path::from_str(format!("/mixed-owned-{i}"))?, false).await }
+        }).buffer_unordered(16).try_collect::<Vec<_>>();
+        let opens = stream::iter(0..64).map(|_| {
+            let fs = &fs;
+            async move { fs.open(&Path::from_str("/native-file-0")?).await }
+        }).buffer_unordered(16).try_collect::<Vec<_>>();
+        let (_, concurrent_readers) = tokio::try_join!(writes, opens)?;
+        stream::iter(concurrent_readers).map(|mut reader| async move { reader.complete().await })
+            .buffer_unordered(16).try_collect::<Vec<_>>().await?;
         // A shared projection boundary represents an in-flight owned query
         // or committed command. Other owned families progress; legacy
         // speculative namespace handlers remain excluded until it finishes.
