@@ -803,6 +803,17 @@ impl JournalLoader {
         };
         let file = inode.as_file_mut()?;
         let _ = mem::replace(&mut file.blocks, entry.blocks);
+        // Legacy AddBlock entries contain the whole layout, but no next_seq.
+        // A crash before CompleteFile must not reset the allocation cursor and
+        // later reuse a live or retired block ID under the same inode.
+        if let Some(next) = file
+            .blocks
+            .iter()
+            .map(|block| InodeId::get_seq(block.id) as u32 + 1)
+            .max()
+        {
+            file.next_seq = file.next_seq.max(next);
+        }
         fs_dir
             .store
             .apply_new_block(inode.as_ref(), &entry.commit_block)?;
@@ -1173,6 +1184,38 @@ mod tests {
             data,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn legacy_add_block_replay_preserves_the_allocation_sequence_floor() -> FsResult<()> {
+        Master::init_test_metrics();
+        let (conf, root) = ignore_reply_error_conf("legacy-block-sequence", false);
+        let js = JournalSystem::from_conf(&conf)?;
+        let fs = js.fs();
+        let status = fs.create("/incomplete", false)?;
+        let loader = js.journal_loader();
+        let prior = InodeId::create_block_id(status.id, 7)?;
+        loader.add_block(AddBlockEntry {
+            op_id: 1,
+            rpc_id: 1,
+            path: "/incomplete".into(),
+            blocks: vec![crate::master::meta::BlockMeta::new(prior, 0)],
+            commit_block: vec![],
+        })?;
+        let next = {
+            let dir = fs.fs_dir.read();
+            let mut inode = dir.store.get_inode(status.id, None)?.unwrap();
+            inode.as_file_mut()?.next_block_id()?
+        };
+        drop(loader);
+        js.shutdown();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            InodeId::get_seq(next),
+            8,
+            "recovery must not reuse an ID already allocated before a crash"
+        );
+        Ok(())
     }
 
     #[test]
