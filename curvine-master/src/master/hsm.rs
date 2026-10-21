@@ -760,9 +760,8 @@ impl MasterFilesystem {
     async fn hsm_serial_execute(&self, request: Value) -> HsmResult<Value> {
         // Legacy native writers still share this boundary until committed
         // publication is activated for every relevant mutation family.
-        let gate = self.fs_dir.read().hsm_mutation_gate.clone();
-        let _serial = gate.lock().await;
-        let result = self.hsm_execute(request).await;
+        let mut turn = turn::AuthorityTurn::acquire(self).await;
+        let result = self.hsm_execute(request, &mut turn).await;
         if matches!(&result, Err(HsmError::Unknown(_))) {
             if let Err(error) = self.hsm_read_barrier().await {
                 log::error!("HSM unknown outcome could not be fenced: {error}; aborting master");
@@ -778,7 +777,11 @@ impl MasterFilesystem {
             self.get_block_locations(path).map_err(io)?,
         ))
     }
-    async fn hsm_execute(&self, mut request: Value) -> HsmResult<Value> {
+    async fn hsm_execute(
+        &self,
+        mut request: Value,
+        turn: &mut turn::AuthorityTurn,
+    ) -> HsmResult<Value> {
         let unified_open = request["op"] == "open_path";
         if unified_open {
             request["op"] = Value::String("read_path".into());
@@ -894,14 +897,14 @@ impl MasterFilesystem {
             let mut processed = native_processed;
             for (_, bytes) in page {
                 let entity: EntityKey = decode(&bytes).map_err(io)?;
-                self.hsm_gc(&namespace, &entity).await?;
+                self.hsm_gc(&namespace, &entity, turn).await?;
                 processed += 1;
             }
             return Ok(reply("gc", processed));
         }
         if op == "collect_garbage" {
             let entity: EntityKey = field(&request, "entity")?;
-            self.hsm_gc(&namespace, &entity).await?;
+            self.hsm_gc(&namespace, &entity, turn).await?;
             let fs = self.fs_dir.read();
             let record = fs
                 .hsm_record(entity_id(&entity, &namespace)?)
@@ -1043,8 +1046,11 @@ impl MasterFilesystem {
                     .hsm_record(entity_id(&target.data.entity, &namespace)?)
                     .map_err(io)?
                     .ok_or_else(|| HsmError::NotFound("managed entity".into()))?;
-                if let Some((_, _, layout)) = &record.pending {
-                    self.allocate(layout).await?;
+                if let Some((owner, pending, layout)) = &record.pending {
+                    if same_attempt(owner, &context) && pending == &target {
+                        turn.external(self, &namespace, self.allocate(layout))
+                            .await?;
+                    }
                 }
             }
             return Ok(outcome.response);
@@ -1071,15 +1077,18 @@ impl MasterFilesystem {
                             "transfer evidence differs from native generation".into(),
                         ));
                     }
-                    match hsm_worker_rpc(
-                        &self.hsm_rpc_conf(),
-                        &layout.worker,
-                        &WorkerRequest::Seal {
-                            allocation: layout.id.clone(),
-                            admin: layout.admin.clone(),
-                        },
-                    )
-                    .await?
+                    let conf = self.hsm_rpc_conf();
+                    let seal = WorkerRequest::Seal {
+                        allocation: layout.id.clone(),
+                        admin: layout.admin.clone(),
+                    };
+                    match turn
+                        .external(
+                            self,
+                            &namespace,
+                            hsm_worker_rpc(&conf, &layout.worker, &seal),
+                        )
+                        .await?
                     {
                         WorkerReply::Sealed(actual) if actual == evidence => (),
                         _ => {
@@ -1093,6 +1102,11 @@ impl MasterFilesystem {
             Ok(())
         }
         .await;
+        if turn.lost_qualification() {
+            // This is an interrupted qualification, not a permanent business
+            // rejection. A new controller may resume the same logical step.
+            return Err(preflight.err().unwrap_or(HsmError::Fenced));
+        }
         if let Err(error) = preflight {
             if matches!(
                 error,
@@ -1131,15 +1145,16 @@ impl MasterFilesystem {
                     .hsm_record(entity_id(&target.data.entity, &namespace)?)
                     .map_err(io)?
                     .ok_or_else(|| HsmError::NotFound("managed allocation".into()))?;
-                if let Some((_, pending, layout)) = &record.pending {
-                    if pending == &target {
-                        self.allocate(layout).await?;
+                if let Some((owner, pending, layout)) = &record.pending {
+                    if same_attempt(owner, &context) && pending == &target {
+                        turn.external(self, &namespace, self.allocate(layout))
+                            .await?;
                     }
                 }
             }
             // Cleanup failure leaves the committed GC outbox, never rolls back Release.
             if let Some(entity) = &plan.gc {
-                let _ = self.hsm_gc(&namespace, entity).await;
+                let _ = self.hsm_gc(&namespace, entity, turn).await;
             }
         }
         Ok(response)
@@ -1533,7 +1548,12 @@ impl MasterFilesystem {
         tx.record = Some(record);
         Ok(Plan { tx, allocate, gc })
     }
-    async fn hsm_gc(&self, namespace: &Namespace, entity: &EntityKey) -> HsmResult<()> {
+    async fn hsm_gc(
+        &self,
+        namespace: &Namespace,
+        entity: &EntityKey,
+        turn: &mut turn::AuthorityTurn,
+    ) -> HsmResult<()> {
         let id = entity_id(entity, namespace)?;
         loop {
             let mut record = self
@@ -1604,20 +1624,47 @@ impl MasterFilesystem {
             if record.published.as_ref().is_some_and(|p| p.id == layout.id) {
                 return Err(HsmError::Integrity("GC references published layout".into()));
             }
-            match hsm_worker_rpc(
-                &self.hsm_rpc_conf(),
-                &layout.worker,
-                &WorkerRequest::Delete {
-                    allocation: layout.id.clone(),
-                    admin: layout.admin.clone(),
-                },
-            )
-            .await?
+            let conf = self.hsm_rpc_conf();
+            let delete = WorkerRequest::Delete {
+                allocation: layout.id.clone(),
+                admin: layout.admin.clone(),
+            };
+            match turn
+                .external(
+                    self,
+                    namespace,
+                    hsm_worker_rpc(&conf, &layout.worker, &delete),
+                )
+                .await?
             {
                 WorkerReply::Done => (),
                 _ => return Err(HsmError::Unknown("GC not acknowledged".into())),
             }
-            record.garbage.remove(0);
+            // Reads and other GC work may have advanced the record while the
+            // Worker was deleting. Remove only the acknowledged immutable ID
+            // from the latest version, retaining new readers/layouts/anchors.
+            let current = self.fs_dir.read().hsm_record(id).map_err(io)?;
+            let Some(current) = current else {
+                return Ok(());
+            };
+            record = current;
+            if record
+                .published
+                .as_ref()
+                .is_some_and(|published| published.id == layout.id)
+            {
+                return Err(HsmError::Integrity(
+                    "retired layout became published".into(),
+                ));
+            }
+            let Some(position) = record
+                .garbage
+                .iter()
+                .position(|garbage| garbage.id == layout.id)
+            else {
+                continue;
+            };
+            record.garbage.remove(position);
             let expected = record.version;
             record.version += 1;
             let tx = Transaction {
@@ -1904,3 +1951,5 @@ mod read_apply;
 
 #[path = "hsm/read_clock.rs"]
 pub(crate) mod read_clock;
+
+mod turn;

@@ -517,6 +517,102 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert_eq!(reader.read(&mut bytes).await?, 10);
         assert_eq!(bytes, b"new layout");
         reader.complete().await?;
+        // Proxy one Worker endpoint and pause a real Seal response. This
+        // tests the complete operation, not a synthetic lock-only callback.
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let proxy_port = listener.local_addr()?.port();
+        let upstream = new_layout.block_locs[0].locs[0].inet_addr().to_string();
+        let pause_reply = Arc::new(AtomicBool::new(false));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let proxy = {
+            let pause_reply = pause_reply.clone(); let entered = entered.clone(); let resume = resume.clone();
+            tokio::spawn(async move {
+                while let Ok((client, _)) = listener.accept().await {
+                    let upstream = upstream.clone(); let pause_reply = pause_reply.clone();
+                    let entered = entered.clone(); let resume = resume.clone();
+                    tokio::spawn(async move {
+                        let server = tokio::net::TcpStream::connect(upstream).await?;
+                        let (mut from_client, mut to_client) = client.into_split();
+                        let (mut from_worker, mut to_worker) = server.into_split();
+                        let send = tokio::spawn(async move { tokio::io::copy(&mut from_client, &mut to_worker).await });
+                        let mut buffer = vec![0; 65536];
+                        loop {
+                            let n = from_worker.read(&mut buffer).await?;
+                            if n == 0 { break; }
+                            if pause_reply.swap(false, Ordering::AcqRel) {
+                                entered.notify_one(); resume.notified().await;
+                            }
+                            to_client.write_all(&buffer[..n]).await?;
+                        }
+                        send.abort();
+                        Ok::<(), std::io::Error>(())
+                    });
+                }
+            })
+        };
+        let proxy_worker = curvine_model::WorkerAddress { worker_id: u32::MAX - 1, hostname: "localhost".into(),
+            ip_addr: "127.0.0.1".into(), rpc_port: proxy_port as u32, ..Default::default() };
+        let actual_worker = new_layout.block_locs[0].locs[0].worker_id;
+        let original_worker = active.worker_manager.read().get_worker(actual_worker).unwrap().clone();
+        let mut retired_for_placement = original_worker.clone();
+        retired_for_placement.status = curvine_model::WorkerStatus::Decommission;
+        active.worker_manager.write().add_test_worker(retired_for_placement);
+        active.worker_manager.write().add_test_worker(curvine_model::WorkerInfo {
+            address: proxy_worker, last_update: curvine_runtime::common::LocalTime::mills(), ..Default::default()
+        });
+        let digest = json!({"algorithm":"blake3", "value":blake3::hash(b"").as_bytes().to_vec()});
+        let namespace = control(&fs, &json!({"op":"namespace"})).await?;
+        let epoch = namespace["data"]["epoch"].as_u64().unwrap();
+        let mut selected = None;
+        for attempt in 0..2 {
+            let context = json!({"operation_id":format!("io-turn-{}-{attempt}", request_id()), "controller_epoch":epoch,"attempt_epoch":1});
+            let prepared = control(&fs, &json!({"op":"prepare_import", "context":context,
+                "path":format!("/.hsm/io-turn-{attempt}"),"length":0,"digest":digest})).await?;
+            assert_eq!(prepared["kind"], "recall");
+            let cap: Vec<u8> = serde_json::from_value(prepared["data"]["destination"]["capability"].clone())?;
+            let endpoint: curvine_model::hsm::native::Endpoint = serde_json::from_slice(&cap)?;
+            if endpoint.worker.rpc_port == proxy_port as u32 {
+                selected = Some((context, prepared["data"].clone())); break;
+            }
+        }
+        let (context, target) = selected.expect("placement did not select the sole live test endpoint");
+        let commit_request = json!({"op":"commit_import", "context":context,"target":target,
+            "evidence":{"length":0,"digest":digest}});
+        pause_reply.store(true, Ordering::Release);
+        let commit = {
+            let fs = fs.clone(); let request = commit_request.clone();
+            tokio::spawn(async move { control(&fs, &request).await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
+        let independent = tokio::time::timeout(std::time::Duration::from_millis(500),
+            fs.mkdir(&Path::from_str("/while-worker-seal-waits")?, false)).await;
+        // Take over while the original controller is waiting for the Worker.
+        // Requalification must fence that publication without caching a
+        // permanent failure that would prevent the new owner from resuming.
+        let takeover = if independent.is_ok() {
+            let claim = json!({"op":"claim_controller", "expected_epoch":epoch,
+                "context":{"operation_id":format!("takeover-{}",request_id()),"controller_epoch":epoch,"attempt_epoch":1}});
+            Some(tokio::time::timeout(std::time::Duration::from_secs(5), control(&fs, &claim)).await)
+        } else { None };
+        resume.notify_one();
+        let interrupted = commit.await??;
+        assert!(independent.is_ok(), "Worker Seal reply wait blocked unrelated committed metadata");
+        independent.unwrap()?;
+        let takeover = takeover.expect("missing takeover result")??;
+        assert_eq!(takeover["kind"], "epoch");
+        assert_eq!(takeover["data"], epoch + 1);
+        assert_eq!(interrupted["kind"], "error");
+        assert_eq!(interrupted["data"]["code"], "fenced");
+        let mut resumed = commit_request;
+        resumed["context"]["controller_epoch"] = json!(epoch + 1);
+        let published = control(&fs, &resumed).await?;
+        assert_eq!(published["kind"], "entity", "old I/O completion poisoned the new controller's logical step");
+        active.worker_manager.write().add_test_worker(original_worker);
+        proxy.abort();
+
         // Once polled/admitted, a controller operation outlives its caller.
         // Pausing the real authority gate makes cancellation deterministic.
         let namespace = control(&fs, &json!({"op":"namespace"})).await?;

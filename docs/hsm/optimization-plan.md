@@ -2,7 +2,7 @@
 
 状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close 和可写 open 接入真实 committed 命令与 SDK 会话去重，其余 namespace 修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
 
-## 当前实现与完成门槛（2026-10-21）
+## 当前实现与完成门槛（2026-10-22）
 
 | 项目 | 本轮代码行为 | 仍需完成或验收 |
 |---|---|---|
@@ -21,6 +21,7 @@
 | 后台写入排序 | TTL/配额回收与失联 Worker 清理的 namespace 修改取得相同 gate，并在 OS 线程等待自身 journal 前缀确认；换主后 TTL 重新入桶；HSM 文件与未过期 inode 的纯延期判断不争提交 gate | 后台修改也迁移为 owned 命令；旧路径的 Worker 删除还需全部改为持久 outbox |
 | 覆盖写清理 | inode、HSM generation、候选索引、每块 GC 事实及副本位置同批提交；Worker 删除由已提交事实驱动；实际删除确认后提交幂等 GC ack，原子移除事实与旧位置；分页游标持久化 | delete/rename 替换及其他旧删除路径仍待迁移；真实故障注入与百万负载验收 |
 | 读历史 | 时间身份 + 持久 floor 拒绝过期请求，每次最多回收 8 对普通读结果/索引；工作流原始成功结果不清理 | 旧 checkpoint 中无历史索引的 legacy outcome 不会被猜测删除 |
+| Worker 等待 | Allocate/Seal/Delete 网络等待释放协调 gate，返回后重新 ReadIndex 与 namespace 资格检查；GC 合并最新记录；控制者切换后可接续原逻辑步骤 | 真实 Raft Leader 故障和网络分区验收；保留旧 namespace 写入的过渡 gate |
 | 数据通道 | 1 MiB 原始二进制 body、有界 JSON 头；连接按 Worker/config 复用，失败/取消丢弃；私有布局、Seal、摘要校验仍保留 | 本轮完整回归后再测传输收益；单副本 Recall HA 不在此优化中假装解决 |
 
 统一提交层采用两入口（submit/read）的内部模块和 SDK 私有适配；准备确定的 owned 变更集、稳定请求身份和原始回复，Leader/Follower 同样 apply。未选用“把全部旧 handler 放入双树影子环境”的方案：它还需隔离 TTL、统计、Worker 删除、mount 和后台写入，正确性改造面更大。不能仅删除当前 gate 或把非确定 handler 原样移到 follower apply。
@@ -249,3 +250,12 @@ Release 的 `Record.native_garbage` 同批建立每块恢复索引及预分配�
 Worker 现在能为尚未到达的 Allocate 持久保存 deleted-only 记录。Delete 确认前先保存退休状态和 owner，再 unlink/目录同步；相同 owner 可重复确认，错误 owner 及迟到 Allocate/Verify 均被拒绝，进程重启不解除。已有活对象 JSON 的 layout 编码保持，新增 null layout 只用于已退休且从未绑定布局的对象；旧解析器对此失败，不会将它当作未分配并重新创建。
 
 确定回归先复现原实现的 NotFound，再验证重启后的迟到请求拒绝。Worker 全量 64 项通过、1 项 ignored。此项为将 Allocate/Seal/Delete 网络等待移出元数据协调边界提供前置保护，尚未把移出本身标为完成。
+
+
+### 追加里程碑：Worker 网络等待不占用协调锁
+
+Allocate、Seal 和私有布局 Delete 的 RPC 等待现在释放协调 gate。释放之前必须已有提交的分配预留或不可变清理事实；未确认的元数据提交不能跨越这个间隔。Worker 返回后重新取得 gate，执行 ReadIndex 并核对 storage/incarnation/controller epoch/root/format，只有重新取得资格才能继续准备或发布。资格丢失不会保存为永久业务失败，新控制者可用原 operation_id/attempt_epoch 和新 controller_epoch 接续。
+
+GC 在 Delete 确认后重新读取最新 Record，只删除已确认的不可变 layout ID，保留等待期间更新的读者、锚点及其他清理义务。已缓存的 prepare 也只对同一次逻辑尝试、同一目标的 pending 分配发出 Allocate。协调 gate 仍保护旧式 namespace 修改，尚未删除。
+
+验证：Master 235 项通过、2 项 ignored；两个真实集群用例通过。新增 TCP 代理暂停真实 Worker Seal 回复：原实现在此期间阻塞独立 mkdir，新实现允许 mkdir 完成；在同一暂停窗口提交控制者接管，旧控制者返回 Fenced，新控制者重试原逻辑步骤成功发布。此用例验证控制者切换，不等同于真实 Raft Leader 故障切换。完整 hsm-rs 集成回归结果另行记录。
