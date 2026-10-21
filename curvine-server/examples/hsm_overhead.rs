@@ -338,6 +338,15 @@ fn main() -> Result {
         return Err("mode must be original/off/on".into());
     }
     let smoke = std::env::var_os("BENCH_SMOKE").is_some();
+    let io_only = std::env::var_os("BENCH_IO_ONLY").is_some();
+    let large_files = std::env::var("BENCH_LARGE_FILES")
+        .ok()
+        .map(|v| v.parse::<usize>())
+        .transpose()?
+        .unwrap_or(if smoke { 2 } else { 8 });
+    if !(1..=1024).contains(&large_files) {
+        return Err("BENCH_LARGE_FILES must be 1..1024".into());
+    }
     let metadata_count = if smoke { 16 } else { 256 };
     let mut conf = ClusterConf::format();
     conf.testing = false;
@@ -384,35 +393,37 @@ fn main() -> Result {
         metadata(&filesystem, "/warmup", 16, 4).await?;
         data_io(&filesystem, "/warmup-data", 4, 4096, 4).await?;
         let mut reports = vec![];
-        for concurrency in [1, 16] {
-            reports.extend(
-                metadata(
-                    &filesystem,
-                    &format!("/meta-{concurrency}"),
-                    metadata_count,
-                    concurrency,
-                )
-                .await?,
-            );
-        }
-        for concurrency in [1, 16] {
-            reports.extend(
-                data_io(
-                    &filesystem,
-                    &format!("/small-{concurrency}"),
-                    if smoke { 8 } else { 128 },
-                    4096,
-                    concurrency,
-                )
-                .await?,
-            );
+        if !io_only {
+            for concurrency in [1, 16] {
+                reports.extend(
+                    metadata(
+                        &filesystem,
+                        &format!("/meta-{concurrency}"),
+                        metadata_count,
+                        concurrency,
+                    )
+                    .await?,
+                );
+            }
+            for concurrency in [1, 16] {
+                reports.extend(
+                    data_io(
+                        &filesystem,
+                        &format!("/small-{concurrency}"),
+                        if smoke { 8 } else { 128 },
+                        4096,
+                        concurrency,
+                    )
+                    .await?,
+                );
+            }
         }
         for concurrency in [1, 4] {
             reports.extend(
                 data_io(
                     &filesystem,
                     &format!("/large-{concurrency}"),
-                    if smoke { 2 } else { 8 },
+                    large_files,
                     if smoke { 1048576 } else { 64 * 1048576 },
                     concurrency,
                 )
@@ -421,7 +432,7 @@ fn main() -> Result {
         }
         let mut scan = Value::Null;
         #[cfg(feature = "hsm-scale-test")]
-        if mode == "on" {
+        if mode == "on" && !io_only {
             scan =
                 scan_comparison(&filesystem, metadata_count, if smoke { 32 } else { 2048 }).await?;
         }
@@ -432,7 +443,7 @@ fn main() -> Result {
     let mut report = results;
     report["elapsed_seconds"] = json!(start.elapsed().as_secs_f64());
     report["process_final"] = proc_stats()?;
-    report["topology"] = json!({"masters":3,"workers":1,"server_and_client_processes":1,"replicas":1,"ufs":false,"short_circuit":false,"metadata_files_per_suite":metadata_count,"smoke":smoke});
+    report["topology"] = json!({"masters":3,"workers":1,"server_and_client_processes":1,"replicas":1,"ufs":false,"short_circuit":false,"metadata_files_per_suite":metadata_count,"smoke":smoke,"io_only":io_only,"large_files":large_files});
     fs::write(
         root.join("report.json"),
         serde_json::to_vec_pretty(&report)?,

@@ -32,9 +32,13 @@ def main():
     parser.add_argument('--hsm-rev', required=True)
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--smoke', action='store_true')
+    parser.add_argument('--io-only', action='store_true', help='Only measure large-file I/O after warmup')
+    parser.add_argument('--large-files', type=int, default=None, help='Large files per concurrency level (default 8, smoke 2)')
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error('--rounds must be positive')
+    if args.large_files is not None and not 1 <= args.large_files <= 1024:
+        parser.error('--large-files must be 1..1024')
     if args.output.exists() and any(args.output.iterdir()):
         parser.error('--output must be new or empty')
     args.output.mkdir(parents=True, exist_ok=True)
@@ -53,6 +57,8 @@ def main():
         'binaries': {mode: {'sha256': sha256(binary), 'bytes': binary.stat().st_size} for mode, binary in binaries.items()},
         'rounds': args.rounds,
         'smoke': args.smoke,
+        'io_only': args.io_only,
+        'large_files': args.large_files or (2 if args.smoke else 8),
         'profile': 'release (both builds; see build commands)',
         'cache': 'fresh process and DB per invocation; no OS page cache purge',
         'execution': 'sequential clusters; rotated order; shared VM; loopback RPC; no physical node fault isolation',
@@ -67,8 +73,14 @@ def main():
             env = os.environ.copy()
             env.update(BENCH_ROOT=str(run.resolve()), BENCH_MODE=mode)
             env.pop('BENCH_SMOKE', None)
+            env.pop('BENCH_IO_ONLY', None)
+            env.pop('BENCH_LARGE_FILES', None)
             if args.smoke:
                 env['BENCH_SMOKE'] = '1'
+            if args.io_only:
+                env['BENCH_IO_ONLY'] = '1'
+            if args.large_files is not None:
+                env['BENCH_LARGE_FILES'] = str(args.large_files)
             print(f'START r{round_index+1} {mode}', flush=True)
             start = time.monotonic()
             max_rss = 0
