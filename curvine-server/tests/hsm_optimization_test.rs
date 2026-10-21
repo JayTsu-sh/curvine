@@ -77,6 +77,17 @@ fn disabled_native_mkdir_preserves_legacy_confirmation_and_rejects_bound_namespa
         assert!(response.incarnation.is_empty());
         assert!(fs.exists(&Path::from_str("/off")?).await?);
         fs.mkdir(&Path::from_str("/sdk-off")?, false).await?;
+        let changed = fs
+            .set_attr(
+                &Path::from_str("/sdk-off")?,
+                curvine_model::SetAttrOpts {
+                    mode: Some(0o700),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(changed.mode, 0o700);
+
         request.incarnation = "bound-volume".into();
         request.header = MkdirRequest {
             path: "/must-not-create".into(),
@@ -261,6 +272,27 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         let commands = after_close["native_commands"].as_f64().unwrap()
             - before_close["native_commands"].as_f64().unwrap();
         assert!(bundles > 0 && bundles < 32 && commands >= 32.0);
+        let before_attrs = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        stream::iter(0..32)
+            .map(|i| {
+                let fs = &fs;
+                async move {
+                    fs.set_attr(&Path::from_str(format!("/native-file-{i}"))?,
+                        curvine_model::SetAttrOpts { owner: Some("policy-owner".into()),
+                            ..Default::default() }).await
+                }
+            })
+            .buffer_unordered(32)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let after_attrs = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let bundles = after_attrs["native_bundles"].as_u64().unwrap()
+            - before_attrs["native_bundles"].as_u64().unwrap();
+        let commands = after_attrs["native_commands"].as_f64().unwrap()
+            - before_attrs["native_commands"].as_f64().unwrap();
+        assert!(bundles > 0 && bundles < 32 && commands >= 32.0,
+            "nonrecursive setattr did not use native committed batches");
+        assert_eq!(fs.get_status(&Path::from_str("/native-file-0")?).await?.owner, "policy-owner");
         // Native TTL still uses its original operation during migration, but
         // joins the same gate and confirms its journal prefix on an OS thread.
         let mut ttl_options = MkdirOpts::with_create(false);

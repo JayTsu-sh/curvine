@@ -375,6 +375,17 @@ pub struct SetAttrOpts {
 }
 
 impl SetAttrOpts {
+    /// Stamp the master-owned operation time before journaling or preparation.
+    /// Caller xattrs cannot forge or remove this value.
+    pub fn stamp_ctime(&mut self, ctime: i64) {
+        self.remove_x_attr
+            .retain(|key| key != crate::INTERNAL_CTIME_XATTR);
+        self.add_x_attr.insert(
+            crate::INTERNAL_CTIME_XATTR.to_owned(),
+            ctime.to_le_bytes().to_vec(),
+        );
+    }
+
     // Recursive setting, only allows setting acl related attributes
     pub fn child_opts(&self) -> Self {
         let mut add_x_attr = HashMap::new();

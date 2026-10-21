@@ -27,7 +27,7 @@ use curvine_error::FsResult;
 use curvine_model::{
     BlockLocation, CommitBlock, CreateFileOpts, ExtendedBlock, FileAllocOpts, FileLock, FileStatus,
     FreeResult, ListOptions, MkdirOpts, MountInfo, RenameFlags, SetAttrOpts, TtlAction,
-    WorkerAddress, INTERNAL_CTIME_XATTR,
+    WorkerAddress,
 };
 use curvine_runtime::common::{LocalTime, TimeSpent};
 use curvine_runtime::sync::AtomicCounter;
@@ -1326,20 +1326,18 @@ impl FsDir {
 
         // Internal metadata is master-owned. Persist the operation timestamp in the
         // journal so replay restores it without changing the bincode inode layout.
-        opts.add_x_attr.remove(INTERNAL_CTIME_XATTR);
-        opts.remove_x_attr.retain(|key| key != INTERNAL_CTIME_XATTR);
-        let ctime = LocalTime::mills() as i64;
-        opts.add_x_attr.insert(
-            INTERNAL_CTIME_XATTR.to_string(),
-            ctime.to_le_bytes().to_vec(),
-        );
+        opts.stamp_ctime(LocalTime::mills() as i64);
         self.unprotected_set_attr(inode.clone(), opts.clone())?;
         self.journal_writer.log_set_attr(self, &inp, opts)?;
         Ok(inode.to_file_status(inp.path())?)
     }
 
     pub fn unprotected_set_attr(&mut self, inode: InodePtr, opts: SetAttrOpts) -> FsResult<()> {
-        self.hsm_guard_tree(inode.clone())?;
+        if opts.recursive {
+            self.hsm_guard_tree(inode.clone())?;
+        } else {
+            self.hsm_guard_id(inode.id())?;
+        }
         if inode.is_file_entry() {
             return err_box!("set_attr is not supported on unresolved FileEntry inodes; resolve/load the full inode before calling set_attr");
         }
@@ -1382,7 +1380,12 @@ impl FsDir {
         }
 
         self.store.apply_set_attr(change_inodes)?;
-        self.hsm_refresh_tree(inode)?;
+        if opts.recursive {
+            self.hsm_refresh_tree(inode)?;
+        } else if let File(file) = inode.as_ref() {
+            let path = self.get_inode_path(file.id())?;
+            self.hsm_track_file(&path, file)?;
+        }
         Ok(())
     }
 

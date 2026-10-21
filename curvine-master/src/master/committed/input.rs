@@ -21,6 +21,7 @@ pub(crate) enum NativeInput {
     Complete(CompleteFileRequest),
     AddBlock(curvine_proto::AddBlockRequest),
     Reopen(curvine_proto::OpenFileRequest),
+    SetAttr(curvine_proto::SetAttrRequest),
 }
 impl NativeInput {
     pub(crate) fn parse(request: &NativeMutationRequest) -> FsResult<Self> {
@@ -53,6 +54,11 @@ impl NativeInput {
                     .map(Self::Reopen)
                     .map_err(|error| FsError::common(error.to_string()))
             }
+            value if value == RpcCode::SetAttr as u32 => {
+                curvine_proto::SetAttrRequest::decode(request.header.as_slice())
+                    .map(Self::SetAttr)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
             _ => err_box!("unsupported native mutation operation"),
         }
     }
@@ -63,10 +69,21 @@ impl NativeInput {
             Self::Complete(request) => &request.path,
             Self::AddBlock(request) => &request.path,
             Self::Reopen(request) => &request.path,
+            Self::SetAttr(request) => &request.path,
         }
     }
     pub(crate) fn legacy(self, fs: &MasterFilesystem) -> FsResult<Vec<u8>> {
         match self {
+            Self::SetAttr(request) => {
+                let status = fs.set_attr(
+                    request.path,
+                    ProtoUtils::set_attr_opts_from_pb(request.opts),
+                )?;
+                Ok(curvine_proto::SetAttrResponse {
+                    status: ProtoUtils::file_status_to_pb(status),
+                }
+                .encode_to_vec())
+            }
             Self::AddBlock(request) => {
                 let block = fs.add_block(
                     request.path,
@@ -159,9 +176,15 @@ impl NativeInput {
             .get_mount_info(&Path::from_str(self.path())?)?
             .is_some()
         {
-            return err_box!("native HSM metadata creation requires a path outside UFS mounts");
+            return err_box!("native HSM metadata requires a path outside UFS mounts");
         }
         match self {
+            Self::SetAttr(request) => commands::set_attr(
+                view,
+                &request.path,
+                ProtoUtils::set_attr_opts_from_pb(request.opts),
+                time,
+            ),
             Self::Complete(request) => commands::complete(view, fs, request, time),
             Self::AddBlock(request) => commands::add_block(view, fs, request, time),
             Self::Reopen(request) => {

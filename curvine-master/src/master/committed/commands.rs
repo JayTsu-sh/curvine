@@ -389,3 +389,43 @@ pub(super) fn overwrite(
         allocation: None,
     })
 }
+
+/// Nonrecursive metadata changes touch only the target, regardless of the
+/// number of descendants. The HSM record/candidate and original response are
+/// part of the same conditional publication as the native attributes.
+pub(super) fn set_attr(
+    batch: &mut BatchView<'_>,
+    path: &str,
+    mut opts: curvine_model::SetAttrOpts,
+    time: i64,
+) -> FsResult<PreparedCommand> {
+    batch.guard_path(path)?;
+    if opts.recursive {
+        return err_box!("recursive attributes require a bounded subtree command");
+    }
+    let mut view = batch.command();
+    let resolved = view.resolve(path)?;
+    if resolved.len() != InodeView::path_components(path)?.len() {
+        return Err(FsError::file_not_found(path));
+    }
+    let id = *resolved.last().unwrap();
+    let mut inode = view
+        .inode(id)?
+        .ok_or_else(|| FsError::file_not_found(path))?;
+    view.guard_write(id)?;
+    opts.stamp_ctime(time);
+    inode.set_attr(opts)?;
+    view.put_inode(inode.clone_metadata())?;
+    if inode.is_file() {
+        view.enroll(&inode)?;
+    }
+    let response = curvine_proto::SetAttrResponse {
+        status: ProtoUtils::file_status_to_pb(view.status(path, id)?),
+    }
+    .encode_to_vec();
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response,
+        allocation: None,
+    })
+}

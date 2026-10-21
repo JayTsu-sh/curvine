@@ -1,13 +1,14 @@
 # HSM 性能优化方案
 
-状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close 和可写 open 接入真实 committed 命令与 SDK 会话去重，其余 namespace 修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open 和非递归 SetAttr 接入真实 committed 命令与 SDK 会话去重，其余 namespace 修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
 
 ## 当前实现与完成门槛（2026-10-22）
 
 | 项目 | 本轮代码行为 | 仍需完成或验收 |
 |---|---|---|
 | 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
-| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
+| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/非递归 SetAttr 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
+| 非递归属性 | 只检查和修改目标 inode，不遍历/刷新后代；文件属性与稳定 HSM 记录、候选索引、ctime、原始结果同批发布；最多 32 条 Native 命令合批 | 递归属性仍走过渡路径，不能将新入口当作大子树原子操作 |
 | 读取保护 | 最多 32 个条件读命令合并一次日志；普通在线读增量再合并为一次 RocksDB WriteBatch；批内读者/版本按顺序合并；原生 atime 每 inode 只写最终值 | 混合原生/HSM 统一提交；真实故障注入 |
 | 大文件读结果 | 超过 32 块时，持久化原始授权、原始 FileStatus 和逻辑布局摘要；即时回复仍返回完整块位置，重试在有效保护下重建位置，不延长授权 | 大布局/复制位置变化及故障重试验收；此项减少结果编码量，不等同于吞吐收益 |
 | 高频状态 | `record:{inode}` 保存稳定实体；`access:{inode}` 保存 base/version、revision、atime、readers；稳定变更原子合并并删除 overlay | 精确 atime 仍迁移候选索引、仍更新原生 inode，语义保持 |
@@ -258,4 +259,13 @@ Allocate、Seal 和私有布局 Delete 的 RPC 等待现在释放协调 gate。�
 
 GC 在 Delete 确认后重新读取最新 Record，只删除已确认的不可变 layout ID，保留等待期间更新的读者、锚点及其他清理义务。已缓存的 prepare 也只对同一次逻辑尝试、同一目标的 pending 分配发出 Allocate。协调 gate 仍保护旧式 namespace 修改，尚未删除。
 
-验证：Master 235 项通过、2 项 ignored；两个真实集群用例通过。新增 TCP 代理暂停真实 Worker Seal 回复：原实现在此期间阻塞独立 mkdir，新实现允许 mkdir 完成；在同一暂停窗口提交控制者接管，旧控制者返回 Fenced，新控制者重试原逻辑步骤成功发布。此用例验证控制者切换，不等同于真实 Raft Leader 故障切换。完整 hsm-rs 集成回归结果另行记录。
+验证：Master 235 项通过、2 项 ignored；两个真实集群用例通过。新增 TCP 代理暂停真实 Worker Seal 回复：原实现在此期间阻塞独立 mkdir，新实现允许 mkdir 完成；在同一暂停窗口提交控制者接管，旧控制者返回 Fenced，新控制者重试原逻辑步骤成功发布。此用例验证控制者切换，不等同于真实 Raft Leader 故障切换。针对 `977d179c` 的完整 hsm-rs workspace 回归通过：30 项功能测试、全部文档测试及五个 managed 集群场景和一个 native 集群场景通过；2 项规模/子进程入口保持 ignored。百万验收尚未执行。
+
+
+### 追加里程碑：非递归属性修改
+
+修正非递归目录属性操作仍检查整个子树的问题：后代的读取保护不影响不触及后代的 chmod，递归操作继续检查后代。非递归目录修改不刷新后代 HSM 记录，工作量与路径深度及目标元数据大小有关，不随后代文件数增长。回归保留一个活跃读者，验证非递归操作成功、递归操作拒绝；owned 准备只写目标 inode，不为后代建立观察。
+
+SDK 的非递归 SetAttr 接入 Native 会话去重、合批和条件发布；文件属性、HSM 权威记录、候选索引及原始返回值同批提交。ctime 由 Master 捕获并统一盖戳，用户 xattr 不能伪造或删除；业务 mtime 的既有 generation 失效规则保持。递归 SetAttr 继续使用过渡入口，新 Native 入口明确拒绝未实现的递归命令。
+
+验证范围：双角色一致应用、同批 owner→mtime 依赖、准备无可见副作用、返回原始结果重试、HSM version 冲突时 inode 不改变，以及真实集群 32 次非递归属性修改合批和关闭 HSM 卷的普通 SDK 行为。Master 237 项通过、2 项 ignored；两个真实集群用例通过，包括 32 次非递归属性修改的合批断言、控制者交接和关闭 HSM 卷的 SDK 属性修改。

@@ -531,6 +531,237 @@ mod tests {
     }
 
     #[test]
+    fn nonrecursive_directory_attributes_do_not_refresh_or_guard_descendants() -> CommonResult<()> {
+        use curvine_model::SetAttrOpts;
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let fs = JournalSystem::fs_only_for_test(&configuration(root.path()))?;
+        seed_namespace(&fs)?;
+        fs.fs_dir.write().hsm_enabled = true;
+        fs.mkdir("/tree", false)
+            .map_err(|e| format!("mkdir setup: {e}"))?;
+        let file = fs
+            .create("/tree/file", false)
+            .map_err(|e| format!("create setup: {e}"))?;
+        fs.complete_file("/tree/file", Some(file.id), 0, vec![], "", false, None)
+            .map_err(|e| format!("close setup: {e}"))?;
+        let original = fs.fs_dir.read().hsm_record(file.id)?.unwrap();
+        fs.set_attr(
+            "/tree",
+            SetAttrOpts {
+                mode: Some(0o700),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(
+            fs.fs_dir.read().hsm_record(file.id)?.unwrap().version,
+            original.version,
+            "nonrecursive parent attributes rewrote a descendant HSM record"
+        );
+        // A protected child is unaffected by a nonrecursive parent chmod.
+        {
+            let dir = fs.fs_dir.read();
+            let mut protected = original.clone();
+            protected.version += 1;
+            protected.readers.insert("reader".into(), i64::MAX);
+            let mut batch = dir.get_rocks_store().new_batch();
+            crate::master::hsm::write_native_record(&mut batch, Some(&original), &protected)?;
+            batch.commit()?;
+        }
+        fs.set_attr(
+            "/tree",
+            SetAttrOpts {
+                mode: Some(0o750),
+                ..Default::default()
+            },
+        )?;
+        // Owned preparation also observes only the target, even while the
+        // descendant is protected. Its work is independent of subtree size.
+        let prepared = {
+            let dir = fs.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            commands::set_attr(
+                &mut view,
+                "/tree",
+                SetAttrOpts {
+                    mode: Some(0o700),
+                    ..Default::default()
+                },
+                2000,
+            )?
+        };
+        assert_eq!(prepared.edits.inodes.len(), 1);
+        assert!(!prepared.edits.hsm_checks.contains_key(&file.id));
+        assert!(
+            fs.set_attr(
+                "/tree",
+                SetAttrOpts {
+                    recursive: true,
+                    mode: Some(0o755),
+                    ..Default::default()
+                }
+            )
+            .is_err(),
+            "recursive changes must still protect the child"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn attributes_commit_native_and_hsm_together_and_replay_original_results() -> CommonResult<()> {
+        use curvine_model::{CreateFileOpts, SetAttrOpts, INTERNAL_CTIME_XATTR};
+        crate::master::Master::init_test_metrics();
+        let a = tempfile::tempdir()?;
+        let b = tempfile::tempdir()?;
+        let source = JournalSystem::fs_only_for_test(&configuration(a.path()))?;
+        let follower = JournalSystem::fs_only_for_test(&configuration(b.path()))?;
+        for fs in [&source, &follower] {
+            seed_namespace(fs)?;
+        }
+        let seed = prepare(&source, "/unused")?;
+        let make =
+            |prepared: commands::PreparedCommand, sequence: u64, code: RpcCode| NativeCommand {
+                identity: RequestIdentity {
+                    incarnation: "incarnation".into(),
+                    session: seed.identity.session.clone(),
+                    sequence,
+                    acknowledged: 0,
+                },
+                fingerprint: [sequence as u8; 32],
+                time: 1000 + sequence as i64,
+                edits: prepared.edits,
+                reply: NativeReply {
+                    code: code.into(),
+                    success: true,
+                    header: prepared.response,
+                    body: vec![],
+                },
+            };
+        let (create, close) = {
+            let dir = source.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let create = make(
+                commands::create(
+                    &mut view,
+                    "/data/file",
+                    CreateFileOpts::with_create(true),
+                    1000,
+                )?,
+                1,
+                RpcCode::CreateFile,
+            );
+            let close = make(
+                commands::complete(
+                    &mut view,
+                    &source,
+                    curvine_proto::CompleteFileRequest {
+                        path: "/data/file".into(),
+                        len: 0,
+                        client_name: "".into(),
+                        only_flush: false,
+                        ..Default::default()
+                    },
+                    2000,
+                )?,
+                2,
+                RpcCode::CompleteFile,
+            );
+            (create, close)
+        };
+        for fs in [&source, &follower] {
+            assert!(apply_creation(&mut fs.fs_dir.write(), &create)?.kind == ResultKind::Applied);
+            assert!(apply_creation(&mut fs.fs_dir.write(), &close)?.kind == ResultKind::Applied);
+        }
+        let id = source.file_status("/data/file")?.id;
+        let original = source.fs_dir.read().hsm_record(id)?.unwrap();
+        assert_ne!(source.file_status("/data/file")?.owner, "policy-owner");
+        let (owner, modified) = {
+            let dir = source.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let owner = make(
+                commands::set_attr(
+                    &mut view,
+                    "/data/file",
+                    SetAttrOpts {
+                        owner: Some("policy-owner".into()),
+                        add_x_attr: [(INTERNAL_CTIME_XATTR.into(), 999i64.to_le_bytes().to_vec())]
+                            .into(),
+                        remove_x_attr: vec![INTERNAL_CTIME_XATTR.into()],
+                        ..Default::default()
+                    },
+                    3000,
+                )?,
+                3,
+                RpcCode::SetAttr,
+            );
+            let modified = make(
+                commands::set_attr(
+                    &mut view,
+                    "/data/file",
+                    SetAttrOpts {
+                        mtime: Some(4000),
+                        ..Default::default()
+                    },
+                    5000,
+                )?,
+                4,
+                RpcCode::SetAttr,
+            );
+            assert_eq!(dir.hsm_record(id)?.unwrap().version, original.version);
+            (owner, modified)
+        };
+        for fs in [&source, &follower] {
+            assert!(apply_creation(&mut fs.fs_dir.write(), &owner)?.kind == ResultKind::Applied);
+            let record = fs.fs_dir.read().hsm_record(id)?.unwrap();
+            assert_eq!(record.owner, "policy-owner");
+            assert_eq!(record.version, original.version + 1);
+            assert_eq!(record.state.data.generation, original.state.data.generation);
+            assert_eq!(fs.file_status("/data/file")?.ctime(), 3000);
+            assert!(apply_creation(&mut fs.fs_dir.write(), &modified)?.kind == ResultKind::Applied);
+            let record = fs.fs_dir.read().hsm_record(id)?.unwrap();
+            assert_eq!(record.version, original.version + 2);
+            assert_eq!(record.mtime_ms, 4000);
+            assert_eq!(
+                record.state.data.generation,
+                original.state.data.generation + 1
+            );
+            assert!(apply_creation(&mut fs.fs_dir.write(), &owner)?.reply == owner.reply);
+            assert_eq!(fs.file_status("/data/file")?.ctime(), 5000);
+        }
+        let late = {
+            let dir = source.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            make(
+                commands::set_attr(
+                    &mut view,
+                    "/data/file",
+                    SetAttrOpts {
+                        mode: Some(0o600),
+                        ..Default::default()
+                    },
+                    6000,
+                )?,
+                5,
+                RpcCode::SetAttr,
+            )
+        };
+        let before = source.file_status("/data/file")?;
+        {
+            let dir = source.fs_dir.read();
+            let old = dir.hsm_record(id)?.unwrap();
+            let mut accessed = old.clone();
+            accessed.version += 1;
+            let mut batch = dir.get_rocks_store().new_batch();
+            crate::master::hsm::write_native_record(&mut batch, Some(&old), &accessed)?;
+            batch.commit()?;
+        }
+        assert!(apply_creation(&mut source.fs_dir.write(), &late)?.kind == ResultKind::Conflict);
+        assert_eq!(source.file_status("/data/file")?.ctime(), before.ctime());
+        assert_eq!(source.file_status("/data/file")?.mode, before.mode);
+        Ok(())
+    }
+
+    #[test]
     fn overwrite_commits_retirement_before_worker_effects_and_never_reuses_block_ids(
     ) -> CommonResult<()> {
         use super::super::garbage;
