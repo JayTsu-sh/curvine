@@ -517,6 +517,28 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert_eq!(reader.read(&mut bytes).await?, 10);
         assert_eq!(bytes, b"new layout");
         reader.complete().await?;
+        // Once polled/admitted, a controller operation outlives its caller.
+        // Pausing the real authority gate makes cancellation deterministic.
+        let namespace = control(&fs, &json!({"op":"namespace"})).await?;
+        let epoch = namespace["data"]["epoch"].as_u64().unwrap();
+        let gate = active.fs_dir().read().hsm_test_mutation_gate();
+        let pause = gate.lock().await;
+        let claim = json!({"op":"claim_controller", "expected_epoch":epoch,
+            "context":{"operation_id":format!("cancelled-{}", request_id()), "controller_epoch":epoch,"attempt_epoch":1}});
+        let mut caller = Box::pin(active.hsm_control(HsmControlRequest { protocol_version: 1, payload: serde_json::to_vec(&claim)? }));
+        assert!(futures::poll!(&mut caller).is_pending());
+        drop(caller);
+        drop(pause);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let namespace = control(&fs, &json!({"op":"namespace"})).await?;
+            if namespace["data"]["epoch"].as_u64() == Some(epoch + 1) { break; }
+            assert!(std::time::Instant::now() < deadline, "accepted HSM operation disappeared when its caller was cancelled");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let replay = control(&fs, &claim).await?;
+        assert_eq!(replay["kind"], "epoch");
+        assert_eq!(replay["data"], epoch + 1);
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     })
 }

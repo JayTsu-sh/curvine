@@ -42,6 +42,7 @@ const MODE_SETGID: u32 = 0o2000;
 pub struct FsDir {
     pub(crate) hsm_replaying: bool,
     pub(crate) hsm_mutation_gate: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) hsm_control_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) hsm_read_batcher: Arc<crate::master::hsm::read_batch::ReadBatcher>,
     pub(crate) hsm_read_clock: crate::master::hsm::read_clock::ReadClock,
     pub(crate) hsm_mutation_batcher: Arc<HsmMutationBatcher>,
@@ -145,6 +146,7 @@ impl FsDir {
         let fs_dir = Self {
             hsm_replaying: false,
             hsm_mutation_gate: Default::default(),
+            hsm_control_slots: Arc::new(tokio::sync::Semaphore::new(128)),
             hsm_read_batcher: Default::default(),
             hsm_read_clock: Default::default(),
             hsm_mutation_batcher: Default::default(),
@@ -246,6 +248,11 @@ impl FsDir {
         if op_id > self.op_id.get() {
             self.op_id.set(op_id);
         }
+    }
+
+    #[cfg(feature = "hsm-scale-test")]
+    pub fn hsm_test_mutation_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.hsm_mutation_gate.clone()
     }
 
     pub fn get_ttl_bucket_list(&self) -> Arc<TtlBucketList> {

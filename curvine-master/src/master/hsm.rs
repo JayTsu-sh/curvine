@@ -701,62 +701,75 @@ impl MasterFilesystem {
             }
             return curvine_model::hsm::control_response(request);
         }
-        if let Ok(value) = serde_json::from_slice::<Value>(&request.payload) {
-            if value["op"] == "policy_scan" {
-                let fs = self.clone();
-                // Admission owns its lifetime after acceptance. Losing the
-                // connection cannot drop the gate across an unknown commit.
-                let result = tokio::spawn(async move { fs.hsm_policy_scan(value).await })
-                    .await
-                    .map_err(io)
-                    .and_then(|result| result)
-                    .unwrap_or_else(error_value);
-                return HsmControlResponse {
-                    protocol_version: 1,
-                    payload: result.to_string().into_bytes(),
-                };
-            }
-            if matches!(
-                value["op"].as_str(),
-                Some("open_path" | "read_path" | "read_close" | "read_renew")
-            ) {
-                let batcher = self.fs_dir.read().hsm_read_batcher.clone();
-                let value = batcher
-                    .execute(self.clone(), value)
-                    .await
-                    .unwrap_or_else(error_value);
-                return HsmControlResponse {
-                    protocol_version: 1,
-                    payload: value.to_string().into_bytes(),
-                };
-            }
-        }
-        // Normal metadata RPCs use this same gate until their journal barrier completes.
-        // This prevents speculative leader metadata from changing a committed HSM CAS.
-        let gate = self.fs_dir.read().hsm_mutation_gate.clone();
-        let _serial = gate.lock().await;
         let value = match serde_json::from_slice::<Value>(&request.payload) {
-            Ok(value) => {
-                let result = self.hsm_execute(value).await;
-                if matches!(&result, Err(HsmError::Unknown(_))) {
-                    // An unknown response may follow an already queued
-                    // authority command. Do not expose this projection to a
-                    // native mutation until the queue prefix is committed.
-                    if let Err(error) = self.hsm_read_barrier().await {
-                        log::error!(
-                            "HSM unknown outcome could not be fenced: {error}; aborting master"
-                        );
-                        std::process::abort();
-                    }
+            Ok(value) => value,
+            Err(_) => {
+                return HsmControlResponse {
+                    protocol_version: 1,
+                    payload: failure("invalid", "invalid HSM request")
+                        .to_string()
+                        .into_bytes(),
                 }
-                result.unwrap_or_else(error_value)
             }
-            Err(_) => failure("invalid", "invalid HSM request"),
+        };
+        let result = if value["op"] == "policy_scan" {
+            let fs = self.clone();
+            self.hsm_run_owned(async move { fs.hsm_policy_scan(value).await })
+                .await
+        } else if matches!(
+            value["op"].as_str(),
+            Some("open_path" | "read_path" | "read_close" | "read_renew")
+        ) {
+            let batcher = self.fs_dir.read().hsm_read_batcher.clone();
+            batcher
+                .execute(self.clone(), value)
+                .await
+                .unwrap_or_else(error_value)
+        } else {
+            let fs = self.clone();
+            self.hsm_run_owned(async move { fs.hsm_serial_execute(value).await })
+                .await
         };
         HsmControlResponse {
             protocol_version: 1,
-            payload: value.to_string().into_bytes(),
+            payload: result.to_string().into_bytes(),
         }
+    }
+
+    /// The accepted operation, admission permit and commit/fencing lifetime
+    /// belong to the storage task. Dropping an RPC caller cannot release its
+    /// authority gate while a submitted outcome is still unknown.
+    async fn hsm_run_owned(
+        &self,
+        future: impl std::future::Future<Output = HsmResult<Value>> + Send + 'static,
+    ) -> Value {
+        let slots = self.fs_dir.read().hsm_control_slots.clone();
+        let permit = match slots.acquire_owned().await {
+            Ok(permit) => permit,
+            Err(error) => return error_value(io(error)),
+        };
+        let (send, receive) = tokio::sync::oneshot::channel();
+        crate::master::spawn_authority("hsm-control", async move {
+            let _permit = permit;
+            let response = future.await.unwrap_or_else(error_value);
+            let _ = send.send(response);
+        });
+        receive.await.unwrap_or_else(|error| error_value(io(error)))
+    }
+
+    async fn hsm_serial_execute(&self, request: Value) -> HsmResult<Value> {
+        // Legacy native writers still share this boundary until committed
+        // publication is activated for every relevant mutation family.
+        let gate = self.fs_dir.read().hsm_mutation_gate.clone();
+        let _serial = gate.lock().await;
+        let result = self.hsm_execute(request).await;
+        if matches!(&result, Err(HsmError::Unknown(_))) {
+            if let Err(error) = self.hsm_read_barrier().await {
+                log::error!("HSM unknown outcome could not be fenced: {error}; aborting master");
+                std::process::abort();
+            }
+        }
+        result
     }
     fn hsm_native_open(&self, request: &Value) -> HsmResult<Value> {
         let path: String = field(request, "path")?;
@@ -1746,6 +1759,80 @@ impl Drop for BarrierWait {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn control_admission_retains_its_bound_until_cancelled_callers_work_finishes(
+    ) -> curvine_core_error::CommonResult<()> {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        use std::time::Duration;
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async {
+            let slots = fs.fs_dir.read().hsm_control_slots.clone();
+            let release = Arc::new(tokio::sync::Notify::new());
+            let action_release = release.clone();
+            let (finished, done) = tokio::sync::oneshot::channel();
+            let child_fs = fs.clone();
+            let caller = tokio::spawn(async move {
+                child_fs
+                    .hsm_run_owned(async move {
+                        action_release.notified().await;
+                        let _ = finished.send(());
+                        Ok(serde_json::json!({"kind":"done"}))
+                    })
+                    .await
+            });
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while slots.available_permits() == 128 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await?;
+            caller.abort();
+            let _ = caller.await;
+            assert_eq!(
+                slots.available_permits(),
+                127,
+                "cancellation released a still-running operation's admission"
+            );
+            release.notify_one();
+            tokio::time::timeout(Duration::from_secs(2), done).await??;
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while slots.available_permits() != 128 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await?;
+            // Cancellation before admission must neither spawn work nor leak
+            // a permit. This is distinct from cancellation after acceptance.
+            let full = slots.clone().acquire_many_owned(128).await?;
+            let executed = Arc::new(AtomicBool::new(false));
+            let marker = executed.clone();
+            let mut waiting = Box::pin(fs.hsm_run_owned(async move {
+                marker.store(true, Ordering::SeqCst);
+                Ok(serde_json::json!({"kind":"done"}))
+            }));
+            assert!(futures::poll!(&mut waiting).is_pending());
+            drop(waiting);
+            drop(full);
+            tokio::task::yield_now().await;
+            assert!(!executed.load(Ordering::SeqCst));
+            assert_eq!(slots.available_permits(), 128);
+            Ok(())
+        })
+    }
+
     #[test]
     fn unmanaged_open_returns_native_blocks_without_capability_cache() {
         crate::master::Master::init_test_metrics();
