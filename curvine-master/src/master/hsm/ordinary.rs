@@ -119,6 +119,23 @@ pub(crate) fn native_record(
     file: &InodeFile,
     old: Option<&Record>,
 ) -> CommonResult<Option<Record>> {
+    build_native_record(ns, path, file, old, false)
+}
+pub(crate) fn native_overwrite_record(
+    ns: &Namespace,
+    path: &str,
+    file: &InodeFile,
+    old: Option<&Record>,
+) -> CommonResult<Option<Record>> {
+    build_native_record(ns, path, file, old, true)
+}
+fn build_native_record(
+    ns: &Namespace,
+    path: &str,
+    file: &InodeFile,
+    old: Option<&Record>,
+    force_generation: bool,
+) -> CommonResult<Option<Record>> {
     if !trackable(path, file) {
         return Ok(None);
     }
@@ -168,9 +185,11 @@ pub(crate) fn native_record(
     });
     // Invalidate the archive generation at write-open, before any block changes.
     if old.is_some_and(|r| {
-        !r.writing
-            && (writing
-                || modern && (r.mtime_ms != file.mtime || r.state.length != file.len.max(0) as u64))
+        force_generation
+            || !r.writing
+                && (writing
+                    || modern
+                        && (r.mtime_ms != file.mtime || r.state.length != file.len.max(0) as u64))
     }) {
         record.state.data.generation = record
             .state

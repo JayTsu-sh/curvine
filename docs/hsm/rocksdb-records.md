@@ -1,10 +1,10 @@
 # HSM 权威记录与候选索引：RocksDB 实现设计
 
-2026-10-20 编写，2026-10-21 随源码发布，描述当前实际实现。源码入口为 `RocksInodeStore`、`hsm/ordinary.rs`、`hsm/lifecycle.rs` 与 `apply_hsm`。本文区分已经实现的行为和尚未优化的成本；不是另一套计划中的数据库方案。
+2026-10-20 编写，2026-10-22 随提交与写入链路优化更新，描述当前实际实现。源码入口为 `RocksInodeStore`、`hsm/ordinary.rs`、`hsm/lifecycle.rs` 与 `apply_hsm`。本文区分已经实现的行为和尚未优化的成本；不是另一套计划中的数据库方案。
 
 ## 1. 数据库、CF 与权威边界
 
-每个 Master 使用自己的元数据 RocksDB。现有 CF 为 `inodes`、`edges`、`block`、`location`、`common`。HSM 复用 **common CF**，没有新增 HSM CF，也没有外部文件元数据数据库。
+每个 Master 使用自己的元数据 RocksDB。现有 CF 为 `inodes`、`edges`、`block`、`location`、`common`。HSM 业务数据复用 **common CF**；另有 `hsm_native_v2/v3/v4` 三个空 CF 作为旧二进制拒绝打开的格式栅栏。没有外部文件元数据数据库。
 
 ```text
 Master 本地 RocksDB
@@ -18,7 +18,7 @@ Master 本地 RocksDB
     └── 0x03 + "hsm:" ...  HSM 记录、派生索引与控制记录
 ```
 
-下文 `P` 精确表示字节串 `b"\x03hsm:"`。`0x03` 是一个真实的前导字节，不是文本字符 `\\x03`，也不含空格。其后的键采用 UTF-8 文本；HSM value 使用 `serde_json::to_vec` 编码。原生其他 CF 不因此改为 JSON。
+下文 `P` 精确表示字节串 `b"\x03hsm:"`。`0x03` 是一个真实的前导字节，不是文本字符 `\\x03`，也不含空格。其后的键采用 UTF-8 文本；Record、访问 overlay 和原有 HSM 控制 value 使用 JSON；Native session、结果和块清理事实使用 bincode，GC 游标保存原始键字节。下文键表标明编码，原生其他 CF 不因此改为 JSON。
 
 RocksDB 是已提交元数据的本地投影。三个 Master 的一致性来自原有 journal/Raft 提交与相同 apply 逻辑，不来自三个 RocksDB 自己互相同步。当前 RocksDB 配置关闭 WAL，不能把一次本地 WriteBatch 成功单独等同于跨节点持久成功。
 
@@ -52,6 +52,8 @@ value = b'"1021"'
 Release 分别扫描 `candidate:d:`，再扫描 `candidate:o:`；这个优先级由策略代码选择前缀实现，不依赖对全部状态键做一次全局字典序扫描。Archive 只扫描 `o`，管理用 Recall 策略扫描 `f`；普通读自动 Recall 不需要该策略扫描。
 
 当前索引没有包含 policy ID、路径、owner、大小或任意热度分数，也没有为每条规则复制一套候选表。正的访问年龄权重等价于该状态范围内的冷度排序，不提供多维评分表达式。
+
+稳定 `record:<inode>` 与高频 `access:<inode>` 分开保存。后者包含 base_version、version、公开 revision、atime、readers 与读时钟；查询必须经 `hsm_record` 合成。稳定字段变化时同批物化访问状态、删 overlay 并维护精确候选键；不能单独读取 base JSON 推断当前读取保护。
 
 ## 3. Record 的 value 结构
 
@@ -130,7 +132,9 @@ gc 的旧、新派生值 = (garbage 或 native_garbage 非空) 时的 EntityKey�
 
 所以同一提交批次不会只留下“新 Record + 旧候选键”。状态和 atime 不变时，保留原候选项，不再删除或重写。Record、候选项及 seal/GC 派生键在稳定投影中对应；派生键可以由 Record 重建，但 Record 中的 pin、回执和 pending 等事实必须来自提交历史，不能丢弃后靠扫描业务目录推测。
 
-这里的原子范围是这些 HSM KV，以及 HSM apply 明确放进同一个 batch 的原生 inode 修改。**不能推广为所有普通写入的 inode 与 HSM 更新都在一个 RocksDB batch**：普通修改调用自己的原生更新和纳管钩子，再写普通 journal；HSM 修改使用 committed HSM transaction。两条路径共享提交串行边界，普通修改返回前等待本节点提交屏障，日志重放执行对应普通钩子。
+当前 SDK 的创建/覆盖、块分配、写打开和 flush/close 已进入 Native committed 链路。准备只生成触及 inode/edge 的 owned 变更，Raft 提交后 Leader/Follower 同样 apply；flush/close 与覆盖涉及的原生 inode、块位置、HSM Record/候选项、GC 事实和原始结果在同一个 WriteBatch 更新。块分配不逐块重写稳定 Record。每个命令检查 inode 摘要、HSM version 及所观察控制字节；批内前序效果对后序准备可见。
+
+rename/delete/部分其他原生及后台修改仍在过渡路径，不能把上述同批保证推广到所有 RPC。过渡路径共享相同协调 gate，等待自身 journal 前缀确认；完整去掉该 gate 与混合提交仍未完成。
 
 当前不是 RocksDB TransactionDB 的外部乐观事务。HSM 条件提交由 apply 中的 expected epoch、Record.version、record_checks、control 原字节比较实现，顺序 apply 后决定是否更新。
 
@@ -181,22 +185,42 @@ gc 的旧、新派生值 = (garbage 或 native_garbage 非空) 时的 EntityKey�
 | `binding:<hash>` | 全局操作 ID 与动作/DataKey 的绑定 |
 | `outcome:<hash>` | 原始指纹、成功或确定拒绝响应、内容身份与动作，用于幂等恢复 |
 
-completed intent 不参与每轮 Ready/Running 工作索引扫描。当前容量预算仍会分页累加未完成 reserved 项；没有常数成本的聚合计数器承诺。
+completed intent 不参与每轮 Ready/Running 工作索引扫描。共享预计回收预算由 `budget:online:v1` 汇总项与 reservation 同批增减，正常查询 O(1)；旧 checkpoint 缺项时分页重建。它不代表 Recall 的硬容量预留。
+
+### 7.1 Native session 与物理块清理（common CF）
+
+以下键同样带 `P` 前缀，value 不使用 JSON。
+
+| 键尾 | 编码与内容 | 更新方式 |
+|---|---|---|
+| `native-session:<session>` | bincode：acknowledged、highest、retained_bytes | 原始业务结果同批维护；1024 序号、32 MiB 窗口 |
+| `native-result:<session>:<seq20>` | bincode：指纹、原始编码回复与结果类型 | 与业务效果同批；每次最多清理 8 条已 ack 结果 |
+| `native-session-time:<issued20>:<session>` | 会话时间索引 | 每命令最多清理 4 个过期会话范围 |
+| `native-session-floor:v1` | bincode 毫秒下界 | 同批推进；时钟回退也不复活过期身份 |
+| `native-inode-floor:v1` | bincode i64 分配上限 | 新 inode/旧日志分配同批推进，删除不降低 |
+| `native-gc:v1:<block_hex16>` | bincode `Garbage { incarnation, block, locations }` | 与撤销旧布局同批写入；独立于 inode/Record 生命周期 |
+| `native-gc-cursor:v1` | 原始 GC 键字节 | 每页最多 16 个事实，维护提交推进，末页回绕 |
+
+块 ID 以无符号 64 位的 16 位十六进制排序编码，覆盖有符号 i64 的完整位模式。覆盖写保留 inode 的 next_seq，旧 AddBlock 回放也从布局恢复序号下界。新内容不能复用 GC 中的旧块 ID。
+
+退休时将预分配与已上报位置合并，在 `block/location` CF 写入哨兵，避免把尚无上报的副本当作已删除。外部 `gc_batch` 根据已提交事实给 Worker 下发幂等删除；观察删除确认后，把原事实字节、namespace incarnation/epoch 及游标送入 Native journal 的维护分支。apply 仅删除仍匹配的事实，并清除本地旧位置；不依赖原 inode 仍存在，也不为每块保留永久请求结果。批次未知仍需建立提交前缀隔离，否则停止服务。
+
+Native journal v1/v2 使用冻结 DTO 回放；v3 增加清理事实控制及维护确认，公共 NativeMutation RPC envelope 仍为 v1。格式 CF 是二进制降级栅栏，不保存另一份元数据镜像。
 
 ## 8. 一致性、提交与重放
 
 正常 HSM 事务通过 `JournalEntry::Hsm` 提交。apply 先查原 outcome，避免重复效果，再验证 controller epoch、expected_version、候选 record_checks 及 control 键旧值。成立时在一个 WriteBatch 更新记录、派生索引、必要原生 inode、控制键与 outcome；条件失败保留原始拒绝结果而不修改目标状态。临时 Busy 的重试语义另由动作入口处理。
 
-普通 FUSE 完成路径调用 `hsm_track_file`；正常 CompleteFile 日志在重放时也调用相同钩子。ordinary_format=2 用于新增普通钩子的版本激活，旧日志按旧格式语义解释，不能因为新增回调改变历史 Record.version。
+当前 FUSE/SDK 完成路径以 Native owned 命令原子纳管；旧 CompleteFile 日志在重放时仍执行原纳管钩子。ordinary_format=2 用于新增普通钩子的版本激活，旧日志按旧格式语义解释，不能因为新增回调改变历史 Record.version。
 
-非 testing 启动时，现有实现先按最多 1024 键、256 KiB 编码预算的批次清理 common 中的 `P` 投影，每批释放 iterator 后提交，并从上一批最后的键后继续，避免反复扫描已删除键的 tombstone；再由正常 journal/snapshot 恢复流程重建；普通文件钩子与 HSM apply 共同恢复相同的 Record/索引/任务结果。不能保留未同步的旧 outcome 让它跳过原生 inode 的重放。清理和重建依赖完整提交历史或受支持的 checkpoint，不是从 Worker 块文件猜出归档锚点。
+HSM 卷冷启动用一个 WriteBatch 的 7 个范围墓碑清除原生 inode/edge/block/location、HSM 前缀及 mount/lock 投影，然后按 checkpoint 与尾部日志重建，保留其他 common 事实。restore 等待短快照读租约排空。清理不先收集全部键，不代表重放或内存 namespace 构建不再随实际恢复内容增长。旧 outcome 不会跨恢复点残留并错误跳过原生恢复；支持的 checkpoint 必须与相同 applied index 对齐。
 
 ## 9. 当前成本与实施边界
 
-- 每个 Record 对应一个当前状态候选项；真实 atime 变化仍更新 JSON Record 并迁移候选键。排序键不变时只写 Record；seal/GC 派生值不变时也不写索引。公开访问修订与 Release 的版本失效语义保持。
+- 每个 Record 对应一个当前状态候选项；真实 atime 变化更新小型 access JSON 和原生 atime，并迁移候选键。排序键不变时只写 Record；seal/GC 派生值不变时也不写索引。公开访问修订与 Release 的版本失效语义保持。
 - 时间索引可减少热记录扫描；大小、owner 等仍需 Record 回查，但会在解析路径前拒绝；路径条件仍后过滤，密集不匹配前缀可能跨多轮消耗预算。没有 path×atime 复合索引或按规则物化候选表。
-- 当前 Record 将视图、租约、锚点及垃圾集合编码在一个 JSON value，没有拆分为独立关系表；大集合与高频访问尚需压测。
-- 启动清理已消除全部键的 Vec 和单个无界 WriteBatch，额外应用侧批次内存受固定上限约束；单键超过预算时拒绝启动。RocksDB cache/memtable 与 namespace 自身仍有内存成本。总清理仍是 O(K)，日志重放及共享在途预算仍随相应工作量增长。实际规模验证范围见 [规模测试记录](scale-validation.md)，不据此承诺生产 HA。
+- 稳定视图、锚点和垃圾仍保留在稳定 Record；高频读取租约与访问观察已拆入 access overlay，大集合仍需规模压测。
+- 启动清理改用范围墓碑，不逐键构建应用侧删除批次。RocksDB 后台 compaction、cache/memtable、namespace 构建及日志重放仍有实际规模成本；共享预算正常读取为 O(1)。实际规模验证范围见 [规模测试记录](scale-validation.md)，不据此承诺生产 HA。
 - 同批更新与日志恢复已经实现；自动对账/修复损坏候选索引的在线运维工具、独立 schema 迁移框架、终态历史自动保留清理并未在此声明完成。
 
 ### 9.1 三项成本分别影响什么

@@ -166,7 +166,7 @@ impl NativeInput {
             Self::AddBlock(request) => commands::add_block(view, fs, request, time),
             Self::Reopen(request) => {
                 let flags = OpenFlags::new(request.flags);
-                if flags.read_only() || flags.truncate() {
+                if flags.read_only() {
                     return err_box!("native reopen requires writable non-truncating flags");
                 }
                 // Inspect the private batch view: a preceding command may have
@@ -177,12 +177,18 @@ impl NativeInput {
                         == crate::master::meta::inode::InodeView::path_components(&request.path)?
                             .len()
                 };
-                if exists {
+                if exists && !flags.truncate() {
                     commands::reopen(view, fs, request)
-                } else if flags.create() {
+                } else if exists || flags.create() {
                     let opts = ProtoUtils::create_opts_from_pb(request.opts);
-                    fs.validate_create_opts(&request.path, &opts, &flags)?;
-                    let mut prepared = commands::create(view, &request.path, opts, time)?;
+                    if !exists {
+                        fs.validate_create_opts(&request.path, &opts, &flags)?;
+                    }
+                    let mut prepared = if exists {
+                        commands::overwrite(view, &request.path, opts, time)?
+                    } else {
+                        commands::create(view, &request.path, opts, time)?
+                    };
                     let status = CreateFileResponse::decode(prepared.response.as_slice())
                         .map_err(|e| FsError::common(e.to_string()))?
                         .file_status;
@@ -211,12 +217,17 @@ impl NativeInput {
                 let flags = OpenFlags::new(request.flags);
                 let opts = ProtoUtils::create_opts_from_pb(request.opts);
                 fs.validate_create_opts(&request.path, &opts, &flags)?;
-                if flags.overwrite() {
-                    return err_box!(
-                        "native overwrite is not activated; use its original gated operation"
-                    );
+                let exists = {
+                    let mut command = view.command();
+                    command.resolve(&request.path)?.len()
+                        == crate::master::meta::inode::InodeView::path_components(&request.path)?
+                            .len()
+                };
+                if exists && flags.overwrite() && !flags.exclusive() {
+                    commands::overwrite(view, &request.path, opts, time)
+                } else {
+                    commands::create(view, &request.path, opts, time)
                 }
-                commands::create(view, &request.path, opts, time)
             }
         }
     }

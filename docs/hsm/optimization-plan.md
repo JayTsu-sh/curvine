@@ -1,13 +1,13 @@
 # HSM 性能优化方案
 
-状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir` 接入真实 committed 命令与 SDK 会话去重，其余普通修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close 和可写 open 接入真实 committed 命令与 SDK 会话去重，其余 namespace 修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
 
 ## 当前实现与完成门槛（2026-10-21）
 
 | 项目 | 本轮代码行为 | 仍需完成或验收 |
 |---|---|---|
 | 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
-| 普通 mkdir | SDK 使用 `NativeMutation` 稳定身份；最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
+| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
 | 读取保护 | 最多 32 个条件读命令合并一次日志；普通在线读增量再合并为一次 RocksDB WriteBatch；批内读者/版本按顺序合并；原生 atime 每 inode 只写最终值 | 混合原生/HSM 统一提交；真实故障注入 |
 | 大文件读结果 | 超过 32 块时，持久化原始授权、原始 FileStatus 和逻辑布局摘要；即时回复仍返回完整块位置，重试在有效保护下重建位置，不延长授权 | 大布局/复制位置变化及故障重试验收；此项减少结果编码量，不等同于吞吐收益 |
 | 高频状态 | `record:{inode}` 保存稳定实体；`access:{inode}` 保存 base/version、revision、atime、readers；稳定变更原子合并并删除 overlay | 精确 atime 仍迁移候选索引、仍更新原生 inode，语义保持 |
@@ -17,8 +17,9 @@
 | 空扫描页 | 手动纯查询不记工作流结果；周期页面只条件提交 cursor/pressure，通过 apply 回执返回，无永久 outcome/binding；真正入队继续持久保存结果 | 新旧日志/checkpoint 及取消/丢回执回归 |
 | 容量预算 | `budget:online:v1` 与 Ready/Running/终态 reservation 同批增减；正常读取 O(1)；旧 checkpoint 缺项时有界分页重建 | 并发规则与换主压力测试；不是 Recall 硬容量预留 |
 | 冷恢复 | HSM 卷用一个 WriteBatch 的 7 个 range tombstone 清除原生 inode/edge/block/location、HSM、mount、lock 投影，随后从 checkpoint/尾日志重建；保留无关 common 事实；restore 排空快照读租约 | 完整百万恢复验收；namespace 构建和日志重放仍随实际恢复内容增长 |
-| 格式与分配 | `hsm_native_v2/v3` CF 分别标记访问增量与 Native journal 格式；单条 access/progress 也用版本封装；Native variant 只追加，不改变历史编号；持久推进 inode 分配上限 | 旧 checkpoint 未记录过的历史已删除最大 ID 无法凭空恢复；P2 全路径接入仍待完成 |
+| 格式与分配 | `hsm_native_v2/v3/v4` 空 CF 标记访问增量、Native journal 及持久 GC 格式；单条 access/progress 也用版本封装；Native variant 只追加，不改变历史编号；持久推进 inode 分配上限 | 旧 checkpoint 未记录过的历史已删除最大 ID 无法凭空恢复；P2 全路径接入仍待完成 |
 | 后台写入排序 | TTL/配额回收与失联 Worker 清理的 namespace 修改取得相同 gate，并在 OS 线程等待自身 journal 前缀确认；换主后 TTL 重新入桶；HSM 文件与未过期 inode 的纯延期判断不争提交 gate | 后台修改也迁移为 owned 命令；旧路径的 Worker 删除还需全部改为持久 outbox |
+| 覆盖写清理 | inode、HSM generation、候选索引、每块 GC 事实及副本位置同批提交；Worker 删除由已提交事实驱动；实际删除确认后提交幂等 GC ack，原子移除事实与旧位置；分页游标持久化 | delete/rename 替换及其他旧删除路径仍待迁移；真实故障注入与百万负载验收 |
 | 读历史 | 时间身份 + 持久 floor 拒绝过期请求，每次最多回收 8 对普通读结果/索引；工作流原始成功结果不清理 | 旧 checkpoint 中无历史索引的 legacy outcome 不会被猜测删除 |
 | 数据通道 | 1 MiB 原始二进制 body、有界 JSON 头；连接按 Worker/config 复用，失败/取消丢弃；私有布局、Seal、摘要校验仍保留 | 本轮完整回归后再测传输收益；单副本 Recall HA 不在此优化中假装解决 |
 
@@ -216,3 +217,12 @@ Interface 的 receipt 绑定逻辑请求身份及提交任期/位置，重试保
 `AddBlock` 与可写、不截断的 `OpenFile` 已进入 Native 请求身份及提交链路。同批后续块请求可看到前序尚未发布的分配，首次分配后的重试不再次申请 Worker。准备/已知条件失败撤销本地调度计数；提交未知时保留保守计数，由原有 Worker 报告/超时收敛。块分配不为每块重写稳定 HSM 记录；完整关闭再原子纳管。首次重新打开推进 generation，后续并发写者保持同代次，集合成员的 CAS 摘要按逻辑值排序，跨进程重建不依赖 HashSet 遍历顺序。
 
 验证：Master 229 项通过、2 项 ignored；两个真实集群用例通过，新增追加写、open 创建、块准备预算失败和同批分配去重。修复了回归期间发现的通用执行器启动/停止竞态：线程启动不再覆盖已发布 STOP，停止仍排空已接收任务；35 项 Runtime 测试通过，包含确定复现与清空队列回归。该修复独立提交。覆盖写与其持久清理、其他 namespace/background 修改、统一混合批处理仍待完成。
+
+
+### 追加里程碑：覆盖写与持久清理
+
+`CreateFile` 覆盖和可写 `OpenFile(O_TRUNC)` 复用 owned 覆盖准备。原 inode 保留，保留 `next_seq`；每次覆盖明确推进旧 generation，即使原文件仍处于 writing。新内容代次、长度、候选项、旧块清理事实及原始返回结果原子发布。普通不受管文件的清理同样不依赖 HSM Record 存在。
+
+新增 `native-gc:v1:<block_hex16>` 与持久游标。首次退休为预分配但尚未上报的副本也保留位置哨兵，不能把“未上报”当作“已删除”。GC 重放可以重新下发 Worker 删除，清理确认使用 Native journal v3 的维护分支；仅匹配当前 incarnation/epoch 和原事实字节时移除，重复应用无副作用，不为每块制造永久结果。冻结 v1/v2 journal DTO，新增空 CF `hsm_native_v4` 阻止旧二进制误开。
+
+验证：Master 232 项通过、2 项 ignored；两个真实集群用例通过，新增 40 旧块跨页清理、实际 Worker 删除确认、新布局可读、旧块 ID 不复用以及 GC 不增长永久 HSM outcome 字节。hsm-rs workspace 的 30 项功能测试及全部文档测试通过（路径 patch 指向本轮代码），包含进程重启、策略接管、自动 Recall 与旧 Release 失效。另单独修复旧 AddBlock 回放遗漏 next_seq 下界：确定回归从原先错误的 0 恢复为期望的 8，避免升级/崩溃后复用旧块。旧完整 checkpoint 未记录过的已删除 inode 最大 ID 仍不能凭空补出。

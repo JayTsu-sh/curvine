@@ -42,6 +42,7 @@ impl RocksInodeStore {
     // cannot reopen a checkpoint containing access overlays and native facts.
     pub(crate) const CF_HSM_FORMAT: &'static str = "hsm_native_v2";
     pub(crate) const CF_NATIVE_FORMAT: &'static str = "hsm_native_v3";
+    pub(crate) const CF_NATIVE_GC_FORMAT: &'static str = "hsm_native_v4";
 
     pub const PREFIX_MOUNT: u8 = 0x01;
     pub const PREFIX_LOCK: u8 = 0x02;
@@ -551,19 +552,24 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let legacy = DBConf::new(directory.path().to_string_lossy().into_owned());
         let overlay_only = legacy.clone().add_cf(RocksInodeStore::CF_HSM_FORMAT);
-        let upgraded = overlay_only
+        let native_v3 = overlay_only
             .clone()
             .add_cf(RocksInodeStore::CF_NATIVE_FORMAT);
+        let upgraded = native_v3
+            .clone()
+            .add_cf(RocksInodeStore::CF_NATIVE_GC_FORMAT);
         let store = RocksInodeStore::new(upgraded.clone(), true)?;
         let checkpoint = store.db.create_checkpoint(1)?;
         drop(store);
         // The pre-overlay opener's exact family list cannot interpret this DB.
         assert!(RocksInodeStore::new(legacy, false).is_err());
         assert!(RocksInodeStore::new(overlay_only, false).is_err());
+        assert!(RocksInodeStore::new(native_v3, false).is_err());
         let mut store = RocksInodeStore::new(upgraded, false)?;
         store.db.restore(checkpoint)?;
         assert!(store.db.cf(RocksInodeStore::CF_HSM_FORMAT).is_ok());
         assert!(store.db.cf(RocksInodeStore::CF_NATIVE_FORMAT).is_ok());
+        assert!(store.db.cf(RocksInodeStore::CF_NATIVE_GC_FORMAT).is_ok());
         Ok(())
     }
 

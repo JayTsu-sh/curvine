@@ -4,6 +4,7 @@
 mod authority;
 mod commands;
 mod coordinator;
+mod garbage;
 mod input;
 mod legacy;
 mod session;

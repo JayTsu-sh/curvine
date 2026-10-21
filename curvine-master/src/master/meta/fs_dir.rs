@@ -124,7 +124,8 @@ impl FsDir {
         if conf.master.hsm_enabled {
             db_conf = db_conf
                 .add_cf(RocksInodeStore::CF_HSM_FORMAT)
-                .add_cf(RocksInodeStore::CF_NATIVE_FORMAT);
+                .add_cf(RocksInodeStore::CF_NATIVE_FORMAT)
+                .add_cf(RocksInodeStore::CF_NATIVE_GC_FORMAT);
         }
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;

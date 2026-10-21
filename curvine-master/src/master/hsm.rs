@@ -871,13 +871,14 @@ impl MasterFilesystem {
             return Ok(reply("seals", items));
         }
         if op == "gc_batch" {
+            let native_processed = self.native_gc_batch(&namespace).await.map_err(io)?;
             let page = self
                 .fs_dir
                 .read()
                 .get_rocks_store()
                 .hsm_scan(b"\x03hsm:gc:", None, 16)
                 .map_err(io)?;
-            let mut processed = 0;
+            let mut processed = native_processed;
             for (_, bytes) in page {
                 let entity: EntityKey = decode(&bytes).map_err(io)?;
                 self.hsm_gc(&namespace, &entity).await?;
@@ -1788,7 +1789,9 @@ fn same_attempt(a: &OperationContext, b: &OperationContext) -> bool {
 mod lifecycle;
 
 mod ordinary;
-pub(crate) use ordinary::{native_record, write_record as write_native_record};
+pub(crate) use ordinary::{
+    native_overwrite_record, native_record, write_record as write_native_record,
+};
 
 #[cfg(test)]
 mod scale_tests;

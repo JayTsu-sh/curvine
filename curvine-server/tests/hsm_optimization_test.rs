@@ -455,6 +455,68 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             "done"
         );
         assert_eq!(control(&fs, &original).await?["data"]["code"], "fenced");
+        // Retire more than one GC page. Physical deletion is driven solely by
+        // the committed outbox and actual Worker heartbeat acknowledgements.
+        let current_path = Path::from_str("/after/many-blocks")?;
+        let old_layout = fs.fs_client().get_block_locations(&current_path).await?;
+        let mut writer = fs.open_for_write(&current_path, true).await?;
+        writer.write(b"new layout").await?;
+        writer.complete().await?;
+        let active = cluster.get_active_master_fs();
+        assert!(
+            active
+                .fs_dir()
+                .read()
+                .get_rocks_store()
+                .hsm_scan(b"\x03hsm:native-gc:v1:", None, 100)?
+                .len()
+                >= 40
+        );
+        let outcomes = metrics.hsm_test_commit_stats()["outcome_bytes"]
+            .as_u64()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            assert_eq!(control(&fs, &json!({"op":"gc_batch"})).await?["kind"], "gc");
+            let pending = active.fs_dir().read().get_rocks_store().hsm_scan(
+                b"\x03hsm:native-gc:v1:",
+                None,
+                1,
+            )?;
+            if pending.is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native GC did not observe Worker acknowledgements"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            metrics.hsm_test_commit_stats()["outcome_bytes"]
+                .as_u64()
+                .unwrap(),
+            outcomes,
+            "GC progress manufactured permanent workflow outcomes"
+        );
+        {
+            let dir = active.fs_dir();
+            let guard = dir.read();
+            for old in &old_layout.block_locs {
+                assert!(guard.get_block_locations(old.block.id)?.is_empty());
+            }
+        }
+        let new_layout = fs.fs_client().get_block_locations(&current_path).await?;
+        assert_eq!(new_layout.block_locs.len(), 1);
+        assert!(old_layout
+            .block_locs
+            .iter()
+            .all(|old| old.block.id != new_layout.block_locs[0].block.id));
+        let mut reader = fs.open(&current_path).await?;
+        let mut bytes = vec![0; 10];
+        assert_eq!(reader.read(&mut bytes).await?, 10);
+        assert_eq!(bytes, b"new layout");
+        reader.complete().await?;
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     })
 }

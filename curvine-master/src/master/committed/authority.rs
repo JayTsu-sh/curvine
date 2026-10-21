@@ -232,6 +232,52 @@ pub(super) fn apply_creation(
             valid = false;
         }
     }
+    let mut retired = BTreeMap::new();
+    for control in &edits.controls {
+        let value = control
+            .value
+            .as_ref()
+            .ok_or("native requests cannot acknowledge GC")?;
+        let garbage = super::garbage::validate(&control.key, value, &namespace.incarnation)?;
+        let owner = crate::master::meta::InodeId::get_id(garbage.block);
+        if edits.inode_checks.get(&owner).is_none_or(Option::is_none)
+            || !edits.inodes.contains_key(&owner)
+            || retired.insert(garbage.block, garbage.locations).is_some()
+            || control
+                .expected
+                .as_ref()
+                .is_some_and(|expected| expected != value)
+        {
+            return err_box!("native garbage has no observed owner or repeats a block");
+        }
+        if fs.get_rocks_store().hsm_get(&control.key)? != control.expected {
+            valid = false;
+        }
+    }
+    if valid {
+        for block in retired.keys() {
+            let owner = crate::master::meta::InodeId::get_id(*block);
+            let previous = current_inode(fs, owner)?.ok_or("retired block owner missing")?;
+            let next = edits
+                .inodes
+                .get(&owner)
+                .and_then(Option::as_ref)
+                .ok_or("retired block replacement missing")?;
+            if !previous
+                .as_file_ref()?
+                .blocks
+                .iter()
+                .any(|meta| meta.id == *block)
+                || next
+                    .as_file_ref()?
+                    .blocks
+                    .iter()
+                    .any(|meta| meta.id == *block)
+            {
+                return err_box!("native GC attempted to retire a live/unobserved block");
+            }
+        }
+    }
     let mut hsm_records = BTreeMap::new();
     for (id, expected) in &edits.hsm_checks {
         if !edits.inode_checks.contains_key(id) {
@@ -273,7 +319,7 @@ pub(super) fn apply_creation(
                 inode
                     .as_file_ref()
                     .is_ok_and(|file| file.blocks.iter().any(|meta| meta.id == *block))
-            })
+            }) && !retired.contains_key(block)
         {
             return err_box!("native block location has no matching file");
         }
@@ -355,6 +401,9 @@ pub(super) fn apply_creation(
         }
         for ((block, _), location) in &edits.locations {
             batch.add_location(*block, location)?;
+        }
+        for control in &edits.controls {
+            batch.hsm_put(&control.key, control.value.as_ref().unwrap())?;
         }
         for (id, record) in &hsm_records {
             crate::master::hsm::write_native_record(
@@ -479,6 +528,225 @@ mod tests {
                 body: vec![],
             },
         })
+    }
+
+    #[test]
+    fn overwrite_commits_retirement_before_worker_effects_and_never_reuses_block_ids(
+    ) -> CommonResult<()> {
+        use super::super::garbage;
+        use curvine_model::{ClientAddress, CreateFileOpts, WorkerAddress, WorkerInfo};
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = configuration(root.path());
+        conf.master.worker_policy = "robin".into();
+        let fs = JournalSystem::fs_only_for_test(&conf)?;
+        seed_namespace(&fs)?;
+        fs.worker_manager.write().add_test_worker(WorkerInfo {
+            address: WorkerAddress {
+                worker_id: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let status = fs.create("/file", false)?;
+        let block = fs
+            .add_block(
+                "/file",
+                Some(status.id),
+                ClientAddress::default(),
+                vec![],
+                vec![],
+                0,
+                None,
+            )?
+            .block;
+        let old = {
+            let dir = fs.fs_dir.read();
+            let file = dir.store.get_inode(status.id, None)?.unwrap();
+            let record = crate::master::hsm::native_record(
+                &dir.hsm_namespace()?.unwrap(),
+                "/file",
+                file.as_file_ref()?,
+                None,
+            )?
+            .unwrap();
+            let mut batch = dir.get_rocks_store().new_batch();
+            crate::master::hsm::write_native_record(&mut batch, None, &record)?;
+            batch.commit()?;
+            assert!(
+                dir.get_block_locations(block.id)?.is_empty(),
+                "pre-assigned replica has no report yet"
+            );
+            assert!(record.writing);
+            record
+        };
+        let mut command = prepare(&fs, "/unused")?;
+        {
+            let dir = fs.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let prepared =
+                commands::overwrite(&mut view, "/file", CreateFileOpts::with_create(false), 2000)?;
+            command.edits = prepared.edits;
+            command.reply.code = RpcCode::CreateFile.into();
+            command.reply.header = prepared.response;
+            assert_eq!(
+                dir.store
+                    .get_inode(status.id, None)?
+                    .unwrap()
+                    .as_file_ref()?
+                    .blocks
+                    .len(),
+                1
+            );
+            assert!(dir
+                .get_rocks_store()
+                .hsm_scan(garbage::PREFIX, None, 10)?
+                .is_empty());
+            assert!(dir.get_block_locations(block.id)?.is_empty());
+        }
+        assert!(apply_creation(&mut fs.fs_dir.write(), &command)?.kind == ResultKind::Applied);
+        let bytes = {
+            let dir = fs.fs_dir.read();
+            let current = dir.hsm_record(status.id)?.unwrap();
+            assert_eq!(
+                current.state.data.generation,
+                old.state.data.generation + 1,
+                "overwrite must invalidate even an already-writing generation"
+            );
+            assert_eq!(current.version, old.version + 1);
+            let file = dir.store.get_inode(status.id, None)?.unwrap();
+            assert!(file.as_file_ref()?.blocks.is_empty());
+            assert_eq!(file.as_file_ref()?.next_seq, 1);
+            assert_eq!(
+                dir.get_block_locations(block.id)?.len(),
+                1,
+                "unreported preallocation still needs an explicit delete acknowledgement"
+            );
+            dir.get_rocks_store()
+                .hsm_get(&garbage::key(block.id))?
+                .unwrap()
+        };
+        assert!(apply_creation(&mut fs.fs_dir.write(), &command)?.reply == command.reply);
+        assert_eq!(
+            fs.fs_dir
+                .read()
+                .hsm_record(status.id)?
+                .unwrap()
+                .state
+                .data
+                .generation,
+            old.state.data.generation + 1
+        );
+        // The new layout cannot reuse a retired block, even with the same inode.
+        let next = fs
+            .add_block(
+                "/file",
+                Some(status.id),
+                ClientAddress::default(),
+                vec![],
+                vec![],
+                0,
+                None,
+            )?
+            .block;
+        assert_ne!(next.id, block.id);
+        assert!(fs
+            .fs_dir
+            .read()
+            .get_rocks_store()
+            .hsm_get(&garbage::key(block.id))?
+            .is_some());
+        // Simulate the committed acknowledgement observed by a new leader.
+        // Follower soft placement may still contain the old rows; apply removes
+        // those rows with the matching fact, without touching the new layout.
+        let mut ack = garbage::GarbageAck {
+            incarnation: "other-volume".into(),
+            epoch: 1,
+            items: vec![(garbage::key(block.id), bytes)],
+            cursor_expected: None,
+            cursor_next: None,
+        };
+        garbage::apply_ack(&mut fs.fs_dir.write(), &ack)?;
+        assert!(fs
+            .fs_dir
+            .read()
+            .get_rocks_store()
+            .hsm_get(&garbage::key(block.id))?
+            .is_some());
+        ack.incarnation = "incarnation".into();
+        garbage::apply_ack(&mut fs.fs_dir.write(), &ack)?;
+        garbage::apply_ack(&mut fs.fs_dir.write(), &ack)?;
+        let dir = fs.fs_dir.read();
+        assert!(dir
+            .get_rocks_store()
+            .hsm_get(&garbage::key(block.id))?
+            .is_none());
+        assert!(dir.get_block_locations(block.id)?.is_empty());
+        assert_eq!(
+            dir.store
+                .get_inode(status.id, None)?
+                .unwrap()
+                .as_file_ref()?
+                .blocks[0]
+                .id,
+            next.id
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn frozen_v2_completion_journal_preserves_hsm_fields() -> CommonResult<()> {
+        use super::super::{legacy::*, transport::decode_batch};
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let fs = JournalSystem::fs_only_for_test(&configuration(root.path()))?;
+        seed_namespace(&fs)?;
+        let file = fs.create("/file", false)?;
+        let mut c = prepare(&fs, "/unused")?;
+        {
+            let dir = fs.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let prepared = commands::complete(
+                &mut view,
+                &fs,
+                curvine_proto::CompleteFileRequest {
+                    path: "/file".into(),
+                    ..Default::default()
+                },
+                1000,
+            )?;
+            c.edits = prepared.edits;
+            c.reply.header = prepared.response;
+            c.reply.code = RpcCode::CompleteFile.into();
+        }
+        let expected = c.reply.clone();
+        let e = c.edits;
+        let bytes = SerdeUtils::serialize(&NativeBatchV2 {
+            version: 2,
+            commands: vec![NativeCommandV2 {
+                identity: c.identity,
+                fingerprint: c.fingerprint,
+                time: c.time,
+                reply: c.reply,
+                edits: PreparedEditsV2 {
+                    inodes: e.inodes,
+                    edges: e.edges,
+                    inode_checks: e.inode_checks,
+                    edge_checks: e.edge_checks,
+                    child_deltas: e.child_deltas,
+                    last_inode: e.last_inode,
+                    hsm_checks: e.hsm_checks,
+                    hsm_records: e.hsm_records,
+                    locations: e.locations,
+                },
+            }],
+        })?;
+        let batch = decode_batch(&bytes)?;
+        assert!(batch.garbage_ack.is_none());
+        assert!(batch.commands[0].edits.controls.is_empty());
+        assert!(apply_creation(&mut fs.fs_dir.write(), &batch.commands[0])?.reply == expected);
+        assert!(!fs.fs_dir.read().hsm_record(file.id)?.unwrap().writing);
+        Ok(())
     }
 
     #[test]

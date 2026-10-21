@@ -897,7 +897,7 @@ impl FsClient {
         }
         if matches!(
             code,
-            RpcCode::Mkdir | RpcCode::CompleteFile | RpcCode::AddBlock
+            RpcCode::Mkdir | RpcCode::CreateFile | RpcCode::CompleteFile | RpcCode::AddBlock
         ) {
             self.native_rpc(code, header).await
         } else if code == RpcCode::OpenFile {
@@ -905,16 +905,7 @@ impl FsClient {
             let request = OpenFileRequest::decode(encoded.as_slice())
                 .map_err(|error| FsError::common(error.to_string()))?;
             let flags = OpenFlags::new(request.flags);
-            if !flags.read_only() && !flags.truncate() {
-                self.native_rpc_encoded(code, encoded).await
-            } else {
-                self.raw_rpc(code, header).await
-            }
-        } else if code == RpcCode::CreateFile {
-            let encoded = header.encode_to_vec();
-            let request = CreateFileRequest::decode(encoded.as_slice())
-                .map_err(|error| FsError::common(error.to_string()))?;
-            if !OpenFlags::new(request.flags).overwrite() {
+            if !flags.read_only() {
                 self.native_rpc_encoded(code, encoded).await
             } else {
                 self.raw_rpc(code, header).await

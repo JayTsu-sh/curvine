@@ -7,7 +7,7 @@ use crate::master::meta::{
     FsDir,
 };
 use curvine_core_error::{err_box, CommonResult};
-use curvine_model::hsm::native::Record;
+use curvine_model::hsm::native::{ControlChange, Record};
 use curvine_model::{BlockLocation, CommitBlock, FileStatus};
 use curvine_runtime::common::SerdeUtils;
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,7 @@ pub(super) struct PreparedEdits {
     pub(super) hsm_checks: BTreeMap<i64, Option<u64>>,
     pub(super) hsm_records: BTreeMap<i64, Vec<u8>>,
     pub(super) locations: BTreeMap<(i64, u32), BlockLocation>,
+    pub(super) controls: Vec<ControlChange>,
 }
 impl PreparedEdits {
     pub(super) fn encoded_bytes(&self) -> CommonResult<usize> {
@@ -55,6 +56,7 @@ pub(super) struct BatchView<'a> {
     child_deltas: BTreeMap<i64, i64>,
     hsm_records: BTreeMap<i64, Record>,
     locations: BTreeMap<(i64, u32), BlockLocation>,
+    controls: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     last_inode: i64,
     bytes: usize,
     budget: usize,
@@ -69,6 +71,7 @@ impl<'a> BatchView<'a> {
             child_deltas: BTreeMap::new(),
             hsm_records: BTreeMap::new(),
             locations: BTreeMap::new(),
+            controls: BTreeMap::new(),
             last_inode: authority.last_inode_id(),
             bytes: 0,
             budget,
@@ -154,6 +157,10 @@ impl<'a> BatchView<'a> {
         self.last_inode = self.last_inode.max(edits.last_inode);
         self.hsm_records.extend(records);
         self.locations.extend(edits.locations.clone());
+        for control in &edits.controls {
+            self.controls
+                .insert(control.key.clone(), control.value.clone());
+        }
         Ok(())
     }
 }
@@ -228,6 +235,12 @@ impl CommandView<'_, '_> {
     }
 
     pub(super) fn enroll(&mut self, inode: &InodeView) -> CommonResult<()> {
+        self.enroll0(inode, false)
+    }
+    pub(super) fn enroll_overwrite(&mut self, inode: &InodeView) -> CommonResult<()> {
+        self.enroll0(inode, true)
+    }
+    fn enroll0(&mut self, inode: &InodeView, overwrite: bool) -> CommonResult<()> {
         let id = inode.id();
         let previous = self.record(id)?;
         let namespace = self
@@ -236,15 +249,81 @@ impl CommandView<'_, '_> {
             .hsm_namespace()?
             .ok_or("native command has no namespace")?;
         let path = self.path(id)?;
-        if let Some(record) = crate::master::hsm::native_record(
-            &namespace,
-            &path,
-            inode.as_file_ref()?,
-            previous.as_ref(),
-        )? {
+        let build = if overwrite {
+            crate::master::hsm::native_overwrite_record
+        } else {
+            crate::master::hsm::native_record
+        };
+        if let Some(record) = build(&namespace, &path, inode.as_file_ref()?, previous.as_ref())? {
             let json = serde_json::to_vec(&record)?;
             self.charge(json.len().saturating_add(32))?;
             self.edits.hsm_records.insert(id, json);
+        }
+        Ok(())
+    }
+
+    pub(super) fn guard_overwrite(&mut self, id: i64) -> CommonResult<()> {
+        self.batch.authority.hsm_guard_overwrite(id)?;
+        self.record(id)?;
+        Ok(())
+    }
+    fn control(&self, key: &[u8]) -> CommonResult<Option<Vec<u8>>> {
+        if let Some(change) = self.edits.controls.iter().find(|change| change.key == key) {
+            return Ok(change.value.clone());
+        }
+        match self.batch.controls.get(key) {
+            Some(value) => Ok(value.clone()),
+            None => self.batch.authority.get_rocks_store().hsm_get(key),
+        }
+    }
+    /// Physical cleanup survives generation changes and even inode deletion.
+    /// Retain replica rows until a Worker deletion acknowledgement removes them.
+    pub(super) fn retire_blocks(
+        &mut self,
+        file: &crate::master::meta::inode::InodeFile,
+    ) -> CommonResult<()> {
+        let namespace = self
+            .batch
+            .authority
+            .hsm_namespace()?
+            .ok_or("GC has no namespace")?;
+        for meta in &file.blocks {
+            let mut locations: BTreeMap<_, _> = meta
+                .locs
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|location| (location.worker_id, location))
+                .collect();
+            locations.extend(
+                self.locations(meta.id)?
+                    .into_iter()
+                    .map(|location| (location.worker_id, location)),
+            );
+            let locations: Vec<_> = locations.into_values().collect();
+            let garbage = super::garbage::Garbage {
+                incarnation: namespace.incarnation.clone(),
+                block: meta.id,
+                locations: locations.clone(),
+            };
+            let key = super::garbage::key(meta.id);
+            let value = SerdeUtils::serialize(&garbage)?;
+            let expected = self.control(&key)?;
+            if expected.as_ref().is_some_and(|old| old != &value) {
+                return err_box!("block retirement identity rebound");
+            }
+            self.charge(key.len().saturating_add(value.len()).saturating_add(32))?;
+            self.edits.controls.push(ControlChange {
+                key,
+                expected,
+                value: Some(value),
+            });
+            for location in locations {
+                self.charge(32)?;
+                self.edits
+                    .locations
+                    .insert((meta.id, location.worker_id), location);
+            }
         }
         Ok(())
     }

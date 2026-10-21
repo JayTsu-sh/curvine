@@ -363,3 +363,29 @@ pub(super) fn reopen(
         allocation: None,
     })
 }
+
+/// Replace the inode's current layout only after its physical cleanup facts
+/// and new generation are durably committed in the same authority batch.
+pub(super) fn overwrite(
+    batch: &mut BatchView<'_>,
+    path: &str,
+    opts: CreateFileOpts,
+    time: i64,
+) -> FsResult<PreparedCommand> {
+    let mut view = batch.command();
+    let mut inode = view.file(path, None)?;
+    view.guard_overwrite(inode.id())?;
+    view.retire_blocks(inode.as_file_ref()?)?;
+    inode.as_file_mut()?.overwrite(opts, time);
+    view.put_inode(inode.clone_metadata())?;
+    view.enroll_overwrite(&inode)?;
+    let response = CreateFileResponse {
+        file_status: ProtoUtils::file_status_to_pb(inode.to_file_status(path)?),
+    }
+    .encode_to_vec();
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response,
+        allocation: None,
+    })
+}
