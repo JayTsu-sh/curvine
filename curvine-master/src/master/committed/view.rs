@@ -54,7 +54,7 @@ pub(super) struct BatchView<'a> {
     inodes: BTreeMap<i64, Option<InodeView>>,
     edges: BTreeMap<Edge, Option<i64>>,
     child_deltas: BTreeMap<i64, i64>,
-    hsm_records: BTreeMap<i64, Record>,
+    hsm_records: BTreeMap<i64, Option<Record>>,
     locations: BTreeMap<(i64, u32), BlockLocation>,
     controls: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     last_inode: i64,
@@ -144,7 +144,9 @@ impl<'a> BatchView<'a> {
         let records = edits
             .hsm_records
             .iter()
-            .map(|(id, json)| serde_json::from_slice::<Record>(json).map(|record| (*id, record)))
+            .map(|(id, json)| {
+                serde_json::from_slice::<Record>(json).map(|record| (*id, Some(record)))
+            })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
         for (id, inode) in &edits.inodes {
             self.inodes
@@ -156,6 +158,11 @@ impl<'a> BatchView<'a> {
         }
         self.last_inode = self.last_inode.max(edits.last_inode);
         self.hsm_records.extend(records);
+        for (id, inode) in &edits.inodes {
+            if inode.is_none() {
+                self.hsm_records.insert(*id, None);
+            }
+        }
         self.locations.extend(edits.locations.clone());
         for control in &edits.controls {
             self.controls
@@ -216,7 +223,7 @@ impl CommandView<'_, '_> {
             return Ok(Some(serde_json::from_slice(json)?));
         }
         let record = match self.batch.hsm_records.get(&id) {
-            Some(record) => Some(record.clone()),
+            Some(record) => record.clone(),
             None => self.batch.authority.hsm_record(id)?,
         };
         if !self.edits.hsm_checks.contains_key(&id) {
@@ -258,6 +265,16 @@ impl CommandView<'_, '_> {
             let json = serde_json::to_vec(&record)?;
             self.charge(json.len().saturating_add(32))?;
             self.edits.hsm_records.insert(id, json);
+        }
+        Ok(())
+    }
+
+    pub(super) fn guard_delete(&mut self, id: i64) -> CommonResult<()> {
+        self.guard_write(id)?;
+        if let Some(record) = self.record(id)? {
+            if !record.garbage.is_empty() || !record.native_garbage.is_empty() {
+                return err_box!("HSM physical cleanup must complete before deletion");
+            }
         }
         Ok(())
     }
@@ -448,7 +465,6 @@ impl CommandView<'_, '_> {
         self.edits.inodes.insert(id, Some(inode.clone_metadata()));
         Ok(())
     }
-    #[cfg(test)]
     pub(super) fn delete_inode(&mut self, id: i64) -> CommonResult<()> {
         self.inode(id)?;
         self.charge(32)?;

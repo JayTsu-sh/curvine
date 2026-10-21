@@ -1,13 +1,13 @@
 # HSM 性能优化方案
 
-状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open 和非递归 SetAttr 接入真实 committed 命令与 SDK 会话去重，其余 namespace 修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open、非递归 SetAttr 和非递归 Delete 接入真实 committed 命令与 SDK 会话去重，其余 namespace 修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
 
 ## 当前实现与完成门槛（2026-10-22）
 
 | 项目 | 本轮代码行为 | 仍需完成或验收 |
 |---|---|---|
 | 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
-| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/非递归 SetAttr 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
+| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/非递归 SetAttr/Delete 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
 | 非递归属性 | 只检查和修改目标 inode，不遍历/刷新后代；文件属性与稳定 HSM 记录、候选索引、ctime、原始结果同批发布；最多 32 条 Native 命令合批 | 递归属性仍走过渡路径，不能将新入口当作大子树原子操作 |
 | 读取保护 | 最多 32 个条件读命令合并一次日志；普通在线读增量再合并为一次 RocksDB WriteBatch；批内读者/版本按顺序合并；原生 atime 每 inode 只写最终值 | 混合原生/HSM 统一提交；真实故障注入 |
 | 大文件读结果 | 超过 32 块时，持久化原始授权、原始 FileStatus 和逻辑布局摘要；即时回复仍返回完整块位置，重试在有效保护下重建位置，不延长授权 | 大布局/复制位置变化及故障重试验收；此项减少结果编码量，不等同于吞吐收益 |
@@ -18,9 +18,9 @@
 | 空扫描页 | 手动纯查询不记工作流结果；周期页面只条件提交 cursor/pressure，通过 apply 回执返回，无永久 outcome/binding；真正入队继续持久保存结果 | 新旧日志/checkpoint 及取消/丢回执回归 |
 | 容量预算 | `budget:online:v1` 与 Ready/Running/终态 reservation 同批增减；正常读取 O(1)；旧 checkpoint 缺项时有界分页重建 | 并发规则与换主压力测试；不是 Recall 硬容量预留 |
 | 冷恢复 | HSM 卷用一个 WriteBatch 的 7 个 range tombstone 清除原生 inode/edge/block/location、HSM、mount、lock 投影，随后从 checkpoint/尾日志重建；保留无关 common 事实；restore 排空快照读租约 | 完整百万恢复验收；namespace 构建和日志重放仍随实际恢复内容增长 |
-| 格式与分配 | `hsm_native_v2/v3/v4` 空 CF 标记访问增量、Native journal 及持久 GC 格式；单条 access/progress 也用版本封装；Native variant 只追加，不改变历史编号；持久推进 inode 分配上限 | 旧 checkpoint 未记录过的历史已删除最大 ID 无法凭空恢复；P2 全路径接入仍待完成 |
+| 格式与分配 | `hsm_native_v2/v3/v4/v5` 空 CF 标记访问增量、Native journal 及持久 GC 格式；单条 access/progress 也用版本封装；Native variant 只追加，不改变历史编号；持久推进 inode 分配上限 | 旧 checkpoint 未记录过的历史已删除最大 ID 无法凭空恢复；P2 全路径接入仍待完成 |
 | 后台写入排序 | TTL/配额回收与失联 Worker 清理的 namespace 修改取得相同 gate，并在 OS 线程等待自身 journal 前缀确认；换主后 TTL 重新入桶；HSM 文件与未过期 inode 的纯延期判断不争提交 gate | 后台修改也迁移为 owned 命令；旧路径的 Worker 删除还需全部改为持久 outbox |
-| 覆盖写清理 | inode、HSM generation、候选索引、每块 GC 事实及副本位置同批提交；Worker 删除由已提交事实驱动；实际删除确认后提交幂等 GC ack，原子移除事实与旧位置；分页游标持久化 | delete/rename 替换及其他旧删除路径仍待迁移；真实故障注入与百万负载验收 |
+| 覆盖写清理 | inode、HSM generation、候选索引、每块 GC 事实及副本位置同批提交；Worker 删除由已提交事实驱动；实际删除确认后提交幂等 GC ack，原子移除事实与旧位置；分页游标持久化 | rename 替换、递归 delete 及其他旧删除路径仍待迁移；真实故障注入与百万负载验收 |
 | 读历史 | 时间身份 + 持久 floor 拒绝过期请求，每次最多回收 8 对普通读结果/索引；工作流原始成功结果不清理 | 旧 checkpoint 中无历史索引的 legacy outcome 不会被猜测删除 |
 | Worker 等待 | Allocate/Seal/Delete 网络等待释放协调 gate，返回后重新 ReadIndex 与 namespace 资格检查；GC 合并最新记录；控制者切换后可接续原逻辑步骤 | 真实 Raft Leader 故障和网络分区验收；保留旧 namespace 写入的过渡 gate |
 | 数据通道 | 1 MiB 原始二进制 body、有界 JSON 头；连接按 Worker/config 复用，失败/取消丢弃；私有布局、Seal、摘要校验仍保留 | 本轮完整回归后再测传输收益；单副本 Recall HA 不在此优化中假装解决 |
@@ -269,3 +269,14 @@ GC 在 Delete 确认后重新读取最新 Record，只删除已确认的不可�
 SDK 的非递归 SetAttr 接入 Native 会话去重、合批和条件发布；文件属性、HSM 权威记录、候选索引及原始返回值同批提交。ctime 由 Master 捕获并统一盖戳，用户 xattr 不能伪造或删除；业务 mtime 的既有 generation 失效规则保持。递归 SetAttr 继续使用过渡入口，新 Native 入口明确拒绝未实现的递归命令。
 
 验证范围：双角色一致应用、同批 owner→mtime 依赖、准备无可见副作用、返回原始结果重试、HSM version 冲突时 inode 不改变，以及真实集群 32 次非递归属性修改合批和关闭 HSM 卷的普通 SDK 行为。Master 237 项通过、2 项 ignored；两个真实集群用例通过，包括 32 次非递归属性修改的合批断言、控制者交接和关闭 HSM 卷的 SDK 属性修改。
+
+
+### 追加里程碑：非递归删除与 inode 独立的物理清理
+
+普通文件/链接和空目录的非递归 Delete 接入 Native 身份、条件检查与最多 32 条合批。目录项、inode 删除/链接数更新、HSM Record/访问 overlay/候选项清除、每块退休清单、预分配副本哨兵和原始删除计数在同一 WriteBatch 提交；随后由 `gc_batch` 根据已提交清理事实下发 Worker 删除和确认。清理事实不要求 inode 或 Record 继续存在；inode 已消失但仍有退休清单时，迟到块上报继续按 Retired 处理。
+
+目录元数据 CAS 摘要不包含子目录项。空目录删除在 apply 额外检查真实 children，防止同一毫秒内新增文件、父目录元数据摘要恰好不变时误删。inode 分配上限不降低；请求重试返回原始结果，不删除同路径重新创建的文件。未纳管的硬链接保留其他目录项，最后一个链接才退休物理块。非空递归删除仍走过渡入口，Native 入口不伪装支持大子树原子删除。
+
+Native journal v4 激活删除效果，保留 v3 字段编码并继续读取 v1/v2/v3 历史；公共 RPC envelope 仍为 v1。新增空 CF `hsm_native_v5` 使不支持新语义的二进制拒绝打开 checkpoint；需要所有 Master 支持该格式后使用，未实现跨版本滚动激活。
+
+验证：Master 242 项通过、2 项 ignored；两个真实集群用例通过，含 32 次非递归删除合批、空目录删除、真实 Worker 在 inode 删除后的清理确认，以及此前的 Seal 等待/控制者接续回归。单元测试另外覆盖原结果重试、硬链接、双角色空目录删除、同时间戳新增子文件和 v3 日志回放；checkpoint 格式栅栏拒绝旧 opener。百万验收和本轮原版对比尚未开始。

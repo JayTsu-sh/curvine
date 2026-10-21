@@ -22,6 +22,7 @@ pub(crate) enum NativeInput {
     AddBlock(curvine_proto::AddBlockRequest),
     Reopen(curvine_proto::OpenFileRequest),
     SetAttr(curvine_proto::SetAttrRequest),
+    Delete(curvine_proto::DeleteRequest),
 }
 impl NativeInput {
     pub(crate) fn parse(request: &NativeMutationRequest) -> FsResult<Self> {
@@ -59,6 +60,11 @@ impl NativeInput {
                     .map(Self::SetAttr)
                     .map_err(|error| FsError::common(error.to_string()))
             }
+            value if value == RpcCode::Delete as u32 => {
+                curvine_proto::DeleteRequest::decode(request.header.as_slice())
+                    .map(Self::Delete)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
             _ => err_box!("unsupported native mutation operation"),
         }
     }
@@ -70,10 +76,19 @@ impl NativeInput {
             Self::AddBlock(request) => &request.path,
             Self::Reopen(request) => &request.path,
             Self::SetAttr(request) => &request.path,
+            Self::Delete(request) => &request.path,
         }
     }
     pub(crate) fn legacy(self, fs: &MasterFilesystem) -> FsResult<Vec<u8>> {
         match self {
+            Self::Delete(request) => {
+                let result = fs.delete(request.path, request.recursive)?;
+                Ok(curvine_proto::DeleteResponse {
+                    res: Some(ProtoUtils::delete_res_to_pb(result)),
+                    ..Default::default()
+                }
+                .encode_to_vec())
+            }
             Self::SetAttr(request) => {
                 let status = fs.set_attr(
                     request.path,
@@ -179,6 +194,7 @@ impl NativeInput {
             return err_box!("native HSM metadata requires a path outside UFS mounts");
         }
         match self {
+            Self::Delete(request) => commands::delete(view, &request.path, request.recursive, time),
             Self::SetAttr(request) => commands::set_attr(
                 view,
                 &request.path,

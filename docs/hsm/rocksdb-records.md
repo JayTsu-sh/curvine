@@ -4,7 +4,7 @@
 
 ## 1. 数据库、CF 与权威边界
 
-每个 Master 使用自己的元数据 RocksDB。现有 CF 为 `inodes`、`edges`、`block`、`location`、`common`。HSM 业务数据复用 **common CF**；另有 `hsm_native_v2/v3/v4` 三个空 CF 作为旧二进制拒绝打开的格式栅栏。没有外部文件元数据数据库。
+每个 Master 使用自己的元数据 RocksDB。现有 CF 为 `inodes`、`edges`、`block`、`location`、`common`。HSM 业务数据复用 **common CF**；另有 `hsm_native_v2/v3/v4/v5` 四个空 CF 作为旧二进制拒绝打开的格式栅栏。没有外部文件元数据数据库。
 
 ```text
 Master 本地 RocksDB
@@ -207,9 +207,11 @@ completed intent 不参与每轮 Ready/Running 工作索引扫描。共享预计
 
 Release 的 `Record.native_garbage` 也在同批建立每块索引与副本哨兵；旧 checkpoint 缺该索引时仍能从 Record 判断清理义务。此索引不复制文件属性、路径或访问时间，属于相同存储权威域中的清理恢复入口。清理集合不变时不重写事实，也不会把已确认的副本位置重新加入。
 
-HSM 卷处理块报告时先判断块是否仍在当前 inode 的布局中。退休中的旧块会收到删除命令，位置仍保留到 Deleted/完整报告对账；退休已结束的过时上报会被拒绝登记。GC 给原清单与当前报告位置的并集下发删除，覆盖准备后新出现的副本。
+HSM 卷处理块报告时先判断块是否仍在当前 inode 的布局中。退休中的旧块会收到删除命令，位置仍保留到 Deleted/完整报告对账；inode 已删除但仍有退休事实时同样按 Retired 处理；退休已结束的过时上报会被拒绝登记。GC 给原清单与当前报告位置的并集下发删除，覆盖准备后新出现的副本。
 
-Native journal v1/v2 使用冻结 DTO 回放；v3 增加清理事实控制及维护确认，公共 NativeMutation RPC envelope 仍为 v1。格式 CF 是二进制降级栅栏，不保存另一份元数据镜像。
+Native journal v1/v2 使用冻结 DTO 回放；v3 增加清理事实控制及维护确认。v4 保持 v3 字段编码并激活单 inode 删除效果，v1/v2/v3 历史继续可读；公共 NativeMutation RPC envelope 仍为 v1。格式 CF 是二进制降级栅栏，不保存另一份元数据镜像。
+
+非递归 Delete 的原子 batch 同时删除目录项/最终 inode、HSM Record、访问 overlay、候选及旧 seal/GC 辅助索引，保存每块独立退休事实、位置哨兵和原始删除结果。多链接 inode 仅移除本次目录项并更新链接数，最后一条链接才删除 inode。空目录在 apply 重新检查 children，不能仅凭不含子项的 metadata hash 推断为空。物理删除由 `gc_batch` 异步推进，不要求调用者持有已删除 inode。递归删除尚未迁移。
 
 ## 8. 一致性、提交与重放
 

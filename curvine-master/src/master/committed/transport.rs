@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) const VERSION: u32 = 1;
-pub(super) const JOURNAL_VERSION: u32 = 3;
+pub(super) const JOURNAL_VERSION: u32 = 4;
 pub(super) const MAX_ENTRY: usize = 8 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -70,7 +70,7 @@ pub(super) fn decode_batch(bytes: &[u8]) -> CommonResult<NativeBatch> {
     match version {
         1 => Ok(SerdeUtils::deserialize::<super::legacy::NativeBatchV1>(bytes)?.into()),
         2 => Ok(SerdeUtils::deserialize::<super::legacy::NativeBatchV2>(bytes)?.into()),
-        JOURNAL_VERSION => SerdeUtils::deserialize(bytes),
+        3 | JOURNAL_VERSION => SerdeUtils::deserialize(bytes),
         _ => err_box!("unsupported native journal version"),
     }
 }

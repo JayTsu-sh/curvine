@@ -201,10 +201,15 @@ pub(super) fn apply_creation(
     {
         return err_box!("native creation has incomplete checks or allocation history");
     }
-    // Deletion/moves are not activated. Existing file updates carry an HSM
-    // observation, so a committed protection or generation change fences them.
+    // Moves remain inactive. Updates/deletions carry HSM observations so a
+    // committed protection or generation change fences the prepared command.
     if edits.inodes.iter().any(|(id, inode)| {
-        inode.as_ref().is_none_or(|inode| {
+        if inode.is_none() {
+            return *id == ROOT_INODE_ID
+                || edits.inode_checks.get(id).is_none_or(Option::is_none)
+                || !edits.hsm_checks.contains_key(id);
+        }
+        inode.as_ref().is_some_and(|inode| {
             inode.id() != *id
                 || inode.child_len() != 0
                 || inode.is_file_entry()
@@ -213,11 +218,17 @@ pub(super) fn apply_creation(
                     && edits.inode_checks.get(id).is_some_and(Option::is_some)
                     && !edits.hsm_checks.contains_key(id)
         })
-    }) || edits
-        .edges
-        .iter()
-        .any(|(key, value)| value.is_none() || edits.edge_checks.get(key) != Some(&None))
-    {
+    }) || edits.edges.iter().any(|(key, value)| match value {
+        Some(_) => edits.edge_checks.get(key) != Some(&None),
+        None => edits
+            .edge_checks
+            .get(key)
+            .and_then(|id| *id)
+            .is_none_or(|id| {
+                !edits.inodes.contains_key(&id)
+                    || edits.inode_checks.get(&id).is_none_or(Option::is_none)
+            }),
+    }) {
         return err_box!("unsupported native creation effect");
     }
     let mut valid = true;
@@ -261,20 +272,56 @@ pub(super) fn apply_creation(
             let next = edits
                 .inodes
                 .get(&owner)
-                .and_then(Option::as_ref)
-                .ok_or("retired block replacement missing")?;
+                .ok_or("retired block owner effect missing")?;
             if !previous
                 .as_file_ref()?
                 .blocks
                 .iter()
                 .any(|meta| meta.id == *block)
-                || next
-                    .as_file_ref()?
-                    .blocks
-                    .iter()
-                    .any(|meta| meta.id == *block)
+                || next.as_ref().is_some_and(|inode| {
+                    inode
+                        .as_file_ref()
+                        .is_ok_and(|file| file.blocks.iter().any(|meta| meta.id == *block))
+                })
             {
                 return err_box!("native GC attempted to retire a live/unobserved block");
+            }
+        }
+    }
+    let mut deleted = BTreeMap::new();
+    let mut removed_edges = BTreeMap::new();
+    if valid {
+        for (id, inode) in &edits.inodes {
+            if inode.is_none() {
+                let previous = current_inode(fs, *id)?.ok_or("deleted inode missing")?;
+                if let Ok(file) = previous.as_file_ref() {
+                    if file
+                        .blocks
+                        .iter()
+                        .any(|block| !retired.contains_key(&block.id))
+                    {
+                        return err_box!("deleted file has no durable block retirement");
+                    }
+                } else {
+                    // Metadata fingerprints omit directory children. Empty
+                    // deletion therefore needs an explicit apply-time check.
+                    let path = fs.get_inode_path(*id)?;
+                    let input = InodePath::resolve(fs.root_ptr(), path, &fs.store)?;
+                    if input
+                        .get_last_inode()
+                        .is_none_or(|inode| inode.child_len() != 0)
+                    {
+                        valid = false;
+                    }
+                }
+                deleted.insert(*id, previous);
+            }
+        }
+        for (edge, child) in &edits.edges {
+            if child.is_none() {
+                let id = edits.edge_checks[edge].ok_or("removed edge was not observed")?;
+                let previous = current_inode(fs, id)?.ok_or("removed edge inode missing")?;
+                removed_edges.insert(edge.clone(), (id, previous.is_dir()));
             }
         }
     }
@@ -353,7 +400,9 @@ pub(super) fn apply_creation(
             }
         }
         for ((parent, name), child) in &edits.edges {
-            let child = child.unwrap();
+            let Some(child) = *child else {
+                continue;
+            };
             let inode = edits
                 .inodes
                 .get(&child)
@@ -393,11 +442,23 @@ pub(super) fn apply_creation(
     }
     let mut batch = fs.get_rocks_store().new_batch();
     if valid {
-        for inode in edits.inodes.values().flatten() {
-            batch.write_inode(inode)?;
+        for (id, inode) in &edits.inodes {
+            if let Some(inode) = inode {
+                batch.write_inode(inode)?;
+            } else {
+                batch.delete_inode(*id)?;
+                if let Some(record) = fs.hsm_record(*id)? {
+                    crate::master::hsm::forget_native_record(&mut batch, &record)?;
+                }
+                batch.hsm_delete(format!("\u{3}hsm:enroll:{id}").as_bytes())?;
+            }
         }
         for ((parent, name), child) in &edits.edges {
-            batch.add_child(*parent, name, child.unwrap())?;
+            if let Some(child) = child {
+                batch.add_child(*parent, name, *child)?;
+            } else {
+                batch.delete_child(*parent, name)?;
+            }
         }
         for ((block, _), location) in &edits.locations {
             batch.add_location(*block, location)?;
@@ -423,26 +484,41 @@ pub(super) fn apply_creation(
     fs.update_last_inode_id(floor)?;
     if valid {
         for (id, inode) in &edits.inodes {
-            if let Some(pointer) = directories.get(id) {
-                let old =
-                    std::mem::replace(pointer.as_mut(), inode.as_ref().unwrap().clone_metadata());
+            if let (Some(pointer), Some(inode)) = (directories.get(id), inode) {
+                let old = std::mem::replace(pointer.as_mut(), inode.clone_metadata());
                 pointer.as_mut().adopt_directory_children(old);
             }
         }
         // New IDs are allocated parent first. Do not infer that all future
         // operations can use this creation-specific publication order.
-        for ((parent, _name), child) in &edits.edges {
+        for ((parent_id, name), child) in &edits.edges {
             let parent = directories
-                .get(parent)
-                .ok_or("native creation parent is not published")?;
-            let inode = edits
-                .inodes
-                .get(&child.unwrap())
-                .and_then(Option::as_ref)
-                .unwrap()
-                .clone_metadata();
-            let pointer = parent.as_mut().add_child(inode)?;
-            directories.insert(child.unwrap(), pointer);
+                .get(parent_id)
+                .ok_or("native parent is not published")?;
+            if let Some(child) = child {
+                let inode = edits
+                    .inodes
+                    .get(child)
+                    .and_then(Option::as_ref)
+                    .ok_or("created child missing")?
+                    .clone_metadata();
+                let pointer = parent.as_mut().add_child(inode)?;
+                directories.insert(*child, pointer);
+            } else {
+                let (id, directory) = removed_edges
+                    .get(&(*parent_id, name.clone()))
+                    .ok_or("removed edge observation missing")?;
+                parent.as_mut().delete_child(*id, name)?;
+                if *directory {
+                    fs.store.fs_stats.add_dir_count(-1);
+                } else {
+                    fs.store.fs_stats.add_file_count(-1);
+                }
+            }
+        }
+        for (id, inode) in &deleted {
+            fs.get_ttl_bucket_list().remove(inode);
+            fs.evictor.remove_victims(&[*id]);
         }
         for (id, expected) in &edits.inode_checks {
             if expected.is_some() {
@@ -758,6 +834,236 @@ mod tests {
         assert!(apply_creation(&mut source.fs_dir.write(), &late)?.kind == ResultKind::Conflict);
         assert_eq!(source.file_status("/data/file")?.ctime(), before.ctime());
         assert_eq!(source.file_status("/data/file")?.mode, before.mode);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_retires_blocks_independently_of_inode_and_retries_do_not_delete_replacement(
+    ) -> CommonResult<()> {
+        use super::super::garbage;
+        use curvine_model::{ClientAddress, WorkerAddress, WorkerInfo};
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = configuration(root.path());
+        conf.master.worker_policy = "robin".into();
+        let fs = JournalSystem::fs_only_for_test(&conf)?;
+        seed_namespace(&fs)?;
+        fs.worker_manager.write().add_test_worker(WorkerInfo {
+            address: WorkerAddress {
+                worker_id: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let original = fs.create("/file", false)?;
+        let block = fs
+            .add_block(
+                "/file",
+                Some(original.id),
+                ClientAddress::default(),
+                vec![],
+                vec![],
+                0,
+                None,
+            )?
+            .block;
+        fs.fs_dir.write().hsm_enabled = true;
+        fs.complete_file("/file", Some(original.id), 0, vec![], "", false, None)?;
+        assert!(fs.fs_dir.read().hsm_record(original.id)?.is_some());
+        let mut deletion = prepare(&fs, "/unused")?;
+        {
+            let dir = fs.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let prepared = commands::delete(&mut view, "/file", false, 2000)?;
+            deletion.edits = prepared.edits;
+            deletion.reply.header = prepared.response;
+            deletion.reply.code = RpcCode::Delete.into();
+            assert!(dir.store.get_inode(original.id, None)?.is_some());
+            assert!(dir
+                .get_rocks_store()
+                .hsm_scan(garbage::PREFIX, None, 10)?
+                .is_empty());
+        }
+        assert!(apply_creation(&mut fs.fs_dir.write(), &deletion)?.kind == ResultKind::Applied);
+        let fact = {
+            let dir = fs.fs_dir.read();
+            assert!(dir.store.get_inode(original.id, None)?.is_none());
+            assert!(dir.hsm_record(original.id)?.is_none());
+            assert!(matches!(
+                dir.block_inode_state(block.id)?,
+                crate::master::fs::BlockInodeState::Retired
+            ));
+            assert_eq!(dir.get_block_locations(block.id)?.len(), 1);
+            dir.get_rocks_store()
+                .hsm_get(&garbage::key(block.id))?
+                .unwrap()
+        };
+        assert!(!fs.exists("/file")?);
+        let replacement = fs.create("/file", false)?;
+        assert!(replacement.id > original.id);
+        assert!(apply_creation(&mut fs.fs_dir.write(), &deletion)?.reply == deletion.reply);
+        assert_eq!(fs.file_status("/file")?.id, replacement.id);
+        {
+            let mut dir = fs.fs_dir.write();
+            let mut ack = dir.get_rocks_store().new_batch();
+            ack.delete_location(block.id, 1)?;
+            ack.commit()?;
+            garbage::apply_ack(
+                &mut dir,
+                &garbage::GarbageAck {
+                    incarnation: "incarnation".into(),
+                    epoch: 1,
+                    items: vec![(garbage::key(block.id), fact)],
+                    cursor_expected: None,
+                    cursor_next: None,
+                },
+            )?;
+            assert!(dir
+                .get_rocks_store()
+                .hsm_get(&garbage::key(block.id))?
+                .is_none());
+            assert!(matches!(
+                dir.block_inode_state(block.id)?,
+                crate::master::fs::BlockInodeState::Missing
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn empty_directory_delete_checks_children_even_when_metadata_hash_did_not_change(
+    ) -> CommonResult<()> {
+        use curvine_model::CreateFileOpts;
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let fs = JournalSystem::fs_only_for_test(&configuration(root.path()))?;
+        seed_namespace(&fs)?;
+        let mkdir = prepare(&fs, "/empty")?;
+        assert!(apply_creation(&mut fs.fs_dir.write(), &mkdir)?.kind == ResultKind::Applied);
+        let mut deletion = prepare(&fs, "/unused")?;
+        deletion.identity.sequence = 2;
+        deletion.fingerprint = [2; 32];
+        let id = fs.file_status("/empty")?.id;
+        {
+            let dir = fs.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let prepared = commands::delete(&mut view, "/empty", false, 1000)?;
+            deletion.edits = prepared.edits;
+            deletion.reply.header = prepared.response;
+            deletion.reply.code = RpcCode::Delete.into();
+        }
+        let mut child = prepare(&fs, "/unused")?;
+        child.identity.sequence = 3;
+        child.fingerprint = [3; 32];
+        {
+            let dir = fs.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let prepared = commands::create(
+                &mut view,
+                "/empty/child",
+                CreateFileOpts::with_create(false),
+                1000,
+            )?;
+            child.edits = prepared.edits;
+            child.reply.header = prepared.response;
+            child.reply.code = RpcCode::CreateFile.into();
+        }
+        assert!(apply_creation(&mut fs.fs_dir.write(), &child)?.kind == ResultKind::Applied);
+        assert_eq!(
+            inode_fingerprint(&fs.fs_dir.read().store.get_inode(id, None)?.unwrap())?,
+            deletion.edits.inode_checks[&id].unwrap()
+        );
+        assert!(apply_creation(&mut fs.fs_dir.write(), &deletion)?.kind == ResultKind::Conflict);
+        assert!(fs.exists("/empty/child")?);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_directory_deletion_replays_on_both_roles_and_retries_after_recreation(
+    ) -> CommonResult<()> {
+        crate::master::Master::init_test_metrics();
+        let a = tempfile::tempdir()?;
+        let b = tempfile::tempdir()?;
+        let source = JournalSystem::fs_only_for_test(&configuration(a.path()))?;
+        let follower = JournalSystem::fs_only_for_test(&configuration(b.path()))?;
+        for fs in [&source, &follower] {
+            seed_namespace(fs)?;
+        }
+        let mkdir = prepare(&source, "/empty")?;
+        for fs in [&source, &follower] {
+            assert!(apply_creation(&mut fs.fs_dir.write(), &mkdir)?.kind == ResultKind::Applied);
+        }
+        let mut deletion = prepare(&source, "/unused")?;
+        deletion.identity.sequence = 2;
+        deletion.fingerprint = [2; 32];
+        {
+            let dir = source.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let prepared = commands::delete(&mut view, "/empty", false, 2000)?;
+            deletion.edits = prepared.edits;
+            deletion.reply.header = prepared.response;
+            deletion.reply.code = RpcCode::Delete.into();
+        }
+        for fs in [&source, &follower] {
+            assert!(apply_creation(&mut fs.fs_dir.write(), &deletion)?.kind == ResultKind::Applied);
+            assert!(!fs.exists("/empty")?);
+            fs.mkdir("/empty", false)?;
+            assert!(apply_creation(&mut fs.fs_dir.write(), &deletion)?.reply == deletion.reply);
+            assert!(fs.exists("/empty")?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_unlink_preserves_other_links_until_the_last_edge() -> CommonResult<()> {
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let fs = JournalSystem::fs_only_for_test(&configuration(root.path()))?;
+        seed_namespace(&fs)?;
+        let file = fs.create("/original", false)?;
+        fs.complete_file("/original", Some(file.id), 0, vec![], "", false, None)?;
+        fs.link("/original", "/alias")?;
+        for (index, path) in ["/original", "/alias"].into_iter().enumerate() {
+            let mut deletion = prepare(&fs, "/unused")?;
+            deletion.identity.sequence = index as u64 + 1;
+            deletion.fingerprint = [index as u8; 32];
+            {
+                let dir = fs.fs_dir.read();
+                let mut view = BatchView::new(&dir, 1024 * 1024);
+                let prepared = commands::delete(&mut view, path, false, 2000)?;
+                deletion.edits = prepared.edits;
+                deletion.reply.header = prepared.response;
+                deletion.reply.code = RpcCode::Delete.into();
+            }
+            assert!(apply_creation(&mut fs.fs_dir.write(), &deletion)?.kind == ResultKind::Applied);
+            assert!(!fs.exists(path)?);
+            if index == 0 {
+                assert_eq!(fs.file_status("/alias")?.id, file.id);
+                assert_eq!(fs.file_status("/alias")?.nlink, 1);
+            }
+        }
+        assert!(fs.fs_dir.read().store.get_inode(file.id, None)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn pre_delete_v3_journal_remains_replayable() -> CommonResult<()> {
+        use super::super::transport::{decode_batch, NativeBatch};
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let fs = JournalSystem::fs_only_for_test(&configuration(root.path()))?;
+        seed_namespace(&fs)?;
+        let bytes = SerdeUtils::serialize(&NativeBatch {
+            version: 3,
+            commands: vec![prepare(&fs, "/old-v3")?],
+            garbage_ack: None,
+        })?;
+        let batch = decode_batch(&bytes)?;
+        assert_eq!(batch.version, 3);
+        assert!(
+            apply_creation(&mut fs.fs_dir.write(), &batch.commands[0])?.kind == ResultKind::Applied
+        );
+        assert!(fs.exists("/old-v3")?);
         Ok(())
     }
 

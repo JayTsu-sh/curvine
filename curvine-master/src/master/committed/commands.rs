@@ -429,3 +429,81 @@ pub(super) fn set_attr(
         allocation: None,
     })
 }
+
+/// Remove one file/link or empty directory. Physical deletion is driven by
+/// committed independent retirement facts, never the lifetime of this inode.
+pub(super) fn delete(
+    batch: &mut BatchView<'_>,
+    path: &str,
+    recursive: bool,
+    time: i64,
+) -> FsResult<PreparedCommand> {
+    batch.guard_path(path)?;
+    let parts = InodeView::path_components(path)?;
+    if parts.len() == 1 {
+        return err_box!("The root is not allowed to be deleted");
+    }
+    let mut view = batch.command();
+    let resolved = view.resolve(path)?;
+    if resolved.len() != parts.len() {
+        return Err(FsError::file_not_found(path));
+    }
+    let id = *resolved.last().unwrap();
+    let mut inode = view
+        .inode(id)?
+        .ok_or_else(|| FsError::file_not_found(path))?;
+    view.guard_delete(id)?;
+    let parent_id = resolved[resolved.len() - 2];
+    let mut parent = view
+        .inode(parent_id)?
+        .ok_or_else(|| FsError::common("delete parent missing"))?;
+    match parent.expiration_ms() {
+        Ok(Some(expiry)) if time > expiry => (),
+        _ => parent.update_mtime(time),
+    }
+    let mut result = curvine_model::DeleteResult::default();
+    if inode.is_dir() {
+        if view.status(path, id)?.children_num != 0 {
+            if recursive {
+                return err_box!("recursive delete requires a bounded subtree command");
+            }
+            return Err(FsError::dir_not_empty(path));
+        }
+        parent.dec_nlink(time);
+        view.delete_inode(id)?;
+    } else {
+        let file = inode.as_file_mut()?;
+        if file.nlink() == 0 {
+            return err_box!("cannot unlink a zero-link file");
+        }
+        if file.decrement_nlink(time) == 0 {
+            for block in &file.blocks {
+                let locations = match &block.locs {
+                    Some(locations) => locations.clone(),
+                    None => view.locations(block.id)?,
+                };
+                if !locations.is_empty() {
+                    result.blocks.insert(block.id, locations);
+                }
+            }
+            result.inodes = 1;
+            result.bytes = u64::try_from(file.get_locs_bytes(&result.blocks)).unwrap_or(0);
+            view.retire_blocks(file)?;
+            view.delete_inode(id)?;
+        } else {
+            view.put_inode(inode)?;
+        }
+    }
+    view.put_inode(parent)?;
+    view.set_edge(parent_id, parts.last().unwrap(), None)?;
+    let response = curvine_proto::DeleteResponse {
+        res: Some(ProtoUtils::delete_res_to_pb(result)),
+        ..Default::default()
+    }
+    .encode_to_vec();
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response,
+        allocation: None,
+    })
+}

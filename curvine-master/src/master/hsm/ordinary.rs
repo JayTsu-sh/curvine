@@ -101,6 +101,18 @@ pub(super) fn write_access(
     }
     Ok(())
 }
+/// Caller has checked generation protection and pending cleanup, and includes
+/// this deletion in the same atomic namespace/result batch.
+pub(crate) fn forget_record(batch: &mut InodeWriteBatch, record: &Record) -> CommonResult<()> {
+    let id = record.state.data.entity.entity.parse()?;
+    batch.hsm_delete(&index_key(record))?;
+    batch.hsm_delete(&record_key(id))?;
+    batch.hsm_delete(&access_key(id))?;
+    batch.hsm_delete(format!("\u{3}hsm:gc:{id}").as_bytes())?;
+    batch.hsm_delete(format!("\u{3}hsm:seal:{id}").as_bytes())?;
+    Ok(())
+}
+
 pub(super) fn readers_active(record: &Record, now: i64) -> bool {
     record.readers.values().any(|deadline| *deadline > now)
 }

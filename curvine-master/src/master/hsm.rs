@@ -1932,7 +1932,8 @@ mod lifecycle;
 
 mod ordinary;
 pub(crate) use ordinary::{
-    native_overwrite_record, native_record, write_record as write_native_record,
+    forget_record as forget_native_record, native_overwrite_record, native_record,
+    write_record as write_native_record,
 };
 
 #[cfg(test)]

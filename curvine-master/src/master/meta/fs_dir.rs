@@ -126,7 +126,8 @@ impl FsDir {
             db_conf = db_conf
                 .add_cf(RocksInodeStore::CF_HSM_FORMAT)
                 .add_cf(RocksInodeStore::CF_NATIVE_FORMAT)
-                .add_cf(RocksInodeStore::CF_NATIVE_GC_FORMAT);
+                .add_cf(RocksInodeStore::CF_NATIVE_GC_FORMAT)
+                .add_cf(RocksInodeStore::CF_NATIVE_DELETE_FORMAT);
         }
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;
@@ -1040,6 +1041,11 @@ impl FsDir {
         let file_id = InodeId::get_id(block_id);
         let inode = self.store.get_inode(file_id, None)?;
         match inode {
+            None if self.hsm_enabled
+                && crate::master::committed::has_retirement(self, block_id)? =>
+            {
+                Ok(BlockInodeState::Retired)
+            }
             None => Ok(BlockInodeState::Missing),
             Some(v) => {
                 if !v.is_file() {

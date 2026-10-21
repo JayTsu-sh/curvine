@@ -87,6 +87,8 @@ fn disabled_native_mkdir_preserves_legacy_confirmation_and_rejects_bound_namespa
             )
             .await?;
         assert_eq!(changed.mode, 0o700);
+        fs.delete(&Path::from_str("/sdk-off")?, false).await?;
+        assert!(!fs.exists(&Path::from_str("/sdk-off")?).await?);
 
         request.incarnation = "bound-volume".into();
         request.header = MkdirRequest {
@@ -293,6 +295,23 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert!(bundles > 0 && bundles < 32 && commands >= 32.0,
             "nonrecursive setattr did not use native committed batches");
         assert_eq!(fs.get_status(&Path::from_str("/native-file-0")?).await?.owner, "policy-owner");
+        let before_delete = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        stream::iter(0..32).map(|i| {
+            let fs = &fs;
+            async move { fs.delete(&Path::from_str(format!("/native-file-{i}"))?, false).await }
+        }).buffer_unordered(32).try_collect::<Vec<_>>().await?;
+        let after_delete = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let bundles = after_delete["native_bundles"].as_u64().unwrap()
+            - before_delete["native_bundles"].as_u64().unwrap();
+        let commands = after_delete["native_commands"].as_f64().unwrap()
+            - before_delete["native_commands"].as_f64().unwrap();
+        assert!(bundles > 0 && bundles < 32 && commands >= 32.0,
+            "nonrecursive delete did not use native committed batches");
+        assert!(!fs.exists(&Path::from_str("/native-file-0")?).await?);
+        let removed_dir = fs.delete(&Path::from_str("/native-batch-0")?, false).await?;
+        assert_eq!(removed_dir.inodes, 0);
+        assert!(!fs.exists(&Path::from_str("/native-batch-0")?).await?);
+
         // Native TTL still uses its original operation during migration, but
         // joins the same gate and confirms its journal prefix on an OS thread.
         let mut ttl_options = MkdirOpts::with_create(false);
@@ -549,6 +568,21 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert_eq!(reader.read(&mut bytes).await?, 10);
         assert_eq!(bytes, b"new layout");
         reader.complete().await?;
+        // Removing the inode must leave independently replayable physical GC.
+        let deleted = fs.delete(&current_path, false).await?;
+        assert_eq!(deleted.inodes, 1);
+        assert!(!fs.exists(&current_path).await?);
+        assert!(active.fs_dir().read().hsm_record(new_layout.status.id)?.is_none());
+        assert!(!active.fs_dir().read().get_rocks_store().hsm_scan(
+            b"\x03hsm:native-gc:v1:", None, 1)?.is_empty());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            assert_eq!(control(&fs, &json!({"op":"gc_batch"})).await?["kind"], "gc");
+            if active.fs_dir().read().get_rocks_store().hsm_scan(
+                b"\x03hsm:native-gc:v1:", None, 1)?.is_empty() { break; }
+            assert!(std::time::Instant::now() < deadline, "deleted inode's GC did not finish");
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
         // Proxy one Worker endpoint and pause a real Seal response. This
         // tests the complete operation, not a synthetic lock-only callback.
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
