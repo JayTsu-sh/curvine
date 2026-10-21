@@ -2,6 +2,8 @@
 
 状态：设计建议，尚未实现或验证收益。依据是 [原版与 HSM 的性能实测](performance-comparison.md)，生产代码基线为 `837b5cc4`，性能报告发布于 `5abe1b80`。优先解决提交等待与串行协调，再处理记录写放大及后台扫描。现有差量索引、有界清理、元数据条件前置继续保留。
 
+HA 为 P0/P1 起的前置约束。分层接管、微批换主、读取保护、控制器/执行器恢复及数据冗余见 [HA 设计](ha-design.md)。当前控制器自动接管、归档后端与 Recall 私有布局的端到端 HA 缺口仍待实现。
+
 ## 1. 优化目标与责任
 
 普通写入自动纳管、策略筛选、访问自动 Recall 的行为保持。Curvine 保存文件身份、驻留、保护、归档锚点、任务与条件发布的权威事实；外部 hsm-rs 编排 Archive/Release/Recall，data-mover 搬运，后端封存对象。提交批处理和文件读写保护由存储侧统一实现，外部核心不维护 namespace 镜像。
@@ -10,7 +12,7 @@
 
 | 顺序 | 优化项 | 直接目标 | 实施风险 |
 |---|---|---|---|
-| P0 | 分段计时及相同确认语义基线 | 分开测锁等待、日志排队、复制、apply、编解码 | 低 |
+| P0 | 分段计时、相同确认语义及 HA 故障基线 | 分开测锁等待、日志排队、复制、apply；明确去重、换主与恢复资格 | 分项评估 |
 | P1 | 普通日志自身的提交回执；关闭 HSM 时消除逐文件探测 | 移除普通修改额外的空 barrier；减少无效 RPC | 中 / 低 |
 | P2 | 统一提交排序、微批与按序 apply | 同批容纳多个独立请求；等待 Raft 时不占用请求全局锁 | 高，核心改造 |
 | P3 | 读取保护合批、拆分高频小记录 | 减少 open/close/renew 的提交和整份 Record 重写 | 中高 |
@@ -68,6 +70,7 @@ SDK 同期增加显式的 HSM enablement/capability 协商。当前 [MasterHands
 submit(command, request_identity) -> CommitReceipt
 wait(receipt) -> CommittedResult
 read_snapshot() -> CommittedSnapshot
+query(request_identity) -> CommittedResultOrUnknown
 ```
 
 Interface 的 receipt 绑定逻辑请求身份及提交任期/位置，重试保持 client session/sequence，不能只靠一个可能在换主后被重用或覆盖的日志位置判断成功。查询快照携带 applied index；需要线性一致的读取还须验证当前 leader 的读资格并等本地应用到相应位置，具体 ReadIndex/read-lease 实现收敛在 Module 内部。
@@ -145,7 +148,7 @@ Interface 的 receipt 绑定逻辑请求身份及提交任期/位置，重试保
 
 ## 8. 实施与验收顺序
 
-建议拆成独立可回退的交付：P0 → P1 → P2 的普通请求微批 → P2 的统一 committed 路径 → P3 → P4 → P5。P1 的 SDK 关闭路径可以独立进行；Record 格式调整和 delegation 不与第一轮提交改造混在一起。
+先定义并执行 [HA 验收矩阵](ha-design.md#9-ha-与性能一起验收)，将提交/去重、换主恢复和数据保护作为每阶段门槛；冷启动恢复不再作为最后才考虑的 HA 工作。建议拆成独立可回退的交付：P0 → P1 → P2 的普通请求微批 → P2 的统一 committed 路径 → P3 → P4 → P5。P1 的 SDK 关闭路径可以独立进行；Record 格式调整和 delegation 不与第一轮提交改造混在一起。
 
 每一步先验收结构指标：额外 barrier 是否移除、同一批实际覆盖几个请求、每操作 WAL 次数、是否仍持锁等待网络、元数据编码量与扫描锁持有。然后重复原有三轮基准，增加并发 1/4/16/64、独立 inode 与单热 inode 两类，报告吞吐和 P50/P95/P99；大文件继续使用 4 GiB 写/12 GiB 读。
 
@@ -155,7 +158,7 @@ Interface 的 receipt 绑定逻辑请求身份及提交任期/位置，重试保
 - 访问废弃旧 Release；rename/祖先 rename、覆盖/截断、generation 更新和候选重选。
 - 批内同 inode 命令依赖；不同 inode 互不误 Fenced；一个 CAS 失败不污染其他结果。
 - 批次提交前后强杀/换主、ACK 丢失重试、客户端取消、Worker Seal 后控制者重试；相同身份的动作不能重复生效。
-- 旧 leader 的结果不被新任期发布；能力缓存失效；若启用 delegation，过期客户端与旧授权不能继续读已释放布局。
+- 旧 leader 不发布未提交或不匹配请求的结果；已提交原始结果可以跨任期查询返回。能力缓存失效；若启用 delegation，过期客户端与旧授权不能继续读已释放布局。
 - GC 只处理已经提交的回收事实；并发读取合并一次 Recall，恢复仍发布至原 inode。
 - 扫描快照到入队之间修改规则、目录、访问与共享预算；不能误选或超额重复记账。
 - 新格式激活后的 checkpoint/旧日志恢复，百万 namespace 再验收，以及持续前台 I/O 下的周期扫描。
