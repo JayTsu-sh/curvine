@@ -5015,7 +5015,7 @@ dependencies = [
 [[package]]
 name = "hsm-core"
 version = "0.0.1"
-source = "git+https://github.com/JayTsu-sh/hsm-rs.git?rev=1c19c4a2932dd33066ad16f7975ff5cdac28e3a1#1c19c4a2932dd33066ad16f7975ff5cdac28e3a1"
+source = "git+https://github.com/JayTsu-sh/hsm-rs.git?rev=ef5167661da40345a25f5d028dbeb4f1a70b1398#ef5167661da40345a25f5d028dbeb4f1a70b1398"
 dependencies = [
  "serde",
  "thiserror 2.0.16",

@@ -26,6 +26,10 @@ type Inner = FsReaderBuffer;
 
 pub struct FsReader {
     inner: Inner,
+    hsm: Option<curvine_model::hsm::native::ReadHandle>,
+    hsm_offset: u64,
+    hsm_renew_ms: i64,
+    fs_context: Arc<FsContext>,
     chunk: DataSlice,
     chunk_size: usize,
     pos: i64,
@@ -55,10 +59,15 @@ impl FsReader {
             conf.read_ahead_len
         );
 
-        let inner = FsReaderBuffer::new(path, fs_context, file_blocks.clone(), read_detector)?;
+        let inner =
+            FsReaderBuffer::new(path, fs_context.clone(), file_blocks.clone(), read_detector)?;
         let metrics = FsContext::get_metrics();
         let reader = Self {
             inner,
+            hsm: None,
+            hsm_offset: 0,
+            hsm_renew_ms: 0,
+            fs_context,
             chunk: DataSlice::Empty,
             chunk_size,
             pos: 0,
@@ -69,6 +78,27 @@ impl FsReader {
         Ok(reader)
     }
 
+    pub fn new_managed(
+        path: Path,
+        context: Arc<FsContext>,
+        handle: curvine_model::hsm::native::ReadHandle,
+    ) -> FsResult<Self> {
+        let mut reader = Self::new(path, context, handle.blocks.clone())?;
+        reader.hsm_renew_ms = curvine_runtime::common::LocalTime::mills() as i64;
+        reader.hsm = Some(handle);
+        Ok(reader)
+    }
+    async fn renew_hsm(&mut self) -> FsResult<()> {
+        let now = curvine_runtime::common::LocalTime::mills() as i64;
+        if now - self.hsm_renew_ms >= 30_000 {
+            if let Some(handle) = &self.hsm {
+                super::hsm_io::reader_control(self.fs_context.clone(), handle, "read_renew")
+                    .await?;
+                self.hsm_renew_ms = now;
+            }
+        }
+        Ok(())
+    }
     pub fn file_blocks(&self) -> &FileBlocks {
         &self.file_blocks
     }
@@ -104,10 +134,44 @@ impl Reader for FsReader {
     }
 
     async fn read_chunk0(&mut self) -> FsResult<DataSlice> {
+        self.renew_hsm().await?;
+        if let Some(endpoint) = self.hsm.as_ref().and_then(|h| h.endpoint.as_ref()) {
+            use curvine_model::hsm::native::{WorkerReply, WorkerRequest, CHUNK_BYTES};
+            let response = super::hsm_io::hsm_worker_rpc(
+                self.fs_context.rpc_conf(),
+                &endpoint.worker,
+                &WorkerRequest::Read {
+                    endpoint: endpoint.clone(),
+                    offset: self.hsm_offset,
+                    length: CHUNK_BYTES,
+                },
+            )
+            .await
+            .map_err(|e| curvine_error::FsError::common(e.to_string()))?;
+            let WorkerReply::Bytes(bytes) = response else {
+                return err_box!("invalid managed read reply");
+            };
+            if bytes.is_empty() && self.hsm_offset < self.len as u64 {
+                return err_box!("unexpected EOF in managed file");
+            }
+            self.hsm_offset += bytes.len() as u64;
+            return Ok(DataSlice::bytes(bytes.into()));
+        }
         self.metrics.track_read(self.inner.read()).await
     }
 
     async fn seek(&mut self, pos: i64) -> FsResult<()> {
+        if self.hsm.as_ref().is_some_and(|h| h.endpoint.is_some()) {
+            if pos < 0 {
+                return err_box!("negative managed read offset");
+            }
+            if pos != self.pos {
+                self.chunk.clear();
+                self.hsm_offset = pos as u64;
+                self.pos = pos;
+            }
+            return Ok(());
+        }
         if pos < 0 {
             return err_box!("Cannot seek to negative offset");
         } else if self.pos == pos {
@@ -127,12 +191,23 @@ impl Reader for FsReader {
     }
 
     async fn complete(&mut self) -> FsResult<()> {
-        self.inner.complete().await
+        self.inner.complete().await?;
+        if let Some(handle) = self.hsm.take() {
+            super::hsm_io::reader_control(self.fs_context.clone(), &handle, "read_close").await?;
+        }
+        Ok(())
     }
 }
 
 impl Drop for FsReader {
     fn drop(&mut self) {
-        debug!("Close reader, path={}", self.path())
+        debug!("Close reader, path={}", self.path());
+        if let Some(handle) = self.hsm.take() {
+            let context = self.fs_context.clone();
+            use curvine_runtime::runtime::RpcRuntime;
+            context.clone_runtime().spawn(async move {
+                let _ = super::hsm_io::reader_control(context, &handle, "read_close").await;
+            });
+        }
     }
 }

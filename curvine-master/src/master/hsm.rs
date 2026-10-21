@@ -112,12 +112,25 @@ impl FsDir {
         self.apply_hsm(&entry.payload)
     }
     pub fn hsm_guard_id(&self, id: i64) -> curvine_error::FsResult<()> {
-        if !self.hsm_enabled {
+        if self.hsm_replaying || !self.hsm_enabled {
             return Ok(());
         }
-        if self.hsm_record(id)?.is_some()
-            || self.hsm_namespace()?.is_some_and(|ns| ns.root_inode == id)
-        {
+        if let Some(record) = self.hsm_record(id)? {
+            if record.ordinary
+                && record.native_blocks
+                && record.seal_token.is_none()
+                && record.views.is_empty()
+                && record.pending.is_none()
+                && !ordinary::readers_active(
+                    &record,
+                    curvine_runtime::common::LocalTime::mills() as i64,
+                )
+            {
+                return Ok(());
+            }
+            return err_box!("HSM operation or active read protects this generation");
+        }
+        if self.hsm_namespace()?.is_some_and(|ns| ns.root_inode == id) {
             return err_box!("managed HSM inode requires the native HSM Interface");
         }
         Ok(())
@@ -126,7 +139,7 @@ impl FsDir {
         &self,
         inode: crate::master::meta::inode::InodePtr,
     ) -> curvine_error::FsResult<()> {
-        if !self.hsm_enabled {
+        if self.hsm_replaying || !self.hsm_enabled {
             return Ok(());
         }
         if self.hsm_enabled && inode.id() == ROOT_INODE_ID {
@@ -241,6 +254,12 @@ impl FsDir {
         }
         if valid && !tx.create {
             if let Some(record) = &tx.record {
+                if record.ordinary {
+                    let inp = InodePath::resolve(self.root_ptr(), &record.path, &self.store)?;
+                    let mut inode = inp.task_last().ok_or("ordinary inode missing")?;
+                    inode.as_file_mut()?.atime = record.atime_ms;
+                    changed_inode = Some(inode);
+                }
                 if record.published.is_some() {
                     let inp = InodePath::resolve(self.root_ptr(), &record.path, &self.store)?;
                     // Transfer the owning pointer out of InodePath. Cloning it
@@ -254,6 +273,19 @@ impl FsDir {
                     }
                 }
             }
+        }
+        if valid
+            && tx.record.as_ref().is_some_and(|r| {
+                r.ordinary
+                    && r.state.residency == Residency::Offline
+                    && !r.native_garbage.is_empty()
+            })
+        {
+            let record = tx.record.as_ref().unwrap();
+            let inp = InodePath::resolve(self.root_ptr(), &record.path, &self.store)?;
+            let mut inode = inp.task_last().ok_or("release inode missing")?;
+            inode.as_file_mut()?.blocks.clear();
+            changed_inode = Some(inode);
         }
         let mut batch = self.get_rocks_store().new_batch();
         if let Some(binding) = &tx.workflow {
@@ -283,9 +315,48 @@ impl FsDir {
                 {
                     record.state_since_ms = tx.time;
                 }
-                batch.hsm_put(&record_key(tx.inode.unwrap()), &pack(record)?)?;
+                ordinary::write_record(&mut batch, old.as_ref(), &record)?;
             }
             for change in &tx.controls {
+                if change.key.starts_with(b"\x03hsm:intent:") {
+                    if let Some(value) = &change.value {
+                        let intent: LifecycleIntent = decode(value)?;
+                        let key = lifecycle::work_key(&intent);
+                        let reserved =
+                            format!("\u{3}hsm:reserved:online:{}", intent.id).into_bytes();
+                        if matches!(intent.status, IntentStatus::Ready | IntentStatus::Running)
+                            && !matches!(intent.action, ManagedAction::Recall(_))
+                        {
+                            if self.get_rocks_store().hsm_get(&reserved)?.is_none() {
+                                let id: i64 = intent.expected.data.entity.entity.parse()?;
+                                let copies = if self
+                                    .hsm_record(id)?
+                                    .is_some_and(|r| r.native_blocks)
+                                {
+                                    self.store
+                                        .get_inode(id, None)?
+                                        .and_then(|i| {
+                                            i.as_file_ref().ok().map(|f| f.replicas.max(1) as u64)
+                                        })
+                                        .unwrap_or(1)
+                                } else {
+                                    1
+                                };
+                                batch.hsm_put(
+                                    &reserved,
+                                    &pack(intent.expected.length.saturating_mul(copies))?,
+                                )?;
+                            }
+                        } else {
+                            batch.hsm_delete(&reserved)?;
+                        }
+                        if matches!(intent.status, IntentStatus::Ready | IntentStatus::Running) {
+                            batch.hsm_put(&key, &pack(&intent.id)?)?;
+                        } else {
+                            batch.hsm_delete(&key)?;
+                        }
+                    }
+                }
                 match &change.value {
                     Some(value) => batch.hsm_put(&change.key, value)?,
                     None => batch.hsm_delete(&change.key)?,
@@ -313,6 +384,7 @@ impl FsDir {
         }
         if valid && tx.expected_epoch.is_none() && namespace.is_none() && tx.namespace.is_some() {
             self.store.fs_stats.increment_dir_count();
+            self.hsm_enroll_pending()?;
         }
         Ok(())
     }
@@ -324,7 +396,7 @@ struct Plan {
     gc: Option<EntityKey>,
 }
 impl MasterFilesystem {
-    async fn hsm_read_barrier(&self) -> HsmResult<()> {
+    pub(crate) async fn hsm_read_barrier(&self) -> HsmResult<()> {
         let ticket = token();
         let (writer, op_id, local) = {
             let fs = self.fs_dir.read();
@@ -396,10 +468,34 @@ impl MasterFilesystem {
     async fn hsm_namespace_init(&self) -> HsmResult<Namespace> {
         let current = self.fs_dir.read().hsm_namespace().map_err(io)?;
         if let Some(namespace) = current {
+            if namespace.ordinary_format < 2 {
+                let mut upgraded = namespace.clone();
+                upgraded.ordinary_format = 2;
+                let tx = Transaction {
+                    controls: vec![],
+                    record_checks: vec![],
+                    workflow: None,
+                    outcome: format!("namespace:ordinary-format:2:{}", namespace.storage),
+                    fingerprint: "ordinary-format-2".into(),
+                    response: reply("namespace", &upgraded),
+                    inode: None,
+                    expected_version: None,
+                    record: None,
+                    namespace: Some(upgraded),
+                    expected_epoch: Some(namespace.epoch),
+                    create: false,
+                    time: curvine_runtime::common::LocalTime::mills() as i64,
+                    data: None,
+                    action: None,
+                };
+                let response = self.hsm_submit(&tx).await?;
+                return field(&response, "data");
+            }
             return Ok(namespace);
         }
         let root_inode = self.fs_dir.read().inode_id.next().map_err(io)?;
         let ns = Namespace {
+            ordinary_format: 2,
             root_inode,
             storage: token(),
             incarnation: token(),
@@ -433,6 +529,10 @@ impl MasterFilesystem {
         {
             return curvine_model::hsm::control_response(request);
         }
+        // Normal metadata RPCs use this same gate until their journal barrier completes.
+        // This prevents speculative leader metadata from changing a committed HSM CAS.
+        let gate = self.fs_dir.read().hsm_mutation_gate.clone();
+        let _serial = gate.lock().await;
         let value = match serde_json::from_slice::<Value>(&request.payload) {
             Ok(value) => self.hsm_execute(value).await.unwrap_or_else(error_value),
             Err(_) => failure("invalid", "invalid HSM request"),
@@ -457,12 +557,18 @@ impl MasterFilesystem {
                     durable_success_results: true,
                     distributed_authority: self.fs_dir.read().hsm_distributed,
                     capacity_reservation: false,
-                    transparent_recall: false,
+                    transparent_recall: true,
                 },
             ));
         }
         self.hsm_read_barrier().await?;
         let namespace = self.hsm_namespace_init().await?;
+        if matches!(
+            op,
+            "read_path" | "read_close" | "read_renew" | "seal_begin" | "seal_commit"
+        ) {
+            return self.hsm_ordinary(&namespace, &request).await;
+        }
         if op == "namespace" {
             return Ok(reply("namespace", namespace));
         }
@@ -482,10 +588,68 @@ impl MasterFilesystem {
                 .hsm_record(id)
                 .map_err(io)?
                 .ok_or_else(|| HsmError::NotFound("managed entity".into()))?;
-            if record.state.residency == Residency::Online && record.published.is_none() {
+            if record.state.residency == Residency::Online
+                && record.published.is_none()
+                && !record.native_blocks
+            {
                 return Err(HsmError::Busy("managed import is private".into()));
             }
             return Ok(reply("entity", record.state));
+        }
+        if op == "view_blocks" {
+            let capability: Vec<u8> = field(&request, "capability")?;
+            let reference: Value = decode(&capability).map_err(io)?;
+            let data: DataKey = field(&reference, "data")?;
+            let operation: String = field(&reference, "operation_id")?;
+            let view_id: String = field(&reference, "view_id")?;
+            let fs = self.fs_dir.read();
+            let record = fs
+                .hsm_record(entity_id(&data.entity, &namespace)?)
+                .map_err(io)?
+                .ok_or_else(|| HsmError::NotFound("view entity".into()))?;
+            let view = record.views.get(&operation).ok_or(HsmError::Fenced)?;
+            if !record.native_blocks
+                || record.state.data != data
+                || view.data != data
+                || view.view_id != view_id
+                || view.source.adapter != "curvine-block-view-v2"
+                || view.source.capability != capability
+            {
+                return Err(HsmError::Fenced);
+            }
+            let inp = InodePath::resolve(fs.root_ptr(), &record.path, &fs.store).map_err(io)?;
+            return Ok(reply(
+                "blocks",
+                self.get_file_blocks(&record.path, &fs, &inp).map_err(io)?,
+            ));
+        }
+        if op == "pending_seals" {
+            let page = self
+                .fs_dir
+                .read()
+                .get_rocks_store()
+                .hsm_scan(b"\x03hsm:seal:", None, 16)
+                .map_err(io)?;
+            let items: Vec<DataKey> = page
+                .iter()
+                .map(|(_, bytes)| decode(bytes).map_err(io))
+                .collect::<HsmResult<_>>()?;
+            return Ok(reply("seals", items));
+        }
+        if op == "gc_batch" {
+            let page = self
+                .fs_dir
+                .read()
+                .get_rocks_store()
+                .hsm_scan(b"\x03hsm:gc:", None, 16)
+                .map_err(io)?;
+            let mut processed = 0;
+            for (_, bytes) in page {
+                let entity: EntityKey = decode(&bytes).map_err(io)?;
+                self.hsm_gc(&namespace, &entity).await?;
+                processed += 1;
+            }
+            return Ok(reply("gc", processed));
         }
         if op == "collect_garbage" {
             let entity: EntityKey = field(&request, "entity")?;
@@ -682,7 +846,10 @@ impl MasterFilesystem {
         }
         .await;
         if let Err(error) = preflight {
-            if matches!(error, HsmError::Unknown(_) | HsmError::Io(_)) {
+            if matches!(
+                error,
+                HsmError::Unknown(_) | HsmError::Io(_) | HsmError::Busy(_)
+            ) {
                 return Err(error);
             }
             return self
@@ -692,7 +859,14 @@ impl MasterFilesystem {
         let plan = self.hsm_plan(&namespace, &context, &request, &key, &fingerprint);
         let plan = match plan {
             Ok(plan) => plan,
-            Err(e) if matches!(e, HsmError::Unknown(_) | HsmError::Io(_)) => return Err(e),
+            Err(e)
+                if matches!(
+                    e,
+                    HsmError::Unknown(_) | HsmError::Io(_) | HsmError::Busy(_)
+                ) =>
+            {
+                return Err(e)
+            }
             Err(e) => Plan {
                 tx: rejected(&namespace, &request, &key, &fingerprint, e),
                 allocate: None,
@@ -851,6 +1025,17 @@ impl MasterFilesystem {
             tx.response = reply("recall", &target);
             allocate = Some(layout.clone());
             Record {
+                ordinary: false,
+                native_blocks: false,
+                sealed: true,
+                seal_token: None,
+                atime_ms: tx.time,
+                mtime_ms: tx.time,
+                owner: String::new(),
+                group: String::new(),
+                writing: false,
+                readers: Default::default(),
+                native_garbage: Default::default(),
                 state_since_ms: 0,
                 version: 1,
                 state: EntityState {
@@ -878,10 +1063,11 @@ impl MasterFilesystem {
                 _ => return Err(HsmError::Unsupported(format!("native HSM operation {op}"))),
             };
             let id = entity_id(&data.entity, namespace)?;
-            let record = fs
+            let mut record = fs
                 .hsm_record(id)
                 .map_err(io)?
                 .ok_or_else(|| HsmError::NotFound("managed entity".into()))?;
+            record.path = fs.get_inode_path(id).map_err(io)?;
             if record.state.data != data {
                 return Err(HsmError::Conflict("content generation changed".into()));
             }
@@ -913,16 +1099,28 @@ impl MasterFilesystem {
                 if record.pending.is_some() {
                     return Err(HsmError::Busy("private import/Recall active".into()));
                 }
-                let layout = record
-                    .published
-                    .as_ref()
-                    .ok_or_else(|| HsmError::Busy("entity is offline; Recall required".into()))?;
+                if !record.sealed || record.writing {
+                    return Err(HsmError::Busy("source has no sealed generation".into()));
+                }
+                let view_id = token();
+                let source = if record.native_blocks {
+                    DataEndpoint {
+                        adapter: "curvine-block-view-v2".into(),
+                        capability: pack(&serde_json::json!({"data":record.state.data,"operation_id":ctx.operation_id,"view_id":view_id})).map_err(io)?,
+                    }
+                } else {
+                    record
+                        .published
+                        .as_ref()
+                        .ok_or_else(|| HsmError::Busy("entity is offline; Recall required".into()))?
+                        .endpoint(false)
+                };
                 let view = DataView {
                     data: record.state.data.clone(),
-                    view_id: token(),
+                    view_id,
                     length: record.state.length,
                     digest: record.state.digest.clone(),
-                    source: layout.endpoint(false),
+                    source,
                 };
                 record.views.insert(ctx.operation_id.clone(), view.clone());
                 tx.response = reply("view", view);
@@ -976,11 +1174,33 @@ impl MasterFilesystem {
                 if !record.views.is_empty() || record.pending.is_some() {
                     return Err(HsmError::Busy("view or private layout active".into()));
                 }
-                let old = record
-                    .published
-                    .take()
-                    .ok_or_else(|| HsmError::Conflict("already offline".into()))?;
-                record.garbage.push(old);
+                if ordinary::readers_active(&record, tx.time)
+                    || record.writing
+                    || record.seal_token.is_some()
+                {
+                    return Err(HsmError::Busy("reader or writer protects source".into()));
+                }
+                if record.native_blocks {
+                    let inp =
+                        InodePath::resolve(fs.root_ptr(), &record.path, &fs.store).map_err(io)?;
+                    let file = inp
+                        .get_last_inode()
+                        .ok_or_else(|| HsmError::NotFound("source inode".into()))?;
+                    for (block, locations) in fs
+                        .store
+                        .get_file_locations(file.as_file_ref().map_err(io)?)
+                        .map_err(io)?
+                    {
+                        record.native_garbage.insert(block, locations);
+                    }
+                    record.native_blocks = false;
+                } else {
+                    let old = record
+                        .published
+                        .take()
+                        .ok_or_else(|| HsmError::Conflict("already offline".into()))?;
+                    record.garbage.push(old);
+                }
                 record.state.residency = Residency::Offline;
                 record.state.revision += 1;
                 tx.response = reply("entity", &record.state);
@@ -1071,6 +1291,52 @@ impl MasterFilesystem {
                 .hsm_record(id)
                 .map_err(io)?
                 .ok_or_else(|| HsmError::NotFound("managed entity".into()))?;
+            if !record.native_garbage.is_empty() {
+                self.worker_manager
+                    .write()
+                    .remove_blocks(&crate::master::fs::DeleteResult {
+                        inodes: 0,
+                        bytes: 0,
+                        blocks: record
+                            .native_garbage
+                            .iter()
+                            .map(|(k, v)| (*k, v.clone()))
+                            .collect(),
+                    });
+                let acknowledged = {
+                    let fs = self.fs_dir.read();
+                    record.native_garbage.keys().all(|id| {
+                        fs.get_block_locations(*id)
+                            .is_ok_and(|locations| locations.is_empty())
+                    })
+                };
+                if acknowledged {
+                    record.native_garbage.clear();
+                    let previous = record.version;
+                    record.version += 1;
+                    let tx = Transaction {
+                        controls: vec![],
+                        record_checks: vec![],
+                        workflow: None,
+                        outcome: format!("native-gc-{}", token()),
+                        fingerprint: "native-gc".into(),
+                        response: reply("entity", &record.state),
+                        inode: Some(id),
+                        expected_version: Some(previous),
+                        record: Some(record.clone()),
+                        namespace: None,
+                        expected_epoch: Some(namespace.epoch),
+                        create: false,
+                        time: curvine_runtime::common::LocalTime::mills() as i64,
+                        data: None,
+                        action: None,
+                    };
+                    let response = self.hsm_submit(&tx).await?;
+                    if response["kind"] == "error" {
+                        return Err(HsmError::Busy("GC raced a record update".into()));
+                    }
+                }
+            }
             let Some(layout) = record.garbage.first().cloned() else {
                 return Ok(());
             };
@@ -1250,3 +1516,5 @@ fn same_attempt(a: &OperationContext, b: &OperationContext) -> bool {
     a.operation_id == b.operation_id && a.attempt_epoch == b.attempt_epoch
 }
 mod lifecycle;
+
+mod ordinary;

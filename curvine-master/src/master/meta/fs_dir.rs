@@ -40,6 +40,8 @@ const MODE_SETGID: u32 = 0o2000;
 
 /// Note: The modification operation uses &mut self, which is a necessary improvement. We use the unsafe API to perform modifications.
 pub struct FsDir {
+    pub(crate) hsm_replaying: bool,
+    pub(crate) hsm_mutation_gate: Arc<tokio::sync::Mutex<()>>,
     pub(crate) hsm_local_apply: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<()>>>,
     pub(crate) hsm_enabled: bool,
     pub(crate) hsm_distributed: bool,
@@ -120,6 +122,8 @@ impl FsDir {
         let (last_inode_id, root_dir) = state.create_blank_tree()?;
 
         let fs_dir = Self {
+            hsm_replaying: false,
+            hsm_mutation_gate: Default::default(),
             hsm_local_apply: Default::default(),
             hsm_enabled: conf.master.hsm_enabled,
             hsm_distributed: conf.journal.journal_addrs.len() >= 3,
@@ -326,7 +330,8 @@ impl FsDir {
         mtime: i64,
     ) -> FsResult<DeleteResult> {
         if let Some(inode) = inp.get_last_inode() {
-            self.hsm_guard_tree(inode)?;
+            self.hsm_guard_tree(inode.clone())?;
+            self.hsm_forget_tree(inode)?;
         }
         let target = match inp.get_last_inode() {
             Some(v) => v,
@@ -570,7 +575,8 @@ impl FsDir {
         let detached = src_parent.delete_child(src_inode.id(), src_inode.name())?;
         // Persist first, then transfer the subtree under the same namespace lock.
         new_inode.adopt_directory_children(detached);
-        let _ = dst_parent.add_child(new_inode)?;
+        let renamed = dst_parent.add_child(new_inode)?;
+        self.hsm_refresh_tree(renamed)?;
 
         Ok(del_res)
     }
@@ -669,8 +675,10 @@ impl FsDir {
         let detached_dst = dst_parent.delete_child(dst_id, &dst_name)?;
         at_src.adopt_directory_children(detached_dst);
         at_dst.adopt_directory_children(detached_src);
-        let _ = src_parent.add_child(at_src)?;
-        let _ = dst_parent.add_child(at_dst)?;
+        let at_src = src_parent.add_child(at_src)?;
+        let at_dst = dst_parent.add_child(at_dst)?;
+        self.hsm_refresh_tree(at_src)?;
+        self.hsm_refresh_tree(at_dst)?;
 
         Ok(())
     }
@@ -885,6 +893,7 @@ impl FsDir {
 
         self.store
             .apply_complete_file(inode.as_ref(), &commit_block)?;
+        self.hsm_track_file(path.as_ref(), inode.as_file_ref()?)?;
         self.journal_writer
             .log_complete_file(self, path, inode.as_file_ref()?, commit_block)?;
 
@@ -895,7 +904,7 @@ impl FsDir {
         &self,
         file: &InodeFile,
     ) -> FsResult<HashMap<i64, Vec<BlockLocation>>> {
-        self.hsm_guard_id(file.id())?;
+        self.hsm_guard_read(file.id())?;
         let locs = self.store.get_file_locations(file)?;
         self.evictor.on_access(file.id());
         Ok(locs)
@@ -987,6 +996,7 @@ impl FsDir {
         let status = inode.to_file_status(inp.path())?;
 
         self.store.apply_reopen_file(&inode)?;
+        self.hsm_track_file(inp.path(), inode.as_file_ref()?)?;
         self.journal_writer
             .log_reopen_file(self, inp.path(), inode.as_file_ref()?)?;
 
@@ -1018,7 +1028,7 @@ impl FsDir {
     ) -> FsResult<DeleteResult> {
         self.hsm_guard_path(inp.path())?;
         if let Some(inode) = inp.get_last_inode() {
-            self.hsm_guard_tree(inode)?;
+            self.hsm_guard_overwrite(inode.id())?;
         }
         let op_ms = LocalTime::mills();
         let mut delete_result = DeleteResult::new();
@@ -1038,6 +1048,7 @@ impl FsDir {
                 file.overwrite(opts, op_ms as i64);
 
                 self.store.apply_overwrite_file(inode.as_ref())?;
+                self.hsm_track_file(inp.path(), inode.as_file_ref()?)?;
             }
             None => {
                 return err_ext!(FsError::file_not_found(inp.path()));
@@ -1320,6 +1331,7 @@ impl FsDir {
         }
 
         self.store.apply_set_attr(change_inodes)?;
+        self.hsm_refresh_tree(inode)?;
         Ok(())
     }
 
@@ -1396,6 +1408,11 @@ impl FsDir {
     pub fn link(&mut self, src_path: InodePath, dst_path: InodePath) -> FsResult<()> {
         self.hsm_guard_path(src_path.path())?;
         self.hsm_guard_path(dst_path.path())?;
+        if let Some(inode) = src_path.get_last_inode() {
+            if self.hsm_enabled && self.hsm_record(inode.id())?.is_some() {
+                return err_box!("hard links of HSM-managed files are not supported");
+            }
+        }
         if let Some(inode) = src_path.get_last_inode() {
             self.hsm_guard_tree(inode)?;
         }
@@ -1533,6 +1550,7 @@ impl FsDir {
         }
 
         self.store.apply_complete_file(inode.as_ref(), &[])?;
+        self.hsm_track_file(audit_path, inode.as_file_ref()?)?;
         self.journal_writer
             .log_complete_file(self, audit_path, inode.as_file_ref()?, vec![])?;
 

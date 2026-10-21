@@ -39,6 +39,9 @@ pub fn error_value(e: HsmError) -> Value {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Namespace {
+    /// Versioned ordinary-file hooks; old journal replay keeps its original rules.
+    #[serde(default)]
+    pub ordinary_format: u32,
     pub root_inode: i64,
     pub storage: String,
     pub incarnation: String,
@@ -93,8 +96,35 @@ pub struct Endpoint {
     pub worker: WorkerAddress,
     pub token: String,
 }
+fn sealed_default() -> bool {
+    true
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
+    /// Ordinary namespace file; keeps its inode and path across tier changes.
+    #[serde(default)]
+    pub ordinary: bool,
+    /// Online content currently lives in the regular replicated block layout.
+    #[serde(default)]
+    pub native_blocks: bool,
+    #[serde(default = "sealed_default")]
+    pub sealed: bool,
+    #[serde(default)]
+    pub seal_token: Option<String>,
+    #[serde(default)]
+    pub atime_ms: i64,
+    #[serde(default)]
+    pub mtime_ms: i64,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub writing: bool,
+    #[serde(default)]
+    pub readers: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub native_garbage: BTreeMap<i64, Vec<crate::BlockLocation>>,
     #[serde(default)]
     pub state_since_ms: i64,
     pub version: u64,
@@ -198,4 +228,14 @@ pub struct ControlChange {
     pub key: Vec<u8>,
     pub expected: Option<Vec<u8>>,
     pub value: Option<Vec<u8>>,
+}
+
+/// Protected ordinary read, transported only by the native control RPC.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ReadHandle {
+    pub blocks: crate::FileBlocks,
+    pub data: DataKey,
+    pub reader: String,
+    pub endpoint: Option<Endpoint>,
+    pub expires_ms: i64,
 }

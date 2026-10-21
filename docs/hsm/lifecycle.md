@@ -1,39 +1,37 @@
-# 原生生命周期策略与持久任务
+# 普通文件生命周期策略与自动召回
 
-实现 v0.5，2026-10-20。运行命令和完整本地文件场景见 [hsm-rs LOCAL-HSM](https://github.com/JayTsu-sh/hsm-rs/blob/feat/curvine-adapter/docs/LOCAL-HSM.md)。
+实现 v0.6。Curvine 的普通 FUSE 常规文件在关闭路径纳管，候选筛选、任务和驻留权威记录在原生元数据中；hsm-rs 负责周期调度及外部编排，data-mover-rs 搬运，当前归档后端为本地文件。
 
-## 职责
+底层键空间、Record value、候选索引维护和重放细节见 [RocksDB 实现设计](rocksdb-records.md)。
 
-Curvine 原 common CF 保存策略、任务、每实体 active index 和源原语结果。外部 hsm-rs worker 负责定时调用、后端选择、复制与结果对账；没有外部文件清单或元数据镜像。扫描的触发定时器在外部，候选条件计算和持久入队在 Master 内部。
+## 策略和扫描
 
-策略选择新建不可变 `/.hsm/<name>` 的文件名前缀、最小/最大大小、当前驻留状态的持续时间；动作是 Archive、Release 或显式 Recall，目标只含逻辑 backend ID。Archive 选择 Online；Release 要求 Dual、匹配 anchor、无 view/private layout；Recall 要求 Offline 且有对应 anchor。正数时间门槛不接纳缺少起始时间的旧记录；当前不是 atime 或容量水位策略。
+规则支持路径和排除前缀、逻辑大小、owner、group、访问年龄、修改年龄、驻留时长及容量高低水位。正访问年龄权重按较冷文件优先。高水位启动，低水位停止，在线池内各规则共享未完成任务的预计回收预算。策略 JSON 不兼容 GPFS 策略文本，也不提供任意 SQL 表达式。
 
-## 有界原子入队
+候选索引为状态、访问时间和 inode，先处理 Dual 再处理 Online；访问年龄不再符合时可结束该状态范围。每个请求最多处理 256 个候选项，并额外预读 1 项判断下一页。周期、每轮预算、候选上限、持久游标和容量触发锁存共同限制扫描成本；其他条件仍在候选记录上判断。没有递归目录枚举或外部元数据镜像，分页也不是全局 namespace 快照。
 
-policy_put 条件检查原 revision，新策略从 1 开始，更新为 N+1；关闭或修改策略会使未执行旧任务在 claim 时失效。
+入队同时比较策略版本、源记录版本、确定性任务键和实体 active index。公开状态版本、访问时间和驻留区间纳入任务身份，旧观察失效后可以重新选择。Ready/Running 使用独立索引，召回优先于归档。
 
-policy_scan 每次最多读取 16 条原生 HSM record，cursor 严格位于最后检查的 native key 之后，不只覆盖匹配项。使用原 RocksDB 有界范围 iterator。分页不是 namespace 快照，新一轮从头扫描补齐新增文件。
+## 归档和释放
 
-一个提交事务同时校验策略原值、所有候选 record version、确定性 intent key 不存在，以及实体 active index 不存在；然后同 batch 写入任务与 active index。并发变更使整个批次失败，不能推进 cursor 后遗漏候选。记录属于同一原生复制权威域，不新增数据库。
+Release 策略可以选择 Online 文件，先取得受保护的内容摘要，外部执行 Archive；后端提交回执后，Curvine 登记锚点并变为 Dual。随后策略为同一文件生成 Release：外部 HSM 验证回执，Curvine 条件撤销在线布局并提交 Offline，持久 GC outbox 再驱动 Worker 删除全部旧普通块副本。DataMover 不直接设置 Offline，也不删除 namespace。
 
-intent ID = hash(policy ID, policy revision, DataKey)。同一规则版本/内容 generation 最多一次，实体同时最多一个未完成策略任务；重扫不重复，多个扫描器争用由 CAS 决定。规则改版会重新开放选择，因此操作员需避免互相冲突的长期冷热规则。
+普通块视图的 capability 是紧凑引用，执行器通过持有的 view 权限查询布局，归档提交不把整份块列表重复塞进控制请求。未关闭文件、活动视图、读取保护、缺少锚点或过时观察阻止释放。重写和截断使旧内容锚点失效；读打开、续租及有效关闭更新访问时间和状态版本，旧 Release 任务不能继续使用旧判断。
 
-## 执行资格与完成
+## 访问召回
 
-Ready → Running，由新 claim ID 和任务 record version 保护。当前 controller epoch 内的 Running 不抢占；接管先条件提升全局 controller epoch，再领取旧 epoch 工作。旧控制者的新源修改/完成被 Fenced，没有超时即删除或隐式假定旧动作失败。
+更新后的 SDK/FUSE 在读打开时请求受保护读取。Offline 文件原子产生共享 Recall intent，应用等待，外部 worker 从归档搬运到私有布局并校验。Worker 封存后由 Curvine 在原 inode 发布 Dual，再继续读取。同一离线版本合并并发请求，不需要 Recall 策略或用户执行 Recall 命令。
 
-effect operation ID 始终来自 intent ID。控制者 epoch 只决定修改资格，不改变逻辑请求指纹；pending owner 仍绑定 operation ID/attempt。新资格可以查询、恢复同一 view/private allocation，最终 apply 再检查当前 epoch。Worker 的独立封存与墓碑机制继续撤销旧写 capability。
+读取租约、原生校验保护、归档视图、私有布局及 GC 都在 Curvine 保存。中断的源校验有独立 outbox，策略关闭后执行器仍可以恢复校验。已有 Running 工作仍通过 controller epoch 接管；不凭超时删除保护。
 
-finish Done 必须有匹配 DataKey/action 的源端原始成功 outcome，执行器上报无法自行构造成功。原始成功优先于失败/重试报告，包含新 claim 时对已提交动作的对账。确认结果或终止任务与清除 active index 同 batch；不确定结果回 Ready 并保留原 effect ID。已失败任务与资源引用仍可查询，不按超时释放保护。
+## 普通元数据与提交恢复
 
-## 日志兼容与恢复
+HSM 控制与普通元数据写入共享提交串行边界，普通写入预更新后等待本节点提交屏障，避免预更新与 HSM CAS 的重放结果分叉。普通数据 I/O、心跳和 stat 不使用该提交边界。
 
-policy/intent 控制 CAS 使用原 Hsm journal 命令，但 payload 带独立 `hsm-lifecycle-v1` 前缀。旧实现不能把未知 controls 当作无操作而持久化成功：它会解析失败并按 HSM apply 规则停止。全部 Master 必须先升级到本实现，再启用策略。
+namespace 的 ordinary_format=2 版本化新增普通文件钩子；历史记录缺少该字段时按旧规则重放，升级本身通过日志提交。重放普通修改不会使用其他节点的当前时钟重新判断读取租约。重命名、元数据、截断和删除维护对应的 HSM 记录和索引；TTL 不绕过 HSM 生命周期。
 
-旧 HSM JSON 事务仍可读取；新 controls/record_checks/state_since_ms 使用默认值。策略和任务前缀同样由启动时的 HSM projection 重建及既有 checkpoint 覆盖，无外部重建镜像。
+## 当前边界与验证
 
-## 验证与限制
+支持非 UFS、单硬链接常规文件。恢复布局支持普通读取和全量覆盖，其追加及完整可变语义尚未覆盖；活动保护可能使修改需要重试。初始普通块遵循 replicas，私有 Recall 布局仍为单副本，不参与普通块修复及完整统计。当前没有硬容量预留、磁带后端、生产 HA 或百万文件吞吐验收。
 
-真实三 Master/单 Worker 测试通过 CLI 独立进程导入与执行策略，覆盖开关与 revision CAS、大小/前缀/时间门槛、逐条分页、去重和 active index、重复领取拒绝、虚假 Done 拒绝、换主重启后的策略/任务/epoch、源成功但任务未完成的对账、封存至后端 receipt 发布窗口恢复，以及损坏归档不得释放。恢复后核对完整字节，未匹配文件保持 Online。
-
-当前仍为不可变直接子文件、本地归档、显式 Recall、attempt epoch 1、按 key 线性筛选。尚无原地转管、可变文件、透明召回、访问热度/容量水位策略、普通块统计/副本修复、完整生产故障矩阵或带库。
+完整设计、策略示例与运行验证在配套 [hsm-rs main](https://github.com/JayTsu-sh/hsm-rs) 的 docs/DESIGN.md、docs/VALIDATION.md、examples/policies/cold-local.json。发布版本使用固定 Git 依赖；联合开发可用 hsm-rs/tools/curvine-workspace-config.py 生成 Cargo path patch。

@@ -4,8 +4,8 @@ use super::*;
 
 const POLICIES: &[u8] = b"\x03hsm:policy:";
 const INTENTS: &[u8] = b"\x03hsm:intent:";
-const RECORDS: &[u8] = b"\x03hsm:record:";
 const PAGE_MAX: usize = 16;
+const SCAN_MAX: usize = 256;
 
 fn policy_key(id: &str) -> HsmResult<Vec<u8>> {
     if id.is_empty()
@@ -18,13 +18,13 @@ fn policy_key(id: &str) -> HsmResult<Vec<u8>> {
     }
     Ok([POLICIES, id.as_bytes()].concat())
 }
-fn intent_key(id: &str) -> HsmResult<Vec<u8>> {
+pub(super) fn intent_key(id: &str) -> HsmResult<Vec<u8>> {
     if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(HsmError::Invalid("invalid intent ID".into()));
     }
     Ok([INTENTS, id.as_bytes()].concat())
 }
-fn active_key(data: &DataKey) -> Vec<u8> {
+pub(super) fn active_key(data: &DataKey) -> Vec<u8> {
     format!("\u{3}hsm:active:{}", data.entity.entity).into_bytes()
 }
 fn encoded(value: &impl Serialize) -> HsmResult<Vec<u8>> {
@@ -45,7 +45,25 @@ fn effect_step(action: &ManagedAction) -> &'static str {
 }
 fn selected(policy: &LifecyclePolicy, record: &Record, now: i64) -> bool {
     if !policy.enabled
+        || record.writing
         || record.pending.is_some()
+        || policy
+            .selection
+            .exclude_prefixes
+            .iter()
+            .any(|p| record.path.starts_with(p))
+        || policy
+            .selection
+            .owner
+            .as_ref()
+            .is_some_and(|o| o != &record.owner)
+        || policy
+            .selection
+            .group
+            .as_ref()
+            .is_some_and(|g| g != &record.group)
+        || now.saturating_sub(record.atime_ms) < policy.selection.min_access_age_ms as i64
+        || now.saturating_sub(record.mtime_ms) < policy.selection.min_modify_age_ms as i64
         || !record.path.starts_with(&policy.prefix)
         || record.state.length < policy.min_size
         || policy.max_size.is_some_and(|m| record.state.length > m)
@@ -57,17 +75,21 @@ fn selected(policy: &LifecyclePolicy, record: &Record, now: i64) -> bool {
     }
     match policy.action {
         PolicyAction::Archive => {
-            record.state.residency == Residency::Online && record.published.is_some()
+            record.state.residency == Residency::Online
+                && (record.published.is_some() || record.native_blocks)
         }
         PolicyAction::Release => {
-            record.state.residency == Residency::Dual
-                && record.published.is_some()
+            matches!(record.state.residency, Residency::Online | Residency::Dual)
+                && (record.published.is_some() || record.native_blocks)
                 && record.views.is_empty()
-                && record
-                    .state
-                    .anchors
-                    .iter()
-                    .any(|a| a.key.backend == policy.backend)
+                && (record.seal_token.is_none() || !record.sealed)
+                && !ordinary::readers_active(record, now)
+                && (record.state.residency == Residency::Online
+                    || record
+                        .state
+                        .anchors
+                        .iter()
+                        .any(|a| a.key.backend == policy.backend))
         }
         PolicyAction::Recall => {
             record.state.residency == Residency::Offline
@@ -98,15 +120,20 @@ impl MasterFilesystem {
                     return Err(HsmError::Invalid("page limit must be 1..16".into()));
                 }
                 let cursor = request.get("after").and_then(Value::as_str);
-                let prefix = if op == "policy_list" {
-                    POLICIES
-                } else {
-                    INTENTS
-                };
+                let prefix =
+                    if op == "intent_list" && request["ready_only"].as_bool().unwrap_or(false) {
+                        b"\x03hsm:work:".as_slice()
+                    } else if op == "policy_list" {
+                        POLICIES
+                    } else {
+                        INTENTS
+                    };
                 let after = cursor
                     .map(|id| {
                         if op == "policy_list" {
                             policy_key(id)
+                        } else if prefix == b"\x03hsm:work:" {
+                            Ok([prefix, id.as_bytes()].concat())
                         } else {
                             intent_key(id)
                         }
@@ -125,7 +152,18 @@ impl MasterFilesystem {
                 };
                 let items: Vec<Value> = page
                     .iter()
-                    .map(|(_, v)| decode(v).map_err(io))
+                    .map(|(_, v)| {
+                        if prefix == b"\x03hsm:work:" {
+                            let id: String = decode(v).map_err(io)?;
+                            let bytes = store
+                                .hsm_get(&intent_key(&id)?)
+                                .map_err(io)?
+                                .ok_or_else(|| HsmError::NotFound("queued task".into()))?;
+                            decode(&bytes).map_err(io)
+                        } else {
+                            decode(v).map_err(io)
+                        }
+                    })
                     .collect::<HsmResult<_>>()?;
                 return Ok(reply("page", LifecyclePage { items, next }));
             }
@@ -167,12 +205,12 @@ impl MasterFilesystem {
                 "policy_put" => {
                     let policy: LifecyclePolicy = field(request, "policy")?;
                     policy.validate()?;
-                    if !policy.prefix.starts_with("/.hsm/")
+                    if !policy.prefix.starts_with('/')
                         || policy.prefix.contains('\0')
                         || policy.prefix.len() > 264
                     {
                         return Err(HsmError::Invalid(
-                            "policy prefix must select /.hsm direct children".into(),
+                            "policy prefix must be an absolute path prefix".into(),
                         ));
                     }
                     let key = policy_key(&policy.id)?;
@@ -200,46 +238,161 @@ impl MasterFilesystem {
                     let pbytes = store.hsm_get(&pkey).map_err(io)?;
                     let policy: LifecyclePolicy = required(pbytes.clone())?;
                     let limit = request["limit"].as_u64().unwrap_or(16) as usize;
-                    if !(1..=PAGE_MAX).contains(&limit) {
-                        return Err(HsmError::Invalid("scan limit must be 1..16".into()));
+                    if !(1..=SCAN_MAX).contains(&limit) {
+                        return Err(HsmError::Invalid("scan limit must be 1..256".into()));
                     }
-                    let after = request
+                    let scheduled = request["scheduled"].as_bool().unwrap_or(false);
+                    let rkey =
+                        format!("\u{3}hsm:scan:{}:{}", policy.id, policy.revision).into_bytes();
+                    let runbytes = store.hsm_get(&rkey).map_err(io)?;
+                    let mut run: PolicyRun = raw(runbytes.clone())?.unwrap_or_default();
+                    if scheduled && (run.next_due_ms > now || !policy.enabled) {
+                        return Ok(reply(
+                            "scan",
+                            ScanBatch {
+                                examined: 0,
+                                admitted: vec![],
+                                next: None,
+                                to_seal: vec![],
+                            },
+                        ));
+                    }
+                    let mut budget_bytes = u64::MAX;
+                    if let Some(w) = &policy.selection.capacity {
+                        let info = self.filesystem_info().map_err(io)?;
+                        let capacity = info.allocatable_capacity.max(0) as u64;
+                        // Actual worker disk usage includes replicas and non-Curvine occupants.
+                        let (active, target) = pressure_target(
+                            run.pressure,
+                            capacity,
+                            info.allocatable_available.max(0) as u64,
+                            w.low_basis_points,
+                            w.high_basis_points,
+                        );
+                        run.pressure = active;
+                        if !active {
+                            run.cursor = None;
+                            run.admitted = 0;
+                            budget_bytes = 0;
+                        } else {
+                            budget_bytes = target.saturating_sub(outstanding_bytes(&fs, &policy)?);
+                        }
+                    }
+                    let states: &[char] = match policy.action {
+                        PolicyAction::Archive => &['o'],
+                        PolicyAction::Release => &['d', 'o'],
+                        PolicyAction::Recall => &['f'],
+                    };
+                    let requested = request
                         .get("after")
                         .and_then(Value::as_str)
-                        .map(|s| {
-                            s.parse::<i64>()
-                                .map(record_key)
-                                .map_err(|_| HsmError::Invalid("invalid record cursor".into()))
-                        })
-                        .transpose()?;
-                    let mut page = store
-                        .hsm_scan(RECORDS, after.as_deref(), limit + 1)
-                        .map_err(io)?;
+                        .map(str::to_string);
+                    let cursor = if scheduled {
+                        run.cursor.clone()
+                    } else {
+                        requested
+                    };
+                    let state = cursor
+                        .as_ref()
+                        .and_then(|s| s.split(':').nth(2))
+                        .and_then(|s| s.chars().next())
+                        .filter(|s| states.contains(s))
+                        .unwrap_or(states[0]);
+                    let prefix = format!("\u{3}hsm:candidate:{state}:").into_bytes();
+                    let mut page = if budget_bytes == 0 {
+                        vec![]
+                    } else {
+                        store
+                            .hsm_scan(
+                                &prefix,
+                                cursor
+                                    .as_deref()
+                                    .filter(|s| s.as_bytes().starts_with(&prefix))
+                                    .map(str::as_bytes),
+                                limit + 1,
+                            )
+                            .map_err(io)?
+                    };
                     let more = page.len() > limit;
                     page.truncate(limit);
-                    let next = if more {
+                    let mut next = if more {
                         page.last()
-                            .map(|(k, _)| String::from_utf8_lossy(&k[RECORDS.len()..]).into_owned())
+                            .map(|(k, _)| String::from_utf8_lossy(k).into_owned())
                     } else {
-                        None
+                        states
+                            .iter()
+                            .position(|s| *s == state)
+                            .and_then(|i| states.get(i + 1))
+                            .map(|s| format!("\u{3}hsm:candidate:{s}:"))
                     };
                     let mut admitted = vec![];
-                    // A concurrent edit invalidates the WHOLE bounded admission batch.
+                    let mut to_seal = vec![];
                     tx.controls.push(ControlChange {
                         key: pkey,
                         expected: pbytes.clone(),
                         value: pbytes,
                     });
                     for (_, bytes) in &page {
-                        let record: Record = decode(bytes).map_err(io)?;
+                        if run.admitted + to_seal.len() >= policy.selection.max_candidates
+                            || budget_bytes == 0
+                        {
+                            break;
+                        }
+                        let rid: String = decode(bytes).map_err(io)?;
+                        let Some(bytes) = store
+                            .hsm_get(&record_key(rid.parse().map_err(io)?))
+                            .map_err(io)?
+                        else {
+                            continue;
+                        };
+                        let mut record: Record = decode(&bytes).map_err(io)?;
+                        // Resolve the authoritative inode identity; namespace renames do not need an external mirror.
+                        record.path = match fs.get_inode_path(rid.parse().map_err(io)?) {
+                            Ok(p) => p,
+                            Err(_) => continue,
+                        };
+                        if policy.selection.min_access_age_ms > 0
+                            && record.atime_ms
+                                > now.saturating_sub(policy.selection.min_access_age_ms as i64)
+                        {
+                            next = states
+                                .iter()
+                                .position(|s| *s == state)
+                                .and_then(|i| states.get(i + 1))
+                                .map(|s| format!("\u{3}hsm:candidate:{s}:"));
+                            break;
+                        }
                         if !selected(&policy, &record, now) {
                             continue;
                         }
+                        if !record.sealed {
+                            to_seal.push(record.state.data.clone());
+                            continue;
+                        }
                         let data = &record.state.data;
-                        let id = blake3::hash(&encoded(&(&policy.id, policy.revision, data))?)
-                            .to_hex()
-                            .to_string();
-                        let ikey = intent_key(&id)?;
+                        let archive_phase = policy.action == PolicyAction::Archive
+                            || policy.action == PolicyAction::Release
+                                && record.state.residency == Residency::Online;
+                        let phase = if archive_phase {
+                            "archive"
+                        } else if policy.action == PolicyAction::Release {
+                            "release"
+                        } else {
+                            "recall"
+                        };
+                        // A new residency interval permits a later cold/hot cycle under the same policy revision.
+                        let iid = blake3::hash(&encoded(&(
+                            &policy.id,
+                            policy.revision,
+                            data,
+                            phase,
+                            record.state_since_ms,
+                            record.atime_ms,
+                            record.state.revision,
+                        ))?)
+                        .to_hex()
+                        .to_string();
+                        let ikey = intent_key(&iid)?;
                         let active = active_key(data);
                         if store.hsm_get(&ikey).map_err(io)?.is_some()
                             || store.hsm_get(&active).map_err(io)?.is_some()
@@ -248,31 +401,35 @@ impl MasterFilesystem {
                         }
                         let archive = ArchiveKey {
                             backend: policy.backend.clone(),
-                            object: format!("policy-{id}"),
+                            object: format!("policy-{iid}"),
                         };
-                        let action = match policy.action {
-                            PolicyAction::Archive => ManagedAction::Archive(archive),
-                            PolicyAction::Release => ManagedAction::Release,
-                            PolicyAction::Recall => ManagedAction::Recall(
-                                record
-                                    .state
-                                    .anchors
-                                    .iter()
-                                    .find(|a| a.key.backend == policy.backend)
-                                    .unwrap()
-                                    .key
-                                    .clone(),
-                            ),
+                        let action = if archive_phase {
+                            ManagedAction::Archive(archive)
+                        } else {
+                            match policy.action {
+                                PolicyAction::Release => ManagedAction::Release,
+                                PolicyAction::Recall => ManagedAction::Recall(
+                                    record
+                                        .state
+                                        .anchors
+                                        .iter()
+                                        .find(|a| a.key.backend == policy.backend)
+                                        .unwrap()
+                                        .key
+                                        .clone(),
+                                ),
+                                _ => unreachable!(),
+                            }
                         };
                         let intent = LifecycleIntent {
-                            id: id.clone(),
+                            id: iid.clone(),
                             policy: policy.id.clone(),
                             policy_revision: policy.revision,
                             version: 1,
                             expected: record.state.clone(),
                             action,
                             context: OperationContext {
-                                operation_id: format!("intent-{id}"),
+                                operation_id: format!("intent-{iid}"),
                                 controller_epoch: ns.epoch,
                                 attempt_epoch: 1,
                             },
@@ -291,9 +448,45 @@ impl MasterFilesystem {
                         tx.controls.push(ControlChange {
                             key: active,
                             expected: None,
-                            value: Some(encoded(&id)?),
+                            value: Some(encoded(&iid)?),
                         });
-                        admitted.push(id);
+                        let physical =
+                            record.state.length.saturating_mul(if record.native_blocks {
+                                fs.store
+                                    .get_inode(rid.parse().map_err(io)?, None)
+                                    .map_err(io)?
+                                    .and_then(|i| {
+                                        i.as_file_ref().ok().map(|f| f.replicas.max(1) as u64)
+                                    })
+                                    .unwrap_or(1)
+                            } else {
+                                1
+                            });
+                        budget_bytes = budget_bytes.saturating_sub(physical);
+                        run.admitted += 1;
+                        admitted.push(iid);
+                    }
+                    if budget_bytes == 0 {
+                        next = None;
+                    }
+                    if !to_seal.is_empty() {
+                        next = cursor
+                            .clone()
+                            .or_else(|| Some(format!("\u{3}hsm:candidate:{state}:")));
+                    }
+                    if scheduled || policy.selection.capacity.is_some() {
+                        run.cursor = next.clone();
+                        if next.is_none() || run.admitted >= policy.selection.max_candidates {
+                            run.next_due_ms = now + policy.selection.scan_interval_ms as i64;
+                            run.cursor = None;
+                            run.admitted = 0;
+                            next = None;
+                        }
+                        tx.controls.push(ControlChange {
+                            key: rkey,
+                            expected: runbytes,
+                            value: Some(encoded(&run)?),
+                        });
                     }
                     tx.response = reply(
                         "scan",
@@ -301,6 +494,7 @@ impl MasterFilesystem {
                             examined: page.len(),
                             admitted,
                             next,
+                            to_seal,
                         },
                     );
                 }
@@ -325,13 +519,20 @@ impl MasterFilesystem {
                         if intent.claim.as_ref().is_some_and(|c| c.epoch == ns.epoch) {
                             return Err(HsmError::Busy("intent owned in current controller epoch; takeover requires a new epoch".into()));
                         }
-                        let pbytes = store.hsm_get(&policy_key(&intent.policy)?).map_err(io)?;
-                        let policy: LifecyclePolicy = required(pbytes.clone())?;
-                        tx.controls.push(ControlChange {
-                            key: policy_key(&intent.policy)?,
-                            expected: pbytes.clone(),
-                            value: pbytes,
-                        });
+                        let policy: Option<LifecyclePolicy> = if intent.policy == "__access_recall"
+                        {
+                            None
+                        } else {
+                            let key = policy_key(&intent.policy)?;
+                            let bytes = store.hsm_get(&key).map_err(io)?;
+                            let p = required(bytes.clone())?;
+                            tx.controls.push(ControlChange {
+                                key,
+                                expected: bytes.clone(),
+                                value: bytes,
+                            });
+                            Some(p)
+                        };
                         let success = fs
                             .hsm_outcome(&operation_key(
                                 &intent.context.operation_id,
@@ -347,10 +548,49 @@ impl MasterFilesystem {
                             intent.status = IntentStatus::Done;
                             intent.result = Some(field(&outcome.response, "data")?);
                             intent.last_error = None;
-                        } else if !policy.enabled || policy.revision != intent.policy_revision {
+                        } else if fs
+                            .hsm_record(entity_id(&intent.expected.data.entity, ns)?)
+                            .map_err(io)?
+                            .is_none_or(|r| r.state != intent.expected)
+                        {
+                            intent.status = IntentStatus::Superseded;
+                            intent.last_error = Some("source observation changed".into());
+                        } else if policy
+                            .as_ref()
+                            .is_some_and(|p| !p.enabled || p.revision != intent.policy_revision)
+                        {
                             intent.status = IntentStatus::Superseded;
                             intent.last_error = Some("admitting policy disabled or revised".into());
                         } else {
+                            if let Some(policy) = &policy {
+                                let record: Record = required(
+                                    store
+                                        .hsm_get(&record_key(entity_id(
+                                            &intent.expected.data.entity,
+                                            ns,
+                                        )?))
+                                        .map_err(io)?,
+                                )?;
+                                if !selected(policy, &record, now) {
+                                    return Err(HsmError::Busy(
+                                        "policy eligibility changed; defer candidate".into(),
+                                    ));
+                                }
+                                if let Some(w) = &policy.selection.capacity {
+                                    let info = self.filesystem_info().map_err(io)?;
+                                    let capacity = info.allocatable_capacity.max(0) as u64;
+                                    let used = capacity
+                                        .saturating_sub(info.allocatable_available.max(0) as u64);
+                                    if capacity == 0
+                                        || used as u128 * 10000
+                                            <= capacity as u128 * w.low_basis_points as u128
+                                    {
+                                        return Err(HsmError::Busy(
+                                            "online usage reached low watermark".into(),
+                                        ));
+                                    }
+                                }
+                            }
                             intent.context.controller_epoch = ns.epoch;
                             intent.claim = Some(IntentClaim {
                                 owner,
@@ -436,4 +676,97 @@ impl MasterFilesystem {
         };
         self.hsm_submit(&tx).await
     }
+}
+
+#[derive(Default, Serialize, serde::Deserialize)]
+struct PolicyRun {
+    cursor: Option<String>,
+    next_due_ms: i64,
+    admitted: usize,
+    pressure: bool,
+}
+fn outstanding_bytes(fs: &FsDir, _policy: &LifecyclePolicy) -> HsmResult<u64> {
+    // All rules target the same online worker pool; reserve against a shared budget.
+    let prefix = b"\x03hsm:reserved:online:".to_vec();
+    let mut bytes = 0u64;
+    let mut cursor: Option<Vec<u8>> = None;
+    loop {
+        let page = fs
+            .get_rocks_store()
+            .hsm_scan(&prefix, cursor.as_deref(), 128)
+            .map_err(io)?;
+        if page.is_empty() {
+            break;
+        }
+        for (_, value) in &page {
+            bytes = bytes.saturating_add(decode::<u64>(value).map_err(io)?);
+        }
+        cursor = page.last().map(|(key, _)| key.clone());
+    }
+    Ok(bytes)
+}
+
+fn pressure_target(
+    active: bool,
+    capacity: u64,
+    available: u64,
+    low_bps: u16,
+    high_bps: u16,
+) -> (bool, u64) {
+    let used = capacity.saturating_sub(available);
+    let low = (capacity as u128 * low_bps as u128 / 10000) as u64;
+    let high = (capacity as u128 * high_bps as u128 / 10000) as u64;
+    let active = capacity != 0 && used > low && (active || used >= high);
+    (active, if active { used.saturating_sub(low) } else { 0 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn closed_unpinned_files_are_filtered_by_access_age_size_and_exclusions() {
+        let policy: LifecyclePolicy = serde_json::from_value(serde_json::json!({
+            "id":"cold", "revision":1, "enabled":true, "prefix":"/data/",
+            "min_size":1048576, "max_size":null, "min_residency_ms":0,
+            "action":"release", "backend":"local",
+            "selection":{"min_access_age_ms":5000, "min_modify_age_ms":1000,
+                "exclude_prefixes":["/data/tmp/"]}
+        }))
+        .unwrap();
+        let mut record: Record = serde_json::from_value(serde_json::json!({
+            "version":1, "ordinary":true, "native_blocks":true, "sealed":true,
+            "atime_ms":9900, "mtime_ms":1000, "state_since_ms":1000,
+            "state":{"data":{"entity":{"storage":"s","namespace":"n","entity":"1001"},"generation":1},
+                "revision":1,"residency":"Online","length":2097152,
+                "digest":{"algorithm":"blake3","value":vec![1;32]}, "anchors":[]},
+            "path":"/data/a", "published":null,"pending":null,"views":{},"garbage":[]
+        })).unwrap();
+        assert!(record.readers.is_empty());
+        assert!(!selected(&policy, &record, 10000));
+        record.atime_ms = 1000;
+        assert!(selected(&policy, &record, 10000));
+        record.state.length = 1024;
+        assert!(!selected(&policy, &record, 10000));
+        record.state.length = 2097152;
+        record.path = "/data/tmp/a".into();
+        assert!(!selected(&policy, &record, 10000));
+    }
+    #[test]
+    fn watermarks_start_at_high_continue_between_and_stop_at_low() {
+        assert_eq!(pressure_target(false, 1000, 201, 6000, 8000), (false, 0));
+        assert_eq!(pressure_target(false, 1000, 200, 6000, 8000), (true, 200));
+        assert_eq!(pressure_target(true, 1000, 300, 6000, 8000), (true, 100));
+        assert_eq!(pressure_target(false, 1000, 300, 6000, 8000), (false, 0));
+        assert_eq!(pressure_target(true, 1000, 400, 6000, 8000), (false, 0));
+        assert_eq!(pressure_target(true, 0, 0, 6000, 8000), (false, 0));
+    }
+}
+
+pub(super) fn work_key(intent: &LifecycleIntent) -> Vec<u8> {
+    let priority = if matches!(intent.action, ManagedAction::Recall(_)) {
+        0
+    } else {
+        1
+    };
+    format!("\u{3}hsm:work:{priority}:{}", intent.id).into_bytes()
 }

@@ -1028,6 +1028,9 @@ impl MessageHandler for MasterHandler {
 
     fn is_sync(&self, msg: &Message) -> bool {
         let code = RpcCode::from(msg.code());
+        if self.fs.conf.hsm_enabled && hsm_mutating_rpc(code) {
+            return false;
+        }
         !matches!(
             code,
             RpcCode::SubmitJob
@@ -1147,6 +1150,15 @@ impl MessageHandler for MasterHandler {
                 RpcCode::HsmControl => {
                     let request: HsmControlRequest = ctx.parse_header()?;
                     ctx.response(self.fs.hsm_control(request).await)
+                }
+                v if self.fs.conf.hsm_enabled && hsm_mutating_rpc(v) => {
+                    let gate = self.fs.fs_dir.read().hsm_mutation_gate.clone();
+                    let _serial = gate.lock().await;
+                    let response = self.handle(&msg);
+                    self.fs.hsm_read_barrier().await.map_err(|e| {
+                        FsError::common(format!("metadata commit outcome uncertain: {e}"))
+                    })?;
+                    response
                 }
                 RpcCode::SubmitJob => self.job_handler.submit_job(ctx).await,
                 RpcCode::GetJobStatus => self.job_handler.get_load_status(ctx),
@@ -1592,4 +1604,30 @@ mod tests {
         Master::init_test_metrics();
         Master::get_metrics().unwrap()
     }
+}
+
+/// HSM volume mutations are serialized through committed publication. Heartbeats,
+/// data I/O, file status and ordinary directory reads keep their existing paths.
+fn hsm_mutating_rpc(code: RpcCode) -> bool {
+    matches!(
+        code,
+        RpcCode::Mkdir
+            | RpcCode::CreateFile
+            | RpcCode::OpenFile
+            | RpcCode::AddBlock
+            | RpcCode::CompleteFile
+            | RpcCode::CreateFilesBatch
+            | RpcCode::AddBlocksBatch
+            | RpcCode::CompleteFilesBatch
+            | RpcCode::Delete
+            | RpcCode::Free
+            | RpcCode::Rename
+            | RpcCode::SetAttr
+            | RpcCode::Symlink
+            | RpcCode::Link
+            | RpcCode::ResizeFile
+            | RpcCode::AssignWorker
+            | RpcCode::Mount
+            | RpcCode::UnMount
+    )
 }

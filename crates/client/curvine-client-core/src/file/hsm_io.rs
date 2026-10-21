@@ -44,3 +44,72 @@ pub async fn hsm_worker_rpc(
         .await
         .map_err(|_| HsmError::Unknown("HSM worker RPC timeout".into()))?
 }
+
+/// Ordinary readers ask the authority to pin online data or enqueue one shared Recall.
+pub async fn open_managed(
+    fs: &super::CurvineFileSystem,
+    path: &curvine_fs_api::Path,
+) -> curvine_error::FsResult<Option<ReadHandle>> {
+    let reader = token();
+    let started = std::time::Instant::now();
+    loop {
+        let response = fs
+            .hsm_control(HsmControlRequest {
+                protocol_version: 1,
+                payload: serde_json::to_vec(
+                    &serde_json::json!({"op":"read_path","path":path.path(),"reader":reader}),
+                )
+                .map_err(|e| curvine_error::FsError::common(e.to_string()))?,
+            })
+            .await?;
+        let value: serde_json::Value = serde_json::from_slice(&response.payload)
+            .map_err(|e| curvine_error::FsError::common(e.to_string()))?;
+        match value["kind"].as_str() {
+            Some("normal") => return Ok(None),
+            Some("read") => {
+                return Ok(Some(
+                    serde_json::from_value(value["data"].clone())
+                        .map_err(|e| curvine_error::FsError::common(e.to_string()))?,
+                ))
+            }
+            Some("pending") => {
+                if started.elapsed() > std::time::Duration::from_secs(300) {
+                    return curvine_core_error::err_box!(
+                        "automatic HSM recall timed out; queued work remains durable"
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            Some("error") if value["data"]["code"] == "unsupported" => return Ok(None),
+            Some("error") if value["data"]["code"] == "conflict" => {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await
+            }
+            _ => return curvine_core_error::err_box!("HSM read: {}", value["data"]),
+        }
+    }
+}
+
+pub(crate) async fn reader_control(
+    context: std::sync::Arc<super::FsContext>,
+    handle: &ReadHandle,
+    op: &str,
+) -> curvine_error::FsResult<()> {
+    for attempt in 0..16 {
+        let response = super::FsClient::new(context.clone()).hsm_control(HsmControlRequest {
+            protocol_version: 1,
+            payload: serde_json::to_vec(&serde_json::json!({"op":op,"entity":handle.data.entity,"reader":handle.reader}))
+                .map_err(|e| curvine_error::FsError::common(e.to_string()))?,
+        }).await?;
+        let value: serde_json::Value = serde_json::from_slice(&response.payload)
+            .map_err(|e| curvine_error::FsError::common(e.to_string()))?;
+        if value["kind"] == "done" {
+            return Ok(());
+        }
+        if value["data"]["code"] == "conflict" && attempt < 15 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            continue;
+        }
+        return curvine_core_error::err_box!("HSM read lease: {}", value["data"]);
+    }
+    unreachable!("bounded lease retry loop always returns")
+}

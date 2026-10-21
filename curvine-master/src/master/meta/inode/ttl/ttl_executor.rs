@@ -74,6 +74,14 @@ impl InodeTtlExecutor {
             return err_ext!(FsError::file_not_found(format!("inode_id={}", inode_id)));
         };
 
+        // HSM owns these files' lifecycle; TTL must not bypass committed publication.
+        let managed = {
+            let fs = self.filesystem.fs_dir.read();
+            fs.hsm_enabled && fs.hsm_record(inode_id)?.is_some()
+        };
+        if managed {
+            return Ok((false, inode));
+        }
         if !inode.is_expired()? {
             return Ok((false, inode));
         }

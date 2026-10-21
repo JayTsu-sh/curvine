@@ -651,6 +651,16 @@ impl JournalLoader {
     }
 
     pub fn apply_entry(&self, entry: JournalEntry) -> CommonResult<()> {
+        if matches!(entry, JournalEntry::Hsm(_)) {
+            return self.apply_committed_entry(entry);
+        }
+        // Replaying an accepted mutation must not re-evaluate read leases using this node's clock.
+        self.fs_dir.write().hsm_replaying = true;
+        let result = self.apply_committed_entry(entry);
+        self.fs_dir.write().hsm_replaying = false;
+        result
+    }
+    fn apply_committed_entry(&self, entry: JournalEntry) -> CommonResult<()> {
         debug!("replay entry: {:?}", entry);
 
         match entry {
@@ -734,6 +744,7 @@ impl JournalLoader {
         let _ = mem::replace(file, entry.file);
 
         fs_dir.store.apply_reopen_file(inode.as_ref())?;
+        fs_dir.hsm_track_file(&entry.path, inode.as_file_ref()?)?;
 
         Ok(())
     }
@@ -753,6 +764,7 @@ impl JournalLoader {
         let _ = mem::replace(file, entry.file);
 
         fs_dir.store.apply_overwrite_file(inode.as_ref())?;
+        fs_dir.hsm_track_file(&entry.path, inode.as_file_ref()?)?;
 
         Ok(())
     }
@@ -796,6 +808,7 @@ impl JournalLoader {
         fs_dir
             .store
             .apply_complete_file(inode.as_ref(), &entry.commit_blocks)?;
+        fs_dir.hsm_track_file(&entry.path, inode.as_file_ref()?)?;
 
         Ok(())
     }
