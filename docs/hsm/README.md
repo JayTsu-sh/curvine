@@ -47,6 +47,6 @@
 
 按实测瓶颈排序的 [性能优化方案](optimization-plan.md) 描述自身日志回执、统一提交微批、读取保护和策略扫描改造。[普通日志回执](commit-receipts.md) 已完成 P1 改造及功能验收；[同语义前后性能对照](commit-receipt-results.md)记录单独基准。P2 的[普通请求过渡微批](mutation-microbatch.md)已落地，[P1/P2 性能与闭环验收](mutation-microbatch-results.md)记录当时的连接池条件、实际 Raft flush 和读侧成本。以上性能数字属于历史提交，不能代表当前代码。
 
-2026-10-22 的当前代码已将 mkdir/create/overwrite/add-block/flush/close/write-open、非递归 SetAttr/Delete 接入 Native owned 命令和原始结果去重；读取保护合批、访问 overlay、有界历史、后台快照筛查及 Worker 网络等待解耦也已实现。Master 242 项及两个真实集群用例通过。rename、递归操作、后台写入和统一混合队列仍在迁移，过渡 gate 尚未删除。完整优化后再执行本轮百万验收与原版对比，进度以[性能优化方案](optimization-plan.md)为准。
+2026-10-22 的当前代码已将 mkdir/create/overwrite/add-block/flush/close/write-open、非递归 SetAttr/Delete 接入 Native owned 命令和原始结果去重；读取保护合批、访问 overlay、有界历史、后台快照筛查及 Worker 网络等待解耦也已实现。Master 247 项及两个真实集群用例通过。owned 路径可共享准备，相邻 Native/HSM entry 已可合并实际 proposal；rename、递归操作、后台写入和队列级统一调度仍在迁移，旧式修改的独占边界尚未删除。完整优化后再执行本轮百万验收与原版对比，进度以[性能优化方案](optimization-plan.md)为准。
 
 [HA 设计与验收矩阵](ha-design.md) 将换主、微批幂等、读租约、控制器/执行器接管、归档冗余及 Recall 布局故障恢复作为性能优化前置约束；P1 已覆盖普通日志 originating term 约束，其余仍分阶段实现。

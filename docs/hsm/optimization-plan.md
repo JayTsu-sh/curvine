@@ -318,3 +318,10 @@ Native 已绑定请求只读取现有 ordinary_format>=2 的 namespace。读取�
 遇到 legacy entry、任期变化、提交 fence 或 snapshot 保留原顺序与边界；不将先修改投影的旧 handler 混入 owned 提案。不确定/缺少 applied index 时整批 ticket 返回未知并保留待处理批，运行线程停止当前 Master，不能重提 speculative 内容。`authority_proposals/authority_entries/mixed_authority_proposals` 用于记录实际结构指标。
 
 验证：Master 247 项、两个真实集群用例通过。新增 transport 测试检查混合顺序、各自回执、legacy/term/fence 边界、取消回执、缺失提交证明及 32 条上限。真实集群同时执行独立 inode 上的 64 次创建和 64 次受保护读取，再关闭所有读者，验证结果及后续操作；不以单元测试证明实际工作负载必然出现混合 proposal，也不将合并能力直接称为实测吞吐收益。独立队列的调度、其余 namespace/background 修改仍待收敛。
+
+
+### 累计组合回归（代码 535958d8）
+
+共享投影资格、相邻 prepared entry 合并及元数据读取资格共同启用后，路径 patch 的完整 hsm-rs workspace 再次通过 30 项功能测试（包括五个 managed 场景和一个 native 场景）及全部文档测试。增强的全进程重启用例验证第一次 Exists 正确、已删除 Record 不复活、清理事实恢复与 Worker 最终确认。Curvine 自身另有 Master 247 项通过、2 项 ignored；两个优化集群用例通过。
+
+这些是结构与正确性回归，仍未执行本轮百万验收或最终性能比较。后续重点是其余 namespace/后台路径迁移、队列级调度及故障矩阵；保留现有独占旧投影边界，不能据此宣称全部 P2 完成。
