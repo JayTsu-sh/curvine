@@ -113,14 +113,21 @@ impl FsDir {
                 std::fs::File::open(&conf.master.meta_dir)?.sync_all()?;
             }
         }
-        let db_conf = conf.db_conf();
+        let mut db_conf = conf.db_conf();
+        if conf.master.hsm_enabled {
+            db_conf = db_conf.add_cf(RocksInodeStore::CF_HSM_FORMAT);
+        }
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;
         if !conf.testing {
             if !conf.journal.enable && store.hsm_get(b"\x03hsm:namespace:v1")?.is_some() {
                 return err_box!("existing managed HSM files require committed journal recovery");
             }
-            store.reset_hsm_projection()?;
+            if conf.master.hsm_enabled {
+                store.reset_committed_projection()?;
+            } else {
+                store.reset_hsm_projection()?;
+            }
         }
         let state = InodeStore::new(store, ttl_bucket_list)?;
         let (last_inode_id, root_dir) = state.create_blank_tree()?;

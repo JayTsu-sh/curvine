@@ -191,6 +191,9 @@ impl FsDir {
             if transactions.is_empty() || transactions.len() > 32 {
                 return err_box!("invalid bounded HSM read batch");
             }
+            if let Some(results) = read_apply::apply(self, &transactions)? {
+                return Ok(results);
+            }
             let mut results = Vec::with_capacity(transactions.len());
             for tx in transactions {
                 results.extend(self.apply_hsm_results(&pack(&tx)?)?);
@@ -261,22 +264,13 @@ impl FsDir {
                     .map(|id| self.hsm_record(id))
                     .transpose()?
                     .flatten();
-                if let Some(mut current) = current.filter(|current| {
-                    access.data == current.state.data
-                        && access.base_version == current.access_base.unwrap_or(current.version)
-                        && current.version.checked_add(1) == Some(access.version)
-                        && access.revision >= current.state.revision
-                        && current
-                            .state
-                            .revision
-                            .checked_add(1)
-                            .is_some_and(|max| access.revision <= max)
-                        && access.atime_ms >= current.atime_ms
-                }) {
-                    current.version = access.version;
-                    current.state.revision = access.revision;
-                    current.atime_ms = access.atime_ms;
-                    current.readers = access.readers.clone();
+                if let Some(mut current) =
+                    current.and_then(|current| read_apply::merge(current, access))
+                {
+                    // A directory rename does not rewrite every descendant
+                    // base record. Resolve identity in the committed native
+                    // namespace instead of trusting the cached base path.
+                    current.path = self.get_inode_path(tx.inode.unwrap())?;
                     tx.record = Some(current);
                 } else {
                     valid = false;
@@ -373,7 +367,26 @@ impl FsDir {
             inode.as_file_mut()?.blocks.clear();
             changed_inode = Some(inode);
         }
+        let allocation = tx
+            .create
+            .then_some(tx.inode)
+            .flatten()
+            .into_iter()
+            .chain(
+                tx.namespace
+                    .as_ref()
+                    .filter(|_| tx.expected_epoch.is_none() && namespace.is_none())
+                    .map(|ns| ns.root_inode),
+            )
+            .max();
+        if let Some(id) = allocation {
+            self.update_last_inode_id(id)?;
+        }
         let mut batch = self.get_rocks_store().new_batch();
+        if let Some(id) = allocation {
+            self.get_rocks_store()
+                .append_native_inode_floor(&mut batch, id)?;
+        }
         if let Some(binding) = &tx.workflow {
             if self.hsm_binding(&binding.operation_id)?.is_none() {
                 batch.hsm_put(&binding_key(&binding.operation_id), &pack(binding)?)?;
@@ -571,7 +584,14 @@ impl MasterFilesystem {
             ticket: ticket.clone(),
             waiters: local,
         };
-        let payload = if transactions.len() > 1 {
+        // Even a singleton access overlay uses the versioned bundle. Older
+        // running HSM replicas must reject the new state-machine format rather
+        // than ignore read_state and falsely acknowledge an unprotected read.
+        let payload = if transactions.len() > 1
+            || transactions
+                .iter()
+                .any(|tx| tx.read_state.is_some() || tx.scan_progress_only)
+        {
             [READ_BATCH_MAGIC, pack(transactions).map_err(io)?.as_slice()].concat()
         } else {
             let bytes = pack(&transactions[0]).map_err(io)?;
@@ -815,8 +835,9 @@ impl MasterFilesystem {
             let operation: String = field(&reference, "operation_id")?;
             let view_id: String = field(&reference, "view_id")?;
             let fs = self.fs_dir.read();
+            let id = entity_id(&data.entity, &namespace)?;
             let record = fs
-                .hsm_record(entity_id(&data.entity, &namespace)?)
+                .hsm_record(id)
                 .map_err(io)?
                 .ok_or_else(|| HsmError::NotFound("view entity".into()))?;
             let view = record.views.get(&operation).ok_or(HsmError::Fenced)?;
@@ -829,10 +850,11 @@ impl MasterFilesystem {
             {
                 return Err(HsmError::Fenced);
             }
-            let inp = InodePath::resolve(fs.root_ptr(), &record.path, &fs.store).map_err(io)?;
+            let path = fs.get_inode_path(id).map_err(io)?;
+            let inp = InodePath::resolve(fs.root_ptr(), &path, &fs.store).map_err(io)?;
             return Ok(reply(
                 "blocks",
-                self.get_file_blocks(&record.path, &fs, &inp).map_err(io)?,
+                self.get_file_blocks(&path, &fs, &inp).map_err(io)?,
             ));
         }
         if op == "pending_seals" {
@@ -1776,6 +1798,10 @@ mod scale_fixture;
 pub(crate) mod read_batch;
 
 mod read_history;
+
+mod read_grant;
+
+mod read_apply;
 
 #[path = "hsm/read_clock.rs"]
 pub(crate) mod read_clock;

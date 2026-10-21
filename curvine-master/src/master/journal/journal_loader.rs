@@ -288,6 +288,11 @@ impl JournalLoader {
         };
 
         let batch_len = batch.len();
+        let allocated_id = batch
+            .batch
+            .iter()
+            .filter_map(JournalEntry::allocated_inode_id)
+            .max();
         let mut snapshot = None;
         let mut applied = Self::build_applied(entry);
         let mut has_ufs_affecting = false;
@@ -338,6 +343,16 @@ impl JournalLoader {
             }
         }
 
+        if let Some(id) = allocated_id {
+            let fs = self.fs_dir.write();
+            if fs.hsm_enabled {
+                let store = fs.get_rocks_store();
+                let mut batch = store.new_batch();
+                if store.append_native_inode_floor(&mut batch, id)? {
+                    batch.commit()?;
+                }
+            }
+        }
         self.set_applied(is_leader, applied, has_ufs_affecting)?;
 
         if let Some(e) = snapshot {

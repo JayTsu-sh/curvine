@@ -27,6 +27,22 @@ fn floor(fs: &FsDir) -> CommonResult<i64> {
         .unwrap_or(0))
 }
 
+fn issued(outcome: &str, now: i64) -> CommonResult<Option<i64>> {
+    if let Some(id) = outcome.strip_prefix(OUTCOME_PREFIX) {
+        return Ok(Some(
+            timestamp(id).ok_or("invalid committed read request identity")?,
+        ));
+    }
+    Ok([
+        "ordinary-read_path-",
+        "ordinary-read_close-",
+        "ordinary-read_renew-",
+    ]
+    .iter()
+    .any(|prefix| outcome.starts_with(prefix))
+    .then_some(now))
+}
+
 pub(super) fn identity(fs: &FsDir, request: &Value, now: i64) -> HsmResult<Option<String>> {
     let Some(id) = request.get("request_id") else {
         return Ok(None);
@@ -48,11 +64,87 @@ pub(super) fn identity(fs: &FsDir, request: &Value, now: i64) -> HsmResult<Optio
 }
 
 pub(super) fn admissible(fs: &FsDir, outcome: &str, now: i64) -> CommonResult<bool> {
+    if !outcome.starts_with(OUTCOME_PREFIX) {
+        return Ok(true);
+    }
+    admissible_at(floor(fs)?, outcome, now)
+}
+
+fn admissible_at(floor: i64, outcome: &str, now: i64) -> CommonResult<bool> {
     let Some(id) = outcome.strip_prefix(OUTCOME_PREFIX) else {
         return Ok(true);
     };
     let issued = timestamp(id).ok_or("invalid committed read request identity")?;
-    Ok(issued >= floor(fs)?.max(now.saturating_sub(RETENTION_MS)))
+    Ok(issued >= floor.max(now.saturating_sub(RETENTION_MS)))
+}
+
+/// One committed write batch observes its own advancing retirement floor and
+/// shares a bounded GC page. Wall-clock rollback inside a bundle cannot lower
+/// the floor. A bundle scans up to eight rows per command once, rather than
+/// repeatedly visiting the same uncommitted deletions.
+pub(super) struct HistoryBatch {
+    floor: i64,
+    garbage: std::collections::VecDeque<(Vec<u8>, Vec<u8>, i64)>,
+}
+impl HistoryBatch {
+    pub(super) fn new(fs: &FsDir, budget: usize) -> CommonResult<Self> {
+        let mut garbage = std::collections::VecDeque::new();
+        for (key, result) in fs
+            .get_rocks_store()
+            .hsm_scan(INDEX, None, budget.min(256))?
+        {
+            let stamp = std::str::from_utf8(
+                key.get(INDEX.len()..INDEX.len() + 20)
+                    .ok_or("invalid read history index")?,
+            )?
+            .parse::<i64>()?;
+            if !result.starts_with(b"\x03hsm:outcome:") {
+                return err_box!("invalid read history outcome reference");
+            }
+            garbage.push_back((key, result, stamp));
+        }
+        Ok(Self {
+            floor: floor(fs)?,
+            garbage,
+        })
+    }
+    pub(super) fn admissible(&self, outcome: &str, now: i64) -> CommonResult<bool> {
+        admissible_at(self.floor, outcome, now)
+    }
+    pub(super) fn record(
+        &mut self,
+        batch: &mut InodeWriteBatch,
+        outcome: &str,
+        now: i64,
+    ) -> CommonResult<()> {
+        let Some(issued) = issued(outcome, now)? else {
+            return Ok(());
+        };
+        let next = self
+            .floor
+            .max(now.saturating_sub(RETENTION_MS).max(0) / 60_000 * 60_000);
+        if next != self.floor {
+            batch.hsm_put(FLOOR, &pack(&next)?)?;
+            self.floor = next;
+        }
+        let result = outcome_key(outcome);
+        let key = [
+            INDEX,
+            format!("{:020}:{}", issued.max(0), blake3::hash(&result).to_hex()).as_bytes(),
+        ]
+        .concat();
+        batch.hsm_put(&key, &result)?;
+        while self
+            .garbage
+            .front()
+            .is_some_and(|(_, _, stamp)| *stamp < next)
+        {
+            let (key, result, _) = self.garbage.pop_front().unwrap();
+            batch.hsm_delete(&result)?;
+            batch.hsm_delete(&key)?;
+        }
+        Ok(())
+    }
 }
 
 /// Runs inside the same RocksDB batch as the command result. GC touches at
@@ -63,53 +155,58 @@ pub(super) fn record(
     outcome: &str,
     now: i64,
 ) -> CommonResult<()> {
-    let issued = if let Some(id) = outcome.strip_prefix(OUTCOME_PREFIX) {
-        timestamp(id).ok_or("invalid committed read request identity")?
-    } else if [
-        "ordinary-read_path-",
-        "ordinary-read_close-",
-        "ordinary-read_renew-",
-    ]
-    .iter()
-    .any(|prefix| outcome.starts_with(prefix))
-    {
-        now
-    } else {
+    if issued(outcome, now)?.is_none() {
         return Ok(());
-    };
-    let old = floor(fs)?;
-    let next = old.max(now.saturating_sub(RETENTION_MS).max(0) / 60_000 * 60_000);
-    if next != old {
-        batch.hsm_put(FLOOR, &pack(&next)?)?;
     }
-    let result = outcome_key(outcome);
-    let key = [
-        INDEX,
-        format!("{:020}:{}", issued.max(0), blake3::hash(&result).to_hex()).as_bytes(),
-    ]
-    .concat();
-    batch.hsm_put(&key, &result)?;
-    for (key, result) in fs.get_rocks_store().hsm_scan(INDEX, None, 8)? {
-        let stamp = std::str::from_utf8(
-            key.get(INDEX.len()..INDEX.len() + 20)
-                .ok_or("invalid read history index")?,
-        )?
-        .parse::<i64>()?;
-        if stamp >= next {
-            break;
-        }
-        if !result.starts_with(b"\x03hsm:outcome:") {
-            return err_box!("invalid read history outcome reference");
-        }
-        batch.hsm_delete(&result)?;
-        batch.hsm_delete(&key)?;
-    }
-    Ok(())
+    HistoryBatch::new(fs, 8)?.record(batch, outcome, now)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_history_keeps_monotonic_floor_and_reclaims_one_shared_gc_page() -> CommonResult<()> {
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+        let dir = fs.fs_dir.read();
+        let mut batch = dir.get_rocks_store().new_batch();
+        let mut old = Vec::new();
+        for index in 0..20 {
+            let outcome = format!("{OUTCOME_PREFIX}{:016x}{index:032x}", 1000);
+            record(&dir, &mut batch, &outcome, 1000)?;
+            batch.hsm_put(&outcome_key(&outcome), b"old-result")?;
+            old.push(outcome);
+        }
+        batch.commit()?;
+        let mut history = HistoryBatch::new(&dir, 16)?;
+        let mut batch = dir.get_rocks_store().new_batch();
+        let now = RETENTION_MS + 61_000;
+        let outcome = format!("{OUTCOME_PREFIX}{now:016x}{:032x}", 100);
+        history.record(&mut batch, &outcome, now)?;
+        assert!(!history.admissible(&old[0], 1000)?);
+        // A later command in this same bundle has a rolled-back wall clock.
+        // It cannot overwrite the pending retirement floor with the old DB value.
+        let second = format!("{OUTCOME_PREFIX}{now:016x}{:032x}", 101);
+        history.record(&mut batch, &second, 1000)?;
+        batch.commit()?;
+        assert_eq!(floor(&dir)?, 60_000);
+        let remaining = old
+            .iter()
+            .map(|outcome| dir.get_rocks_store().hsm_get(&outcome_key(outcome)))
+            .collect::<CommonResult<Vec<_>>>()?
+            .iter()
+            .filter(|value| value.is_some())
+            .count();
+        assert_eq!(remaining, 4, "GC must consume its shared budget once");
+        Ok(())
+    }
 
     #[test]
     fn read_results_retire_with_durable_floor_and_preserve_workflow_success() -> CommonResult<()> {

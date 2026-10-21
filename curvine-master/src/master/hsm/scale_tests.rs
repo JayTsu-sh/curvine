@@ -8,6 +8,59 @@ use serde_json::json;
 use std::time::Instant;
 
 #[test]
+fn read_delta_after_ancestor_rename_uses_current_inode_path() -> CommonResult<()> {
+    crate::master::Master::init_test_metrics();
+    let root = tempfile::tempdir()?;
+    let mut conf = curvine_config::ClusterConf::format();
+    conf.testing = true;
+    conf.journal.enable = false;
+    conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+    conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+    let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+    fs.mkdir("/before", true)?;
+    let status = fs.create("/before/file", false)?;
+    fs.complete_file("/before/file", None, 0, vec![], "", false, None)?;
+    let ns = Namespace {
+        ordinary_format: 2,
+        root_inode: 9999,
+        storage: "s".into(),
+        incarnation: "n".into(),
+        epoch: 1,
+    };
+    {
+        let mut dir = fs.fs_dir.write();
+        let mut batch = dir.get_rocks_store().new_batch();
+        batch.hsm_put(b"\x03hsm:namespace:v1", &pack(&ns)?)?;
+        batch.commit()?;
+        dir.hsm_enabled = true;
+        let input = InodePath::resolve(dir.root_ptr(), "/before/file", &dir.store)?;
+        dir.hsm_track_file(
+            "/before/file",
+            input.get_last_inode().unwrap().as_file_ref()?,
+        )?;
+        assert!(
+            dir.hsm_record(status.id)?.is_some(),
+            "file must be enrolled"
+        );
+    }
+    fs.rename("/before", "/after", curvine_model::RenameFlags::new(0))?;
+    let request = json!({"op":"read_path", "path":"/after/file", "reader":"c".repeat(32)});
+    let ordinary::OrdinaryPlan::Transaction(tx, _, _) =
+        fs.hsm_prepare_ordinary(&ns, &request, None)?
+    else {
+        panic!("ordinary tracked file must acquire read protection");
+    };
+    assert!(tx.read_state.is_some());
+    let mut dir = fs.fs_dir.write();
+    dir.apply_hsm(&pack(&tx)?)?;
+    let current = dir.hsm_record(status.id)?.unwrap();
+    assert!(current.readers.contains_key(&"c".repeat(32)));
+    let input = InodePath::resolve(dir.root_ptr(), "/after/file", &dir.store)?;
+    assert_eq!(input.get_last_inode().unwrap().id(), status.id);
+    Ok(())
+}
+
+#[test]
 fn read_delta_keeps_base_bytes_unchanged_and_materializes_on_stable_change() -> CommonResult<()> {
     crate::master::Master::init_test_metrics();
     let root = tempfile::tempdir()?;

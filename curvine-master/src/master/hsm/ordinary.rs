@@ -326,14 +326,17 @@ impl FsDir {
 }
 pub(super) enum OrdinaryPlan {
     Immediate(Value),
-    Transaction(Transaction, Option<Record>),
+    Transaction(Transaction, Option<Record>, Option<Value>),
 }
 
 impl MasterFilesystem {
     pub(super) async fn hsm_ordinary(&self, ns: &Namespace, request: &Value) -> HsmResult<Value> {
         match self.hsm_prepare_ordinary(ns, request, None)? {
             OrdinaryPlan::Immediate(value) => Ok(value),
-            OrdinaryPlan::Transaction(tx, _) => self.hsm_submit(&tx).await,
+            OrdinaryPlan::Transaction(tx, _, public) => {
+                let applied = self.hsm_submit(&tx).await?;
+                Ok(read_grant::publish(&tx.response, applied, public.as_ref()))
+            }
         }
     }
     pub(super) fn hsm_prepare_ordinary(
@@ -354,8 +357,8 @@ impl MasterFilesystem {
                     if outcome.fingerprint != request_fingerprint(request)? {
                         return Err(HsmError::Conflict("read request identity rebound".into()));
                     }
-                    if outcome.response["kind"] == "read" {
-                        let handle: ReadHandle = field(&outcome.response, "data")?;
+                    if read_grant::is_grant(&outcome.response) {
+                        let handle = read_grant::handle(&outcome.response)?;
                         let id = entity_id(&handle.data.entity, ns)?;
                         let current = match projected.as_ref() {
                             Some(record) if record.state.data.entity.entity == id.to_string() => {
@@ -394,7 +397,13 @@ impl MasterFilesystem {
                             return Err(HsmError::Fenced);
                         }
                     }
-                    return Ok(OrdinaryPlan::Immediate(outcome.response));
+                    // Expansion resolves native placement under its own
+                    // namespace guard. All cached-lease checks above are
+                    // complete; do not recursively acquire this read lock.
+                    drop(fs);
+                    return Ok(OrdinaryPlan::Immediate(
+                        self.hsm_expand_read_grant(ns, outcome.response)?,
+                    ));
                 }
             }
             identity
@@ -427,6 +436,7 @@ impl MasterFilesystem {
         let previous = record.version;
         let mut controls = vec![];
         let response;
+        let mut public_response = None;
         if op == "read_path" {
             let reader: String = field(request, "reader")?;
             if reader.len() != 32 || !reader.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -525,17 +535,14 @@ impl MasterFilesystem {
                 record
                     .readers
                     .insert(reader.clone(), lease_now + read_clock::LEASE_MS);
-                response = reply(
-                    "read",
-                    ReadHandle {
-                        blocks,
-                        data: record.state.data.clone(),
-                        reader,
-                        endpoint,
-                        granted_ms: lease_now,
-                        expires_ms: lease_now + read_clock::LEASE_MS,
-                    },
-                );
+                (response, public_response) = read_grant::prepare(ReadHandle {
+                    blocks,
+                    data: record.state.data.clone(),
+                    reader,
+                    endpoint,
+                    granted_ms: lease_now,
+                    expires_ms: lease_now + read_clock::LEASE_MS,
+                })?;
             }
         } else if op == "read_close" || op == "read_renew" {
             let reader: String = field(request, "reader")?;
@@ -658,6 +665,6 @@ impl MasterFilesystem {
             data: None,
             action: None,
         };
-        Ok(OrdinaryPlan::Transaction(tx, projected))
+        Ok(OrdinaryPlan::Transaction(tx, projected, public_response))
     }
 }

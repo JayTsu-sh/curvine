@@ -563,6 +563,10 @@ impl InodeStore {
 
         let data = self.load_snapshot_data(&mut timer)?;
         let (last_inode_id, root) = self.build_tree_from_data(data, &mut timer)?;
+        // Deleted high IDs still belong to the committed allocation history;
+        // a checkpoint must not allow their block IDs to be reused.
+        let last_inode_id =
+            last_inode_id.max(self.store.native_inode_floor()?.unwrap_or(ROOT_INODE_ID));
 
         self.fs_stats.set_counts(timer.file_count, timer.dir_count);
         timer.log_summary();

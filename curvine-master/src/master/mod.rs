@@ -58,3 +58,7 @@ pub type SyncWorkerManager = ArcRwLock<WorkerManager>;
 pub use mount::MountManager;
 
 pub mod hsm;
+
+// Preparation is exercised before activating the new committed transport.
+#[cfg(test)]
+mod committed;

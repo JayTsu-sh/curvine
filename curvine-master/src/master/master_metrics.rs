@@ -205,6 +205,9 @@ impl MasterMetrics {
             "commit_fences": self.journal_commit_fences.get(),
             "hsm_barriers": self.journal_hsm_barriers.get(),
             "read_indexes": self.journal_read_indexes.get(),
+            "outcome_bytes": self.hsm_record_write_bytes.with_label_values(&["outcome"]).get(),
+            "read_apply_commits": self.hsm_batch_size.with_label_values(&["read_apply"]).get_sample_count(),
+            "read_apply_commands": self.hsm_batch_size.with_label_values(&["read_apply"]).get_sample_sum(),
         })
     }
 

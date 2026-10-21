@@ -75,6 +75,10 @@ Follower → 取得 leader 资格 → 核对 committed/apply 水位及恢复状�
 
 checkpoint 对齐 native inode、HSM 状态/索引、请求去重、任务、租约、预算和 GC 与同一个 applied index。恢复期间不开放可能执行 Release 的入口。旧磁盘或旧 checkpoint 重新加入必须从健康多数派追齐，不能靠旧目录存在就独立恢复服务。
 
+当前冷启动先原子清除 HSM 卷的原生 inode/edge/block/location、mount/lock 与 HSM 派生投影，再恢复 checkpoint 和已提交日志。清理使用 7 个 range tombstone，不枚举百万 key；底层数据回收由 RocksDB compaction 完成。清掉原生投影是必要条件：旧 leader 的磁盘可能含未提交原生修改，保留它们会污染条件 prepare/apply 或下一份 checkpoint。此步骤不删除 Worker payload。
+
+`native-inode-floor:v1` 保存已提交分配上限，原生日志 apply 与 HSM 条件 create 都推进它；被删除的高 ID 不再仅因存量最大 ID 较低而复用。旧 checkpoint 缺少此记录时，只能从存量与之后的新提交事实建立下界，不能推断旧历史里已删除的全部 ID。新增 RocksDB `hsm_native_v2` CF 会随 checkpoint 保留，使缺少新格式支持的进程拒绝打开；单条访问增量也使用版本化 journal 封装，旧运行副本不能忽略新增字段后确认成功。
+
 Master 换主不自动重做所有 HSM 工作流。controller_epoch 与任务 claim 仍成立时，控制器刷新 leader 路由后继续查询/提交；无需仅因元数据换主就重传全部文件。
 
 ## 6. 读取租约与 Release 的 HA 约束
@@ -84,6 +88,10 @@ Master 换主不自动重做所有 HSM 工作流。controller_epoch 与任务 cl
 租约有效期不能仅通过不同节点的裸墙上时间比较来判断。实施前必须定义最大授权时长、允许的时钟误差/跳变处理及重启恢复规则。无法证明旧授权已经失效时，要阻止破坏性释放/GC；可通过已确认的 Worker fencing，或按明确最大授权时长和安全余量进行保守等待。授权的截止时间不能因为回复迟到而从客户端收包时重新起算；已经过期的响应需重新授权。当前实现的保守时钟见下段；无日志 delegation 仍未开启。
 
 当前读保护使用 `read_clock.rs`：每个本地任期首次使用时，以当前墙钟和已提交 `read-clock:v1` 下界的较大者作为基点，之后只累计 `Instant`。新的授权时刻随 `ReadState` 日志提交，并在同一权威 batch 单调推进下界。重启、snapshot restore 或任期变化后，对记录中仍存在的读者保守保护完整 120 秒；显式关闭会话仍可解除保护。原生覆盖/删除保护、Release 和策略入队检查这套时钟，快照阶段的粗过滤不能授权释放。SDK 以发起 RPC 的 `Instant` 加服务器授予的有界时长计算截止点，迟到响应不延长授权。此实现已通过时间线单元测试，组合节点故障验收仍未完成。
+
+普通在线读取的同一日志批次将访问增量、候选索引、每请求结果、租约时间下界、原生 inode 最终 atime 和有界历史回收放进同一个 RocksDB WriteBatch。批内同 inode 的后续条件检查观察此前成功结果；失败条件和重复身份不推进私有状态。落盘前发生错误时整批没有可见的持久更新。涉及离线 Recall intent 或其他稳定状态的批次仍走通用 apply，尚未宣称所有 HSM 转换都合成单次写批。
+
+超过 32 块的读结果保存紧凑授权，重试只刷新同一 DataKey 与逻辑布局下的副本位置。原始 FileStatus、凭据、granted/expires 时间保持；过期、关闭、布局变化或内容代次变化仍拒绝。完整即时布局只有在对应条件命令成功 apply 后才发布，准备出来的布局不能在 CAS 失败时泄露。该机制不授予新租约，也不替代 Worker fencing。
 
 高级 delegation 方案需要可恢复的 `Draining/Revoking → 可释放` 流程：
 

@@ -166,6 +166,7 @@ impl ReadBatcher {
         let mut pending_recalls: HashMap<i64, Value> = HashMap::new();
         let mut submitted: HashMap<String, (String, usize)> = HashMap::new();
         let mut transactions = vec![];
+        let mut public_responses = vec![];
         let mut replies = vec![];
         let mut bytes = 0usize;
         let mut remaining = requests.into_iter();
@@ -209,10 +210,10 @@ impl ReadBatcher {
                     };
                     Ok(value)
                 }
-                Ok(OrdinaryPlan::Transaction(tx, projection)) => {
+                Ok(OrdinaryPlan::Transaction(tx, projection, public)) => {
                     if let Some((fingerprint, index)) = submitted.get(&tx.outcome) {
-                        let needs_live_reader =
-                            tx.response["kind"] == "read" || pending.request["op"] == "read_renew";
+                        let needs_live_reader = read_grant::is_grant(&tx.response)
+                            || pending.request["op"] == "read_renew";
                         let protected = !needs_live_reader
                             || tx
                                 .inode
@@ -258,6 +259,7 @@ impl ReadBatcher {
                     }
                     let index = transactions.len();
                     submitted.insert(tx.outcome.clone(), (tx.fingerprint.clone(), index));
+                    public_responses.push(public);
                     transactions.push(tx);
                     Err(index)
                 }
@@ -291,7 +293,11 @@ impl ReadBatcher {
             } else {
                 match result {
                     Ok(value) => value,
-                    Err(index) => committed.as_ref().unwrap()[index].clone(),
+                    Err(index) => read_grant::publish(
+                        &transactions[index].response,
+                        committed.as_ref().unwrap()[index].clone(),
+                        public_responses[index].as_ref(),
+                    ),
                 }
             };
             let _ = pending.response.send(value);

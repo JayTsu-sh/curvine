@@ -51,6 +51,8 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
     conf.client.master_conn_pool_size = 32;
     conf.client.short_circuit = false;
     conf.client.replicas = 1;
+    conf.client.block_size_str = "4KB".into();
+    conf.master.min_block_size = 4096;
     conf.log.level = "WARN".into();
     conf.log.log_dir = "stderr".into();
     conf.master.log = conf.log.clone();
@@ -89,6 +91,15 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert!(
             flushes < 32,
             "read opens were not grouped: {flushes} proposals"
+        );
+        let apply_commits = after["read_apply_commits"].as_u64().unwrap()
+            - before["read_apply_commits"].as_u64().unwrap();
+        let apply_commands = after["read_apply_commands"].as_f64().unwrap()
+            - before["read_apply_commands"].as_f64().unwrap();
+        assert!(apply_commits > 0 && apply_commands >= 32.0);
+        assert!(
+            apply_commands > apply_commits as f64,
+            "Raft batching did not coalesce RocksDB writes"
         );
         assert!(
             fs.create(&path, true).await.is_err(),
@@ -149,6 +160,65 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
                 "done"
             );
         }
+        // A large native layout must not be copied into the durable result
+        // for every open. Test fresh replies, retries after ancestor rename,
+        // real block reads and retirement through the production RPC path.
+        fs.mkdir(&Path::from_str("/before")?, false).await?;
+        let big_path = Path::from_str("/before/many-blocks")?;
+        let bytes: Vec<u8> = (0..40 * 4096).map(|i| (i % 251) as u8).collect();
+        let mut writer = fs.create(&big_path, false).await?;
+        writer.write(&bytes).await?;
+        writer.complete().await?;
+        fs.rename(&Path::from_str("/before")?, &Path::from_str("/after")?)
+            .await?;
+        let reader = uuid::Uuid::new_v4().simple().to_string();
+        let original = json!({"op":"open_path","path":"/after/many-blocks",
+            "reader":reader,"request_id":request_id()});
+        let outcomes_before = metrics.hsm_test_commit_stats()["outcome_bytes"]
+            .as_u64()
+            .unwrap();
+        let grant = control(&fs, &original).await?;
+        assert_eq!(grant["kind"], "read");
+        assert_eq!(
+            grant["data"]["blocks"]["block_locs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            40
+        );
+        let outcome_bytes = metrics.hsm_test_commit_stats()["outcome_bytes"]
+            .as_u64()
+            .unwrap()
+            - outcomes_before;
+        assert!(outcome_bytes > 0);
+        assert!(
+            // Metrics are shared by all three Masters in this process. Even
+            // their combined result bytes must fit below one inline reply.
+            (outcome_bytes as usize) < serde_json::to_vec(&grant)?.len(),
+            "large read result still persists all block placements"
+        );
+        assert_eq!(control(&fs, &original).await?, grant);
+        let mut data_reader = fs.open(&Path::from_str("/after/many-blocks")?).await?;
+        let mut received = vec![0; bytes.len()];
+        let mut offset = 0;
+        while offset < received.len() {
+            let count = data_reader.read(&mut received[offset..]).await?;
+            assert!(count > 0);
+            offset += count;
+        }
+        assert_eq!(received, bytes);
+        data_reader.complete().await?;
+        assert_eq!(
+            control(
+                &fs,
+                &json!({"op":"read_close",
+            "entity":grant["data"]["data"]["entity"],"data":grant["data"]["data"],
+            "reader":reader,"request_id":request_id()})
+            )
+            .await?["kind"],
+            "done"
+        );
+        assert_eq!(control(&fs, &original).await?["data"]["code"], "fenced");
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     })
 }

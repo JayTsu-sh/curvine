@@ -38,9 +38,47 @@ impl RocksInodeStore {
     pub const CF_BLOCK: &'static str = "block";
     pub const CF_LOCATION: &'static str = "location";
     pub const CF_COMMON: &'static str = "common";
+    // An explicit RocksDB schema fence: an older binary omitting this family
+    // cannot reopen a checkpoint containing access overlays and native facts.
+    pub(crate) const CF_HSM_FORMAT: &'static str = "hsm_native_v2";
 
     pub const PREFIX_MOUNT: u8 = 0x01;
     pub const PREFIX_LOCK: u8 = 0x02;
+    pub(crate) const NATIVE_INODE_FLOOR: &'static [u8] = b"\x03hsm:native-inode-floor:v1";
+
+    pub(crate) fn native_inode_floor(&self) -> CommonResult<Option<i64>> {
+        self.hsm_get(Self::NATIVE_INODE_FLOOR)?
+            .map(|bytes| {
+                let value: i64 = Serde::deserialize(&bytes)?;
+                if !(crate::master::meta::inode::ROOT_INODE_ID
+                    ..=crate::master::meta::InodeId::ID_MASK)
+                    .contains(&value)
+                {
+                    return Err("invalid native inode allocation floor".into());
+                }
+                Ok(value)
+            })
+            .transpose()
+    }
+
+    /// Callers serialize committed namespace application. The candidate comes
+    /// from the committed command, never a speculative leader allocator.
+    pub(crate) fn append_native_inode_floor(
+        &self,
+        batch: &mut InodeWriteBatch<'_>,
+        id: i64,
+    ) -> CommonResult<bool> {
+        if !(crate::master::meta::inode::ROOT_INODE_ID..=crate::master::meta::InodeId::ID_MASK)
+            .contains(&id)
+        {
+            return Err("invalid committed inode allocation".into());
+        }
+        if self.native_inode_floor()?.is_some_and(|old| old >= id) {
+            return Ok(false);
+        }
+        batch.hsm_put(Self::NATIVE_INODE_FLOOR, &Serde::serialize(&id)?)?;
+        Ok(true)
+    }
 
     pub fn new(conf: DBConf, format: bool) -> CommonResult<Self> {
         let conf = conf
@@ -159,6 +197,39 @@ impl RocksInodeStore {
         self.db.write_batch(batch)?;
         log::info!(
             "reset HSM projection: one range tombstone, elapsed_us={}",
+            started.elapsed().as_micros()
+        );
+        Ok(())
+    }
+
+    /// A cold HSM boot rebuilds the native tree from checkpoint/journal too.
+    /// Its RocksDB rows cannot retain a prior process's speculative tail while
+    /// committed preparation relies on conditional reads of the same store.
+    /// Fixed range tombstones avoid a record-count-dependent cleanup pass.
+    pub(crate) fn reset_committed_projection(&self) -> CommonResult<()> {
+        let started = std::time::Instant::now();
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+        // Native inode/block/location keys are <= 12 bytes. Edge keys start
+        // with an 8-byte inode ID followed by UTF-8, whose bytes cannot all be
+        // 0xff. This upper bound covers the complete supported native schema,
+        // including the maximum binary block/location key.
+        let end = [u8::MAX; 33];
+        for name in [
+            Self::CF_INODES,
+            Self::CF_EDGES,
+            Self::CF_BLOCK,
+            Self::CF_LOCATION,
+        ] {
+            batch.delete_range_cf(self.db.cf(name)?, b"".as_slice(), end.as_slice());
+        }
+        let common = self.db.cf(Self::CF_COMMON)?;
+        batch.delete_range_cf(common, b"\x03hsm:", b"\x03hsm;");
+        for prefix in [Self::PREFIX_MOUNT, Self::PREFIX_LOCK] {
+            batch.delete_range_cf(common, [prefix], [prefix + 1]);
+        }
+        self.db.write_batch(batch)?;
+        log::info!(
+            "reset committed metadata projection: seven range tombstones, elapsed_us={}",
             started.elapsed().as_micros()
         );
         Ok(())
@@ -456,6 +527,13 @@ impl<'a> InodeWriteBatch<'a> {
         self.put_cf(RocksInodeStore::CF_COMMON, key, value)
     }
 
+    #[cfg(test)]
+    pub(crate) fn hsm_delete_range(&mut self, begin: &[u8], end: &[u8]) -> CommonResult<()> {
+        self.batch
+            .delete_range_cf(self.db.cf(RocksInodeStore::CF_COMMON)?, begin, end);
+        Ok(())
+    }
+
     pub fn commit(self) -> CommonResult<()> {
         self.db.write_batch(self.batch)
     }
@@ -467,6 +545,81 @@ mod tests {
     use curvine_model::StorageType;
     use curvine_rocksdb::perf::{set_perf_stats, PerfContext, PerfMetric, PerfStatsLevel};
     use curvine_runtime::common::Utils;
+
+    #[test]
+    fn hsm_schema_fence_survives_checkpoint_and_rejects_legacy_open() -> CommonResult<()> {
+        let directory = tempfile::tempdir()?;
+        let legacy = DBConf::new(directory.path().to_string_lossy().into_owned());
+        let upgraded = legacy.clone().add_cf(RocksInodeStore::CF_HSM_FORMAT);
+        let store = RocksInodeStore::new(upgraded.clone(), true)?;
+        let checkpoint = store.db.create_checkpoint(1)?;
+        drop(store);
+        // The pre-overlay opener's exact family list cannot interpret this DB.
+        assert!(RocksInodeStore::new(legacy, false).is_err());
+        let mut store = RocksInodeStore::new(upgraded, false)?;
+        store.db.restore(checkpoint)?;
+        assert!(store.db.cf(RocksInodeStore::CF_HSM_FORMAT).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn hsm_committed_reset_discards_native_tail_and_replay_can_reuse_its_keys() -> CommonResult<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let store = RocksInodeStore::new(
+            DBConf::new(directory.path().to_string_lossy().into_owned()),
+            true,
+        )?;
+        let mut batch = store.new_batch();
+        let root = crate::master::meta::FsDir::create_root();
+        batch.write_inode(&root)?;
+        batch.add_child(root.id(), "uncommitted", 2000)?;
+        // Exercise the largest binary location keys, not just positive IDs.
+        batch.add_location(-1, &BlockLocation::new(u32::MAX, StorageType::Disk))?;
+        batch.hsm_put(b"\x01mount", b"stale")?;
+        batch.hsm_put(b"\x02lock", b"stale")?;
+        batch.hsm_put(b"\x03hsm:outcome:old", b"stale")?;
+        batch.hsm_put(b"other-system-fact", b"keep")?;
+        batch.commit()?;
+        store.db.flush(true)?;
+        store.reset_committed_projection()?;
+        for name in [
+            RocksInodeStore::CF_INODES,
+            RocksInodeStore::CF_EDGES,
+            RocksInodeStore::CF_BLOCK,
+            RocksInodeStore::CF_LOCATION,
+        ] {
+            assert!(store.iter_cf(name)?.next().is_none());
+        }
+        assert!(store.hsm_get(b"\x01mount")?.is_none());
+        assert!(store.hsm_get(b"\x02lock")?.is_none());
+        assert!(store.hsm_scan(b"\x03hsm:", None, 1)?.is_empty());
+        assert_eq!(
+            store.hsm_get(b"other-system-fact")?.as_deref(),
+            Some(b"keep".as_slice())
+        );
+        let mut batch = store.new_batch();
+        batch.write_inode(&root)?;
+        batch.add_child(root.id(), "committed", 2001)?;
+        batch.add_location(-1, &BlockLocation::new(u32::MAX, StorageType::Disk))?;
+        batch.commit()?;
+        assert_eq!(store.get_inode(root.id())?.unwrap().id(), root.id());
+        assert!(store
+            .db
+            .get_cf(
+                RocksInodeStore::CF_BLOCK,
+                RocksUtils::i64_u32_to_bytes(-1, u32::MAX)
+            )?
+            .is_some());
+        assert!(store
+            .db
+            .get_cf(
+                RocksInodeStore::CF_LOCATION,
+                RocksUtils::u32_i64_to_bytes(u32::MAX, -1)
+            )?
+            .is_some());
+        Ok(())
+    }
 
     #[test]
     fn hsm_range_reset_preserves_neighbors_and_replayed_keys_across_reopen() -> CommonResult<()> {
