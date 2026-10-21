@@ -17,9 +17,30 @@ pub struct HsmStore {
 }
 #[derive(Serialize, Deserialize)]
 struct Allocation {
-    layout: Layout,
+    // Existing JSON layouts deserialize as Some. A deleted-only reservation
+    // has null here: old readers fail closed rather than recreate it.
+    layout: Option<Layout>,
     sealed: bool,
     deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deleted_admin: Option<String>,
+}
+impl Allocation {
+    fn live_layout(&self) -> HsmResult<&Layout> {
+        if self.deleted {
+            return Err(HsmError::Fenced);
+        }
+        self.layout
+            .as_ref()
+            .ok_or_else(|| HsmError::Integrity("live allocation has no layout".into()))
+    }
+    fn admin(&self) -> HsmResult<&str> {
+        self.layout
+            .as_ref()
+            .map(|layout| layout.admin.as_str())
+            .or(self.deleted_admin.as_deref())
+            .ok_or_else(|| HsmError::Integrity("allocation has no owner".into()))
+    }
 }
 impl HsmStore {
     pub fn open(root: PathBuf) -> HsmResult<Self> {
@@ -108,10 +129,7 @@ impl HsmStore {
                 }
                 if dir.join("state.json").exists() {
                     let state = Self::load(&dir)?;
-                    if state.deleted {
-                        return Err(HsmError::Fenced);
-                    }
-                    if serde_json::to_vec(&state.layout).unwrap()
+                    if serde_json::to_vec(state.live_layout()?).unwrap()
                         != serde_json::to_vec(&layout).unwrap()
                     {
                         return Err(HsmError::Conflict(
@@ -125,9 +143,10 @@ impl HsmStore {
                     Self::save(
                         &dir,
                         &Allocation {
-                            layout,
+                            layout: Some(layout),
                             sealed: false,
                             deleted: false,
+                            deleted_admin: None,
                         },
                     )?;
                 }
@@ -140,13 +159,14 @@ impl HsmStore {
             } => {
                 let dir = self.dir(&endpoint.allocation)?;
                 let state = Self::load(&dir)?;
-                if state.deleted || state.sealed || endpoint.token != state.layout.write {
+                let layout = state.live_layout()?;
+                if state.sealed || endpoint.token != layout.write {
                     return Err(HsmError::Fenced);
                 }
                 if bytes.len() > CHUNK_BYTES
                     || offset
                         .checked_add(bytes.len() as u64)
-                        .is_none_or(|end| end > state.layout.length)
+                        .is_none_or(|end| end > layout.length)
                 {
                     return Err(HsmError::Invalid("HSM write range".into()));
                 }
@@ -177,22 +197,24 @@ impl HsmStore {
             } => {
                 let dir = self.dir(&endpoint.allocation)?;
                 let state = Self::load(&dir)?;
-                if state.deleted || !state.sealed || endpoint.token != state.layout.read {
+                let layout = state.live_layout()?;
+                if !state.sealed || endpoint.token != layout.read {
                     return Err(HsmError::Fenced);
                 }
-                if length > CHUNK_BYTES || offset > state.layout.length {
+                if length > CHUNK_BYTES || offset > layout.length {
                     return Err(HsmError::Invalid("HSM read range".into()));
                 }
                 let mut f = File::open(dir.join("data"))?;
                 f.seek(SeekFrom::Start(offset))?;
-                let mut bytes = vec![0; length.min((state.layout.length - offset) as usize)];
+                let mut bytes = vec![0; length.min((layout.length - offset) as usize)];
                 f.read_exact(&mut bytes)?;
                 Ok(WorkerReply::Bytes(bytes))
             }
             WorkerRequest::Verify { endpoint } => {
                 let dir = self.dir(&endpoint.allocation)?;
                 let state = Self::load(&dir)?;
-                if state.deleted || endpoint.token != state.layout.write {
+                let layout = state.live_layout()?;
+                if endpoint.token != layout.write {
                     return Err(HsmError::Fenced);
                 }
                 let mut f = File::open(dir.join("data"))?;
@@ -211,7 +233,7 @@ impl HsmStore {
                     algorithm: "blake3".into(),
                     value: hash.finalize().as_bytes().to_vec(),
                 };
-                if length != state.layout.length || digest != state.layout.digest {
+                if length != layout.length || digest != layout.digest {
                     return Err(HsmError::Integrity(
                         "private layout verification failed".into(),
                     ));
@@ -221,7 +243,8 @@ impl HsmStore {
             WorkerRequest::Seal { allocation, admin } => {
                 let dir = self.dir(&allocation)?;
                 let mut state = Self::load(&dir)?;
-                if state.deleted || admin != state.layout.admin {
+                let layout = state.live_layout()?;
+                if admin != layout.admin {
                     return Err(HsmError::Fenced);
                 }
                 let mut f = OpenOptions::new()
@@ -246,7 +269,7 @@ impl HsmStore {
                     algorithm: "blake3".into(),
                     value: hash.finalize().as_bytes().to_vec(),
                 };
-                if length != state.layout.length || digest != state.layout.digest {
+                if length != layout.length || digest != layout.digest {
                     return Err(HsmError::Integrity(
                         "unsealed HSM content differs from expected generation".into(),
                     ));
@@ -257,11 +280,28 @@ impl HsmStore {
             }
             WorkerRequest::Delete { allocation, admin } => {
                 let dir = self.dir(&allocation)?;
-                let mut state = Self::load(&dir)?;
-                if admin != state.layout.admin {
+                let mut state = match Self::load(&dir) {
+                    Ok(state) => state,
+                    Err(HsmError::NotFound(_)) => {
+                        if admin.len() != 32 {
+                            return Err(HsmError::Invalid("invalid allocation owner".into()));
+                        }
+                        fs::create_dir_all(&dir)?;
+                        File::open(&self.root)?.sync_all()?;
+                        Allocation {
+                            layout: None,
+                            sealed: false,
+                            deleted: true,
+                            deleted_admin: Some(admin.clone()),
+                        }
+                    }
+                    Err(error) => return Err(error),
+                };
+                if admin != state.admin()? {
                     return Err(HsmError::Fenced);
                 }
-                // Durable tombstone precedes unlink; retries cannot resurrect it.
+                // Durable tombstone precedes unlink or acknowledgement, even
+                // if the matching Allocate has not reached this Worker yet.
                 state.deleted = true;
                 Self::save(&dir, &state)?;
                 match fs::remove_file(dir.join("data")) {
@@ -297,6 +337,59 @@ mod tests {
             .unwrap();
         (store, layout)
     }
+    #[test]
+    fn deletion_before_allocation_is_durable_and_fences_a_late_allocator() {
+        let root = tempfile::tempdir().unwrap();
+        let store = HsmStore::open(root.path().to_path_buf()).unwrap();
+        let layout = Layout::new(
+            Default::default(),
+            0,
+            ContentDigest {
+                algorithm: "blake3".into(),
+                value: blake3::hash(b"").as_bytes().to_vec(),
+            },
+        );
+        let delete = WorkerRequest::Delete {
+            allocation: layout.id.clone(),
+            admin: layout.admin.clone(),
+        };
+        store
+            .execute(delete.clone())
+            .into_result()
+            .expect("an abandoned reservation must be retireable before Allocate arrives");
+        drop(store);
+        let store = HsmStore::open(root.path().to_path_buf()).unwrap();
+        store.execute(delete).into_result().unwrap();
+        assert!(matches!(
+            store
+                .execute(WorkerRequest::Delete {
+                    allocation: layout.id.clone(),
+                    admin: layout.write.clone()
+                })
+                .into_result(),
+            Err(HsmError::Fenced)
+        ));
+        assert!(
+            matches!(
+                store
+                    .execute(WorkerRequest::Allocate {
+                        layout: layout.clone()
+                    })
+                    .into_result(),
+                Err(HsmError::Fenced)
+            ),
+            "late Allocate resurrected a retired reservation"
+        );
+        let endpoint = serde_json::from_slice(&layout.endpoint(true).capability).unwrap();
+        assert!(matches!(
+            store
+                .execute(WorkerRequest::Verify { endpoint })
+                .into_result(),
+            Err(HsmError::Fenced)
+        ));
+        assert!(!root.path().join(&layout.id).join("data").exists());
+    }
+
     #[test]
     fn sealed_and_deleted_capabilities_stay_fenced_after_reopen() {
         let root = tempfile::tempdir().unwrap();

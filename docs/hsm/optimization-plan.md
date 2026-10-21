@@ -242,3 +242,10 @@ Release 的 `Record.native_garbage` 同批建立每块恢复索引及预分配�
 普通 HSM 控制与策略筛查增加 128 个有界接收名额；名额随存储执行任务保留至完成，调用方断开/取消不释放一个仍在执行的动作。接收前取消不生成后台任务。普通控制 JSON 只解码一次，panic 使用与 Native/Read 协调器相同的故障监督；提交未知时仍建立前缀隔离。读取保护保留自己的有界批处理入口。
 
 验证：Master 235 项通过、2 项 ignored；两个真实集群用例通过，新增暂停协调 gate、取消控制者调用、恢复后 epoch 仍只推进一次，以及原请求重试返回原始结果。单元测试验证接收前取消不执行动作，接收后取消仍占名额直到动作完成。后续继续缩短 Worker 网络 I/O 的协调锁范围，当前尚未据此删除过渡 gate。
+
+
+### Worker I/O 解耦的前置修复
+
+Worker 现在能为尚未到达的 Allocate 持久保存 deleted-only 记录。Delete 确认前先保存退休状态和 owner，再 unlink/目录同步；相同 owner 可重复确认，错误 owner 及迟到 Allocate/Verify 均被拒绝，进程重启不解除。已有活对象 JSON 的 layout 编码保持，新增 null layout 只用于已退休且从未绑定布局的对象；旧解析器对此失败，不会将它当作未分配并重新创建。
+
+确定回归先复现原实现的 NotFound，再验证重启后的迟到请求拒绝。Worker 全量 64 项通过、1 项 ignored。此项为将 Allocate/Seal/Delete 网络等待移出元数据协调边界提供前置保护，尚未把移出本身标为完成。
