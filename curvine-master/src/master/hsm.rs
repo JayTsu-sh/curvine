@@ -98,7 +98,7 @@ impl FsDir {
     pub fn hsm_record(&self, id: i64) -> CommonResult<Option<Record>> {
         read_record(id, |key| self.get_rocks_store().hsm_get(key))
     }
-    fn hsm_namespace(&self) -> CommonResult<Option<Namespace>> {
+    pub(crate) fn hsm_namespace(&self) -> CommonResult<Option<Namespace>> {
         self.get_rocks_store()
             .hsm_get(NS)?
             .map(|v| decode(&v))
@@ -1788,6 +1788,7 @@ fn same_attempt(a: &OperationContext, b: &OperationContext) -> bool {
 mod lifecycle;
 
 mod ordinary;
+pub(crate) use ordinary::{native_record, write_record as write_native_record};
 
 #[cfg(test)]
 mod scale_tests;

@@ -7,7 +7,8 @@ use crate::master::meta::{
     FsDir,
 };
 use curvine_core_error::{err_box, CommonResult};
-use curvine_model::FileStatus;
+use curvine_model::hsm::native::Record;
+use curvine_model::{BlockLocation, CommitBlock, FileStatus};
 use curvine_runtime::common::SerdeUtils;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -18,6 +19,12 @@ type Edge = (i64, String);
 /// logical metadata rather than whichever order bincode emitted its xattrs.
 pub(super) fn inode_fingerprint(inode: &InodeView) -> CommonResult<[u8; 32]> {
     let mut value = serde_json::to_value(inode.clone_metadata())?;
+    if let Some(clients) = value
+        .pointer_mut("/File/file/features/file_write/clients")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        clients.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+    }
     value.sort_all_objects();
     Ok(*blake3::hash(&serde_json::to_vec(&value)?).as_bytes())
 }
@@ -30,6 +37,9 @@ pub(super) struct PreparedEdits {
     pub(super) edge_checks: BTreeMap<Edge, Option<i64>>,
     pub(super) child_deltas: BTreeMap<i64, i64>,
     pub(super) last_inode: i64,
+    pub(super) hsm_checks: BTreeMap<i64, Option<u64>>,
+    pub(super) hsm_records: BTreeMap<i64, Vec<u8>>,
+    pub(super) locations: BTreeMap<(i64, u32), BlockLocation>,
 }
 impl PreparedEdits {
     pub(super) fn encoded_bytes(&self) -> CommonResult<usize> {
@@ -43,6 +53,8 @@ pub(super) struct BatchView<'a> {
     inodes: BTreeMap<i64, Option<InodeView>>,
     edges: BTreeMap<Edge, Option<i64>>,
     child_deltas: BTreeMap<i64, i64>,
+    hsm_records: BTreeMap<i64, Record>,
+    locations: BTreeMap<(i64, u32), BlockLocation>,
     last_inode: i64,
     bytes: usize,
     budget: usize,
@@ -55,6 +67,8 @@ impl<'a> BatchView<'a> {
             inodes: BTreeMap::new(),
             edges: BTreeMap::new(),
             child_deltas: BTreeMap::new(),
+            hsm_records: BTreeMap::new(),
+            locations: BTreeMap::new(),
             last_inode: authority.last_inode_id(),
             bytes: 0,
             budget,
@@ -123,7 +137,12 @@ impl<'a> BatchView<'a> {
             .filter(|n| *n >= 0)
             .ok_or_else(|| "invalid prepared directory child count".into())
     }
-    fn install(&mut self, edits: &PreparedEdits) {
+    fn install(&mut self, edits: &PreparedEdits) -> CommonResult<()> {
+        let records = edits
+            .hsm_records
+            .iter()
+            .map(|(id, json)| serde_json::from_slice::<Record>(json).map(|record| (*id, record)))
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
         for (id, inode) in &edits.inodes {
             self.inodes
                 .insert(*id, inode.as_ref().map(InodeView::clone_metadata));
@@ -133,6 +152,9 @@ impl<'a> BatchView<'a> {
             *self.child_deltas.entry(*id).or_default() += delta;
         }
         self.last_inode = self.last_inode.max(edits.last_inode);
+        self.hsm_records.extend(records);
+        self.locations.extend(edits.locations.clone());
+        Ok(())
     }
 }
 
@@ -143,6 +165,118 @@ pub(super) struct CommandView<'b, 'a> {
     poisoned: bool,
 }
 impl CommandView<'_, '_> {
+    pub(super) fn file(&mut self, path: &str, inode_id: Option<i64>) -> CommonResult<InodeView> {
+        self.batch.guard_path(path)?;
+        let id = match inode_id.filter(|id| *id > 0) {
+            Some(id) => id,
+            None => {
+                let ids = self.resolve(path)?;
+                if ids.len() != InodeView::path_components(path)?.len() {
+                    return Err(Box::new(curvine_error::FsError::file_not_found(path)));
+                }
+                *ids.last().unwrap()
+            }
+        };
+        let file = self
+            .inode(id)?
+            .ok_or_else(|| curvine_error::FsError::file_not_found(path))?;
+        file.as_file_ref()?;
+        Ok(file)
+    }
+
+    pub(super) fn path(&mut self, id: i64) -> CommonResult<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut names = vec![];
+        let mut id = id;
+        while id != ROOT_INODE_ID {
+            if !seen.insert(id) {
+                return err_box!("cycle in prepared inode parent chain");
+            }
+            let inode = self.inode(id)?.ok_or("prepared path inode is missing")?;
+            names.push(inode.name().to_owned());
+            id = match &inode {
+                InodeView::Dir(dir) => dir.parent_id,
+                InodeView::File(file) => file.parent_id,
+                _ => return err_box!("unresolved entry in prepared parent chain"),
+            };
+        }
+        names.reverse();
+        Ok(format!("/{}", names.join("/")))
+    }
+
+    fn record(&mut self, id: i64) -> CommonResult<Option<Record>> {
+        if let Some(json) = self.edits.hsm_records.get(&id) {
+            return Ok(Some(serde_json::from_slice(json)?));
+        }
+        let record = match self.batch.hsm_records.get(&id) {
+            Some(record) => Some(record.clone()),
+            None => self.batch.authority.hsm_record(id)?,
+        };
+        if !self.edits.hsm_checks.contains_key(&id) {
+            self.charge(32)?;
+            self.edits
+                .hsm_checks
+                .insert(id, record.as_ref().map(|record| record.version));
+        }
+        Ok(record)
+    }
+
+    pub(super) fn guard_write(&mut self, id: i64) -> CommonResult<()> {
+        self.batch.authority.hsm_guard_id(id)?;
+        self.record(id)?;
+        Ok(())
+    }
+
+    pub(super) fn enroll(&mut self, inode: &InodeView) -> CommonResult<()> {
+        let id = inode.id();
+        let previous = self.record(id)?;
+        let namespace = self
+            .batch
+            .authority
+            .hsm_namespace()?
+            .ok_or("native command has no namespace")?;
+        let path = self.path(id)?;
+        if let Some(record) = crate::master::hsm::native_record(
+            &namespace,
+            &path,
+            inode.as_file_ref()?,
+            previous.as_ref(),
+        )? {
+            let json = serde_json::to_vec(&record)?;
+            self.charge(json.len().saturating_add(32))?;
+            self.edits.hsm_records.insert(id, json);
+        }
+        Ok(())
+    }
+
+    pub(super) fn commit_locations(&mut self, commits: &[CommitBlock]) -> CommonResult<()> {
+        for commit in commits {
+            for location in &commit.locations {
+                self.charge(32)?;
+                self.edits
+                    .locations
+                    .insert((commit.block_id, location.worker_id), location.clone());
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn locations(&self, block: i64) -> CommonResult<Vec<BlockLocation>> {
+        let mut locations: BTreeMap<_, _> = self
+            .batch
+            .authority
+            .store
+            .get_locations(block)?
+            .into_iter()
+            .map(|location| (location.worker_id, location))
+            .collect();
+        for map in [&self.batch.locations, &self.edits.locations] {
+            for ((_, worker), location) in map.range((block, 0)..=(block, u32::MAX)) {
+                locations.insert(*worker, location.clone());
+            }
+        }
+        Ok(locations.into_values().collect())
+    }
     fn charge(&mut self, bytes: usize) -> CommonResult<()> {
         let next = self
             .estimated
@@ -297,7 +431,7 @@ impl CommandView<'_, '_> {
         if bytes > self.batch.budget {
             return err_box!("prepared batch exceeds byte budget");
         }
-        self.batch.install(&self.edits);
+        self.batch.install(&self.edits)?;
         self.batch.bytes = bytes;
         Ok(self.edits)
     }

@@ -10,13 +10,15 @@ use curvine_error::{FsError, FsResult};
 use curvine_fs_api::{Path, RpcCode};
 use curvine_model::{OpenFlags, ProtoUtils};
 use curvine_proto::{
-    CreateFileRequest, CreateFileResponse, MkdirRequest, MkdirResponse, NativeMutationRequest,
+    CompleteFileRequest, CompleteFileResponse, CreateFileRequest, CreateFileResponse, MkdirRequest,
+    MkdirResponse, NativeMutationRequest,
 };
 use prost::Message;
 
 pub(crate) enum NativeInput {
     Mkdir(MkdirRequest),
     Create(CreateFileRequest),
+    Complete(CompleteFileRequest),
 }
 impl NativeInput {
     pub(crate) fn parse(request: &NativeMutationRequest) -> FsResult<Self> {
@@ -34,6 +36,11 @@ impl NativeInput {
                     .map(Self::Create)
                     .map_err(|error| FsError::common(error.to_string()))
             }
+            value if value == RpcCode::CompleteFile as u32 => {
+                CompleteFileRequest::decode(request.header.as_slice())
+                    .map(Self::Complete)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
             _ => err_box!("unsupported native mutation operation"),
         }
     }
@@ -41,10 +48,43 @@ impl NativeInput {
         match self {
             Self::Mkdir(request) => &request.path,
             Self::Create(request) => &request.path,
+            Self::Complete(request) => &request.path,
         }
     }
     pub(crate) fn legacy(self, fs: &MasterFilesystem) -> FsResult<Vec<u8>> {
         match self {
+            Self::Complete(request) => {
+                let commits = request
+                    .commit_blocks
+                    .into_iter()
+                    .map(ProtoUtils::commit_block_from_pb)
+                    .collect();
+                let blocks = if request.only_flush && !request.return_file_blocks.unwrap_or(true) {
+                    fs.flush_file(
+                        request.path,
+                        request.inode_id,
+                        request.len,
+                        commits,
+                        request.client_name,
+                    )?;
+                    None
+                } else {
+                    fs.complete_file(
+                        request.path,
+                        request.inode_id,
+                        request.len,
+                        commits,
+                        request.client_name,
+                        request.only_flush,
+                        request.set_attr_opts.map(ProtoUtils::set_attr_opts_from_pb),
+                    )?
+                };
+                Ok(CompleteFileResponse {
+                    result: true,
+                    file_blocks: blocks.map(ProtoUtils::file_blocks_to_pb),
+                }
+                .encode_to_vec())
+            }
             Self::Mkdir(request) => {
                 let status = fs
                     .mkdir_with_opts(&request.path, ProtoUtils::mkdir_opts_from_pb(request.opts))?;
@@ -81,6 +121,7 @@ impl NativeInput {
             return err_box!("native HSM metadata creation requires a path outside UFS mounts");
         }
         match self {
+            Self::Complete(request) => commands::complete(view, fs, request, time),
             Self::Mkdir(request) => {
                 fs.check_path_length(&request.path)?;
                 commands::mkdir(

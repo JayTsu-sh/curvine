@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) const VERSION: u32 = 1;
+const JOURNAL_VERSION: u32 = 2;
 pub(super) const MAX_ENTRY: usize = 8 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -63,13 +64,22 @@ pub(crate) fn basic(
     }
 }
 
+pub(super) fn decode_batch(bytes: &[u8]) -> CommonResult<NativeBatch> {
+    let version: u32 = SerdeUtils::deserialize(bytes.get(..4).ok_or("truncated native version")?)?;
+    match version {
+        1 => Ok(SerdeUtils::deserialize::<super::legacy::NativeBatchV1>(bytes)?.into()),
+        JOURNAL_VERSION => SerdeUtils::deserialize(bytes),
+        _ => err_box!("unsupported native journal version"),
+    }
+}
+
 impl FsDir {
     pub(crate) fn apply_native_entry(&mut self, entry: &NativeEntry) -> CommonResult<()> {
         if entry.payload.len() > MAX_ENTRY {
             return err_box!("native entry exceeds byte limit");
         }
-        let batch: NativeBatch = SerdeUtils::deserialize(&entry.payload)?;
-        if batch.version != VERSION || batch.commands.is_empty() || batch.commands.len() > 32 {
+        let batch = decode_batch(&entry.payload)?;
+        if batch.commands.is_empty() || batch.commands.len() > 32 {
             return err_box!("unsupported native batch version or size");
         }
         let mut results = Vec::with_capacity(batch.commands.len());
@@ -133,7 +143,7 @@ impl MasterFilesystem {
     ) -> FsResult<Vec<NativeMutationResponse>> {
         let expected = commands.len();
         let payload = SerdeUtils::serialize(&NativeBatch {
-            version: VERSION,
+            version: JOURNAL_VERSION,
             commands,
         })?;
         if payload.len() > MAX_ENTRY {

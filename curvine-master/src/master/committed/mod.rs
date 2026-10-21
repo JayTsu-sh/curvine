@@ -5,6 +5,7 @@ mod authority;
 mod commands;
 mod coordinator;
 mod input;
+mod legacy;
 mod session;
 mod transport;
 mod view;

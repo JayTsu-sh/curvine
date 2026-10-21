@@ -331,6 +331,23 @@ impl InodeFile {
         client_name: impl AsRef<str>,
         only_flush: bool,
     ) -> FsResult<()> {
+        self.complete_at(
+            len,
+            commit_blocks,
+            client_name,
+            only_flush,
+            LocalTime::mills() as i64,
+        )
+    }
+
+    pub(crate) fn complete_at(
+        &mut self,
+        len: i64,
+        commit_blocks: &[CommitBlock],
+        client_name: impl AsRef<str>,
+        only_flush: bool,
+        mtime: i64,
+    ) -> FsResult<()> {
         for block in commit_blocks {
             let meta = self.search_block_mut_check(block.block_id)?;
             meta.commit(block);
@@ -346,7 +363,6 @@ impl InodeFile {
             );
         }
 
-        let mtime = LocalTime::mills() as i64;
         self.mtime = mtime;
         self.update_ctime(mtime);
         if !only_flush {

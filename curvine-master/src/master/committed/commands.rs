@@ -153,3 +153,74 @@ pub(super) fn create(
         response,
     })
 }
+
+/// Complete native data and HSM enrollment in one owned command. No namespace
+/// or candidate index is changed until the corresponding journal is applied.
+pub(super) fn complete(
+    batch: &mut BatchView<'_>,
+    fs: &crate::master::fs::MasterFilesystem,
+    request: curvine_proto::CompleteFileRequest,
+    time: i64,
+) -> FsResult<PreparedCommand> {
+    let mut view = batch.command();
+    let mut inode = view.file(&request.path, request.inode_id)?;
+    view.guard_write(inode.id())?;
+    let commits: Vec<_> = request
+        .commit_blocks
+        .into_iter()
+        .map(ProtoUtils::commit_block_from_pb)
+        .collect();
+    inode.as_file_mut()?.complete_at(
+        request.len,
+        &commits,
+        request.client_name,
+        request.only_flush,
+        time,
+    )?;
+    if !request.only_flush {
+        if let Some(opts) = request.set_attr_opts {
+            inode.set_attr(ProtoUtils::set_attr_opts_from_pb(opts))?;
+        }
+    }
+    view.commit_locations(&commits)?;
+    view.put_inode(inode.clone_metadata())?;
+    view.enroll(&inode)?;
+    let file_blocks = if request.only_flush && request.return_file_blocks.unwrap_or(true) {
+        let file = inode.as_file_ref()?;
+        let mut locations = Vec::with_capacity(file.blocks.len());
+        for (index, meta) in file.blocks.iter().enumerate() {
+            if index + 1 < file.blocks.len() && meta.len() != file.block_size as i64 {
+                return err_box!("block status abnormal, block id {}", meta.id);
+            }
+            let replicas = match &meta.locs {
+                Some(locs) => locs.clone(),
+                None => view.locations(meta.id)?,
+            };
+            locations.push(fs.create_locate_block(
+                &request.path,
+                curvine_model::ExtendedBlock {
+                    id: meta.id,
+                    len: meta.len(),
+                    storage_type: file.storage_policy.storage_type,
+                    file_type: file.file_type,
+                    alloc_opts: meta.alloc_opts.clone(),
+                },
+                &replicas,
+            )?);
+        }
+        Some(ProtoUtils::file_blocks_to_pb(
+            curvine_model::FileBlocks::new(inode.to_file_status(&request.path)?, locations),
+        ))
+    } else {
+        None
+    };
+    let response = curvine_proto::CompleteFileResponse {
+        result: true,
+        file_blocks,
+    }
+    .encode_to_vec();
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response,
+    })
+}

@@ -1,5 +1,5 @@
 // Copyright 2026 OPPO. Licensed under the Apache License, Version 2.0.
-//! Creation publication and durable original results. This is deliberately
+//! Owned native publication and durable original results. This is deliberately
 //! narrower than native activation: other mutation families must gain owned
 //! preparation, atomic writes and deferred effects before transport switches.
 use super::session::{Decision, Session};
@@ -201,15 +201,17 @@ pub(super) fn apply_creation(
     {
         return err_box!("native creation has incomplete checks or allocation history");
     }
-    // Until deletion/move/block/HSM preparation is connected, this publisher
-    // accepts new directories/files and existing parent header updates only.
+    // Deletion/moves are not activated. Existing file updates carry an HSM
+    // observation, so a committed protection or generation change fences them.
     if edits.inodes.iter().any(|(id, inode)| {
         inode.as_ref().is_none_or(|inode| {
             inode.id() != *id
                 || inode.child_len() != 0
                 || inode.is_file_entry()
-                || !inode.is_dir()
-                    && (!inode.is_file() || edits.inode_checks.get(id) != Some(&None))
+                || !inode.is_dir() && !inode.is_file()
+                || inode.is_file()
+                    && edits.inode_checks.get(id).is_some_and(Option::is_some)
+                    && !edits.hsm_checks.contains_key(id)
         })
     }) || edits
         .edges
@@ -228,6 +230,52 @@ pub(super) fn apply_creation(
     for ((parent, name), expected) in &edits.edge_checks {
         if edge(fs, *parent, name)? != *expected {
             valid = false;
+        }
+    }
+    let mut hsm_records = BTreeMap::new();
+    for (id, expected) in &edits.hsm_checks {
+        if !edits.inode_checks.contains_key(id) {
+            return err_box!("native HSM observation has no inode check");
+        }
+        if fs.hsm_record(*id)?.as_ref().map(|record| record.version) != *expected {
+            valid = false;
+        }
+    }
+    for (id, json) in &edits.hsm_records {
+        let record: curvine_model::hsm::native::Record = serde_json::from_slice(json)?;
+        let expected = edits
+            .hsm_checks
+            .get(id)
+            .ok_or("native HSM update has no observation")?;
+        let file = edits
+            .inodes
+            .get(id)
+            .and_then(Option::as_ref)
+            .ok_or("native HSM update has no inode")?
+            .as_file_ref()?;
+        if record.state.data.entity.entity != id.to_string()
+            || record.state.data.entity.namespace != namespace.incarnation
+            || record.state.data.entity.storage != namespace.storage
+            || record.version
+                != expected
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or("HSM version exhausted")?
+            || record.state.length != file.len.max(0) as u64
+        {
+            return err_box!("invalid native HSM update identity/version");
+        }
+        hsm_records.insert(*id, record);
+    }
+    for ((block, worker), location) in &edits.locations {
+        if *worker != location.worker_id
+            || !edits.inodes.values().flatten().any(|inode| {
+                inode
+                    .as_file_ref()
+                    .is_ok_and(|file| file.blocks.iter().any(|meta| meta.id == *block))
+            })
+        {
+            return err_box!("native block location has no matching file");
         }
     }
     let result = if valid {
@@ -305,6 +353,17 @@ pub(super) fn apply_creation(
         for ((parent, name), child) in &edits.edges {
             batch.add_child(*parent, name, child.unwrap())?;
         }
+        for ((block, _), location) in &edits.locations {
+            batch.add_location(*block, location)?;
+        }
+        for (id, record) in &hsm_records {
+            crate::master::hsm::write_native_record(
+                &mut batch,
+                fs.hsm_record(*id)?.as_ref(),
+                record,
+            )?;
+            batch.hsm_delete(format!("\u{3}hsm:enroll:{id}").as_bytes())?;
+        }
     }
     session.write(&mut batch)?;
     batch.hsm_put(
@@ -337,6 +396,14 @@ pub(super) fn apply_creation(
             directories.insert(child.unwrap(), pointer);
         }
         for (id, expected) in &edits.inode_checks {
+            if expected.is_some() {
+                if let Some(Some(inode)) = edits.inodes.get(id) {
+                    if inode.is_file() {
+                        fs.get_ttl_bucket_list().add(inode);
+                        fs.evictor.on_access(*id);
+                    }
+                }
+            }
             if expected.is_none() && edits.inodes.contains_key(id) {
                 if edits
                     .inodes
@@ -412,6 +479,156 @@ mod tests {
                 body: vec![],
             },
         })
+    }
+
+    #[test]
+    fn complete_keeps_hsm_and_native_atomic_across_replicas_retries_and_conflicts(
+    ) -> CommonResult<()> {
+        crate::master::Master::init_test_metrics();
+        let a = tempfile::tempdir()?;
+        let b = tempfile::tempdir()?;
+        let source = JournalSystem::fs_only_for_test(&configuration(a.path()))?;
+        let follower = JournalSystem::fs_only_for_test(&configuration(b.path()))?;
+        for fs in [&source, &follower] {
+            seed_namespace(fs)?;
+        }
+        let mut create = prepare(&source, "/unused")?;
+        {
+            let dir = source.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let prepared = commands::create(
+                &mut view,
+                "/data/payload",
+                curvine_model::CreateFileOpts::with_create(true),
+                1000,
+            )?;
+            create.edits = prepared.edits;
+            create.reply.code = RpcCode::CreateFile.into();
+            create.reply.header = prepared.response;
+        }
+        for fs in [&source, &follower] {
+            assert!(apply_creation(&mut fs.fs_dir.write(), &create)?.kind == ResultKind::Applied);
+        }
+        let id = source.file_status("/data/payload")?.id;
+        let make_request = |flush| curvine_proto::CompleteFileRequest {
+            path: "/old-name-after-open".into(),
+            inode_id: Some(id),
+            len: 0,
+            client_name: "".into(),
+            only_flush: flush,
+            return_file_blocks: Some(false),
+            ..Default::default()
+        };
+        let make_command = |prepared: commands::PreparedCommand, sequence| NativeCommand {
+            identity: RequestIdentity {
+                incarnation: "incarnation".into(),
+                session: create.identity.session.clone(),
+                sequence,
+                acknowledged: 0,
+            },
+            fingerprint: [sequence as u8; 32],
+            time: 2000,
+            edits: prepared.edits,
+            reply: NativeReply {
+                code: RpcCode::CompleteFile.into(),
+                success: true,
+                header: prepared.response,
+                body: vec![],
+            },
+        };
+        let (flush, close) = {
+            let dir = source.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let flush = make_command(
+                commands::complete(&mut view, &source, make_request(true), 2000)?,
+                2,
+            );
+            let close = make_command(
+                commands::complete(&mut view, &source, make_request(false), 3000)?,
+                3,
+            );
+            assert!(dir.hsm_record(id)?.is_none());
+            assert_eq!(
+                dir.store.get_inode(id, None)?.unwrap().as_file_ref()?.mtime,
+                1000
+            );
+            (flush, close)
+        };
+        for fs in [&source, &follower] {
+            assert!(apply_creation(&mut fs.fs_dir.write(), &flush)?.kind == ResultKind::Applied);
+            let record = fs.fs_dir.read().hsm_record(id)?.unwrap();
+            assert_eq!(record.version, 1);
+            assert_eq!(record.path, "/data/payload");
+            assert!(apply_creation(&mut fs.fs_dir.write(), &close)?.kind == ResultKind::Applied);
+            let record = fs.fs_dir.read().hsm_record(id)?.unwrap();
+            assert!(!record.writing);
+            assert_eq!(record.version, 2);
+            assert_eq!(record.mtime_ms, fs.file_status("/data/payload")?.mtime);
+            assert_eq!(record.mtime_ms, 3000);
+        }
+        source.rename("/data", "/renamed", RenameFlags::new(0))?;
+        assert!(apply_creation(&mut source.fs_dir.write(), &close)?.reply == close.reply);
+        assert_eq!(source.fs_dir.read().hsm_record(id)?.unwrap().version, 2);
+        let late = {
+            let dir = source.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            make_command(
+                commands::complete(&mut view, &source, make_request(false), 4000)?,
+                4,
+            )
+        };
+        // An access-state change can invalidate a close without changing native
+        // metadata. It must neither publish the inode nor overwrite the record.
+        {
+            let dir = source.fs_dir.read();
+            let old = dir.hsm_record(id)?.unwrap();
+            let mut record = old.clone();
+            record.version += 1;
+            let mut batch = dir.get_rocks_store().new_batch();
+            crate::master::hsm::write_native_record(&mut batch, Some(&old), &record)?;
+            batch.commit()?;
+        }
+        assert!(apply_creation(&mut source.fs_dir.write(), &late)?.kind == ResultKind::Conflict);
+        assert_eq!(source.file_status("/renamed/payload")?.mtime, 3000);
+        assert_eq!(source.fs_dir.read().hsm_record(id)?.unwrap().version, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn frozen_v1_journal_replays_with_empty_new_fields_and_original_result() -> CommonResult<()> {
+        use super::super::{legacy::*, transport::decode_batch};
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let fs = JournalSystem::fs_only_for_test(&configuration(root.path()))?;
+        seed_namespace(&fs)?;
+        let c = prepare(&fs, "/old-format")?;
+        let expected = c.reply.clone();
+        let e = c.edits;
+        let bytes = SerdeUtils::serialize(&NativeBatchV1 {
+            version: 1,
+            commands: vec![NativeCommandV1 {
+                identity: c.identity,
+                fingerprint: c.fingerprint,
+                time: c.time,
+                reply: c.reply,
+                edits: PreparedEditsV1 {
+                    inodes: e.inodes,
+                    edges: e.edges,
+                    inode_checks: e.inode_checks,
+                    edge_checks: e.edge_checks,
+                    child_deltas: e.child_deltas,
+                    last_inode: e.last_inode,
+                },
+            }],
+        })?;
+        let mut batch = decode_batch(&bytes)?;
+        let command = batch.commands.pop().unwrap();
+        assert!(command.edits.hsm_records.is_empty() && command.edits.locations.is_empty());
+        assert!(apply_creation(&mut fs.fs_dir.write(), &command)?.reply == expected);
+        assert!(fs.exists("/old-format")?);
+        assert!(decode_batch(&SerdeUtils::serialize(&99u32)?).is_err());
+        assert!(decode_batch(&[1, 2]).is_err());
+        Ok(())
     }
 
     #[test]

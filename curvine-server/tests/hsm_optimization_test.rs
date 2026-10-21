@@ -215,10 +215,7 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         create.code = RpcCode::CreateFile as u32;
         create.header = CreateFileRequest {
             path: "/native-created-file".into(),
-            opts: ProtoUtils::create_opts_to_pb(
-                CreateFileOpts::with_create(false),
-                "manual",
-            ),
+            opts: ProtoUtils::create_opts_to_pb(CreateFileOpts::with_create(false), "manual"),
             flags: OpenFlags::new_create().set_overwrite(false).value(),
         }
         .encode_to_vec();
@@ -252,11 +249,18 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         let file_commands = after_files["native_commands"].as_f64().unwrap()
             - before_files["native_commands"].as_f64().unwrap();
         assert!(file_bundles > 0 && file_bundles < 32 && file_commands >= 32.0);
+        let before_close = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
         stream::iter(writers)
             .map(|mut writer| async move { writer.complete().await })
             .buffer_unordered(32)
             .try_collect::<Vec<_>>()
             .await?;
+        let after_close = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let bundles = after_close["native_bundles"].as_u64().unwrap()
+            - before_close["native_bundles"].as_u64().unwrap();
+        let commands = after_close["native_commands"].as_f64().unwrap()
+            - before_close["native_commands"].as_f64().unwrap();
+        assert!(bundles > 0 && bundles < 32 && commands >= 32.0);
         // Native TTL still uses its original operation during migration, but
         // joins the same gate and confirms its journal prefix on an OS thread.
         let mut ttl_options = MkdirOpts::with_create(false);

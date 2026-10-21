@@ -16,7 +16,7 @@ pub(super) fn index_key(record: &Record) -> Vec<u8> {
     )
     .into_bytes()
 }
-pub(super) fn write_record(
+pub(crate) fn write_record(
     batch: &mut InodeWriteBatch,
     old: Option<&Record>,
     record: &Record,
@@ -103,16 +103,123 @@ pub(super) fn write_access(
 pub(super) fn readers_active(record: &Record, now: i64) -> bool {
     record.readers.values().any(|deadline| *deadline > now)
 }
+fn trackable(path: &str, file: &InodeFile) -> bool {
+    path != HSM_ROOT
+        && !path.starts_with("/.hsm/")
+        && file.file_type == FileType::File
+        && file.nlink == 1
+        && !file.ufs_exists()
+}
+
+/// Build a stable HSM generation without authority writes or Worker actions.
+/// Legacy hooks and owned native preparation use exactly these same rules.
+pub(crate) fn native_record(
+    ns: &Namespace,
+    path: &str,
+    file: &InodeFile,
+    old: Option<&Record>,
+) -> CommonResult<Option<Record>> {
+    if !trackable(path, file) {
+        return Ok(None);
+    }
+    let modern = ns.ordinary_format >= 2;
+    if old.is_some_and(|r| !r.ordinary) {
+        return Ok(None);
+    }
+    let writing = file.features.file_write.is_some();
+    let mut record = old.cloned().unwrap_or_else(|| Record {
+        access_base: None,
+        ordinary: true,
+        native_blocks: true,
+        sealed: false,
+        seal_token: None,
+        atime_ms: file.atime,
+        mtime_ms: file.mtime,
+        owner: file.features.acl.owner.clone(),
+        group: file.features.acl.group.clone(),
+        writing,
+        readers: Default::default(),
+        native_garbage: Default::default(),
+        state_since_ms: file.mtime,
+        version: 0,
+        state: EntityState {
+            data: DataKey {
+                entity: EntityKey {
+                    storage: ns.storage.clone(),
+                    namespace: ns.incarnation.clone(),
+                    entity: file.id().to_string(),
+                },
+                generation: 1,
+            },
+            revision: 0,
+            residency: Residency::Online,
+            length: file.len.max(0) as u64,
+            digest: ContentDigest {
+                algorithm: "unsealed".into(),
+                value: vec![],
+            },
+            anchors: vec![],
+        },
+        path: path.into(),
+        published: None,
+        pending: None,
+        views: Default::default(),
+        garbage: vec![],
+    });
+    // Invalidate the archive generation at write-open, before any block changes.
+    if old.is_some_and(|r| {
+        !r.writing
+            && (writing
+                || modern && (r.mtime_ms != file.mtime || r.state.length != file.len.max(0) as u64))
+    }) {
+        record.state.data.generation = record
+            .state
+            .data
+            .generation
+            .checked_add(1)
+            .ok_or("HSM generation exhausted")?;
+        record.state.anchors.clear();
+        record.state.digest = ContentDigest {
+            algorithm: "unsealed".into(),
+            value: vec![],
+        };
+        if modern && record.state.residency != Residency::Online {
+            record.state_since_ms = file.mtime;
+        }
+        record.state.residency = Residency::Online;
+        record.sealed = false;
+        record.seal_token = None;
+        if let Some(layout) = record.published.take() {
+            record.garbage.push(layout);
+        }
+    }
+    record.native_blocks = true;
+    record.writing = writing;
+    record.path = path.into();
+    if modern {
+        record.atime_ms = record.atime_ms.max(file.atime);
+    }
+    record.mtime_ms = file.mtime;
+    record.owner = file.features.acl.owner.clone();
+    record.group = file.features.acl.group.clone();
+    record.state.length = file.len.max(0) as u64;
+    record.state.revision = record
+        .state
+        .revision
+        .checked_add(1)
+        .ok_or("HSM revision exhausted")?;
+    record.version = record
+        .version
+        .checked_add(1)
+        .ok_or("HSM record version exhausted")?;
+    record.access_base = None;
+    Ok(Some(record))
+}
+
 impl FsDir {
     /// Called for both normal journal replay and the leader's normal close path.
     pub fn hsm_track_file(&self, path: &str, file: &InodeFile) -> CommonResult<()> {
-        if !self.hsm_enabled
-            || path == HSM_ROOT
-            || path.starts_with("/.hsm/")
-            || file.file_type != FileType::File
-            || file.nlink != 1
-            || file.ufs_exists()
-        {
+        if !self.hsm_enabled || !trackable(path, file) {
             return Ok(());
         }
         let Some(ns) = self.hsm_namespace()? else {
@@ -123,86 +230,10 @@ impl FsDir {
             )?;
             return batch.commit();
         };
-        let modern = ns.ordinary_format >= 2;
         let old = self.hsm_record(file.id())?;
-        if old.as_ref().is_some_and(|r| !r.ordinary) {
+        let Some(record) = native_record(&ns, path, file, old.as_ref())? else {
             return Ok(());
-        }
-        let writing = file.features.file_write.is_some();
-        let mut record = old.clone().unwrap_or_else(|| Record {
-            access_base: None,
-            ordinary: true,
-            native_blocks: true,
-            sealed: false,
-            seal_token: None,
-            atime_ms: file.atime,
-            mtime_ms: file.mtime,
-            owner: file.features.acl.owner.clone(),
-            group: file.features.acl.group.clone(),
-            writing,
-            readers: Default::default(),
-            native_garbage: Default::default(),
-            state_since_ms: file.mtime,
-            version: 0,
-            state: EntityState {
-                data: DataKey {
-                    entity: EntityKey {
-                        storage: ns.storage,
-                        namespace: ns.incarnation,
-                        entity: file.id().to_string(),
-                    },
-                    generation: 1,
-                },
-                revision: 0,
-                residency: Residency::Online,
-                length: file.len.max(0) as u64,
-                digest: ContentDigest {
-                    algorithm: "unsealed".into(),
-                    value: vec![],
-                },
-                anchors: vec![],
-            },
-            path: path.into(),
-            published: None,
-            pending: None,
-            views: Default::default(),
-            garbage: vec![],
-        });
-        // Invalidate the archive generation at write-open, before any block changes.
-        if old.as_ref().is_some_and(|r| {
-            !r.writing
-                && (writing
-                    || modern
-                        && (r.mtime_ms != file.mtime || r.state.length != file.len.max(0) as u64))
-        }) {
-            record.state.data.generation += 1;
-            record.state.anchors.clear();
-            record.state.digest = ContentDigest {
-                algorithm: "unsealed".into(),
-                value: vec![],
-            };
-            if modern && record.state.residency != Residency::Online {
-                record.state_since_ms = file.mtime;
-            }
-            record.state.residency = Residency::Online;
-            record.sealed = false;
-            record.seal_token = None;
-            if let Some(layout) = record.published.take() {
-                record.garbage.push(layout);
-            }
-        }
-        record.native_blocks = true;
-        record.writing = writing;
-        record.path = path.into();
-        if modern {
-            record.atime_ms = record.atime_ms.max(file.atime);
-        }
-        record.mtime_ms = file.mtime;
-        record.owner = file.features.acl.owner.clone();
-        record.group = file.features.acl.group.clone();
-        record.state.length = file.len.max(0) as u64;
-        record.state.revision += 1;
-        record.version += 1;
+        };
         let mut batch = self.get_rocks_store().new_batch();
         write_record(&mut batch, old.as_ref(), &record)?;
         batch.hsm_delete(format!("\u{3}hsm:enroll:{}", file.id()).as_bytes())?;

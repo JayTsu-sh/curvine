@@ -895,7 +895,7 @@ impl FsClient {
         if code != RpcCode::GetFilesystemInfo {
             self.ensure_handshake().await;
         }
-        if code == RpcCode::Mkdir {
+        if code == RpcCode::Mkdir || code == RpcCode::CompleteFile {
             self.native_rpc(code, header).await
         } else if code == RpcCode::CreateFile {
             let encoded = header.encode_to_vec();

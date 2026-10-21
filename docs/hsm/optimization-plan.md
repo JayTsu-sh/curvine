@@ -38,7 +38,10 @@ Native mkdir 接入后的回归：Master 全量 225 项通过、2 项 ignored；
 
 关闭 HSM 的普通卷返回明确的 `LegacyResult`，保留原有确认行为；已经绑定 incarnation 的请求不能在关闭卷上执行。无 HSM 单 Master 与启用 HSM 三 Master 的两个真实集群用例均通过。后续比较必须区分 legacy 确认与 committed 确认，不能只凭共用 RPC envelope 就视为等价。
 
-新文件创建接入后的 Master 225 项单元测试和两个真实集群用例通过，新增覆盖 32 文件创建合批、创建成功后重命名仍返回原始结果、零长度完成纳管，以及后续真实块写入/透明读路径。覆盖写、重新打开、块分配和完成写入仍待迁移，暂未改变其原有 gate 路径。
+新文件创建接入后的 Master 225 项单元测试和两个真实集群用例通过，新增覆盖 32 文件创建合批、创建成功后重命名仍返回原始结果、零长度完成纳管，以及后续真实块写入/透明读路径。覆盖写、重新打开和块分配仍待迁移，保留原有 gate 路径；完成写入的进展见下文。
+
+写入完成（`CompleteFile`，含 flush）已接入 Native 批处理：文件 inode、块位置、HSM 权威记录、访问 overlay 物化、候选索引及原始请求结果同一次 RocksDB WriteBatch 发布。准备阶段只操作触及的 owned 数据，原生 inode 与 HSM version 同时检查，冲突时不发布两者。批内 flush→close 读取私有前序结果；按 inode 关闭允许打开之后路径已经变化。复用同一份 generation 构建规则，避免旧钩子与新提交路径各自维护规则。Native journal v2 增加 HSM 和 location 变更；冻结 v1 DTO 后显式转换回放，公共 SDK envelope 仍是 v1。新增回归覆盖双角色一致性、原始结果重试、HSM 版本冲突和旧 journal 回放。Master 全量 227 项通过、2 项 ignored；真实三 Master/一 Worker 与关闭 HSM 的两个集群用例通过，包含 32 个并发关闭的合批断言及真实块写入后的透明读。块分配、重新打开、覆盖写和其他 namespace 修改仍未完成迁移。
+
 
 专项回归覆盖读状态物化、预算去重、快照规则变更、范围清理后的重放、恢复等待短快照、时钟跳变及空页不增长历史。真实 MiniCluster 已验证同 inode 32 读者合批与覆盖隔离；本轮代码使用路径 patch 接入 hsm-rs 后，workspace 的 30 项功能测试及全部文档测试通过，包含普通写入纳管、策略执行、并发自动 Recall、控制器资格切换和进程重启；百万测试保持 ignored，未把前一轮百万结果当成本轮验收。尚不能据此声明 P2 或全部性能优化完成。
 
