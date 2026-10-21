@@ -12,6 +12,7 @@ license.workspace = true
 # rejects `kv_backend = "fdb"` at startup when compiled without it.
 default = []
 fdb = ["curvine-mds/fdb"]
+hsm-scale-test = ["curvine-master/hsm-scale-test"]
 jni = ["curvine-data-transfer/opendal-hdfs"]
 spdk = [
     "curvine-worker/spdk",

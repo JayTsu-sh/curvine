@@ -1521,3 +1521,6 @@ mod ordinary;
 
 #[cfg(test)]
 mod scale_tests;
+
+#[cfg(feature = "hsm-scale-test")]
+mod scale_fixture;
