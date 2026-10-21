@@ -1,0 +1,36 @@
+{
+  "before": {
+    "production_hsm_commit": "837b5cc4a508fc194de9a3e08dc32f00bc76674c",
+    "pre_hsm_commit": "feb3c9e20617d5c3f36c67d44033239b6ac92470",
+    "benchmark_parent_commit": "11e8f3e1ab9ec0a0034e9cad2488c1f16b75ff83",
+    "benchmark_sources": {
+      "curvine-server/examples/hsm_overhead.rs": "d8427f38f2347c26e1cc91c1231eea8ddc60febbd8a51ddddf40e1f5babde479",
+      "tools/hsm-overhead-compare.py": "75dbb396659585d15c2805d1dd02a3f7ff1430ae5e20fd0097e7bf314d5c0480"
+    },
+    "production_source_changes": false,
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "benchmark_commit": "42788e0510dfe66e2b4f8f25f83b160208142adc"
+  },
+  "after_commit": "826a2ae9be052b2bf86d1a1647551e396adfcc5f",
+  "after_embedded_build_commit": "c3f4349d (binary compiled before commit; production sources match the after commit)",
+  "after_files": {
+    "crates/metadata/curvine-raft/proto/raft.proto": "61ae49353a93276394faadf07145076eedb8088926e6064f2a22433e1dc5806d",
+    "crates/metadata/curvine-raft/src/raft/raft_client.rs": "987317aaea742fdda39a57cb21f081fe7a1cd45a364924b008a17c09acba44a2",
+    "crates/metadata/curvine-raft/src/raft/raft_node.rs": "bdaf58190c15c03b31781855ee779bc3dcdd840abf494908a2192a3215ed4ebb",
+    "crates/metadata/curvine-raft/src/raft/role_monitor.rs": "c1ba89efcda44a9272e1d527705f3ebf62502afad11daaac010f953255b3373d",
+    "crates/metadata/curvine-raft/src/raft/tests/raft_node_recovery_tests.rs": "1f8d6e823f529a7c843a6c220854e71df15c60d748c178fbc0acd4f62466110e",
+    "curvine-master/src/master/journal/journal_system.rs": "18895e578366fc0806b95b97ef552eeaa26c0a9bbf9becc1a05eea75578bf503",
+    "curvine-master/src/master/journal/journal_writer.rs": "2aab473d2ea54f9799ce4148ea32c3b4ddd9753f0079a31607c0e8a443b9f673",
+    "curvine-master/src/master/journal/mod.rs": "ff01f0afe0e3943431db3026147fa7b6617e52f275f38f9955cd0df6184d7427",
+    "curvine-master/src/master/journal/sender_task.rs": "6d8b521cf202d31841bb323d467e2d75fafe6b133597c5be8e8a4506d676f3bf",
+    "curvine-master/src/master/journal/tests/commit_receipt_tests.rs": "1df3bccdab0351f37837054df34014ac1ba3e7a7db198ae7475a4b26be50a8e9",
+    "curvine-master/src/master/master_handler.rs": "5c26075d4d73812dcb51640d6c69832ae0701bc5a593b2a710918f4dbc63326f",
+    "curvine-master/src/master/master_metrics.rs": "2a4c6c2c34dccdab8191b5ea8f44d97a54cf7fc836c83c9ef0e22e4f5039d3fe",
+    "curvine-master/src/master/master_monitor.rs": "0161681d35124d8ed6e0b427b4060a62fa391ef787030349d9358599eb3cb75e",
+    "curvine-server/examples/hsm_overhead.rs": "18e2bd5d8886b79a116caa83c62ee402847df726d43ffee836b18a646b408f4e",
+    "tools/hsm-overhead-compare.py": "4b53dce5dd2059644a8420bde8bde90466f36de7201f4a17570be65754f02ab9"
+  },
+  "build": "CXXFLAGS=-g0 cargo build -p curvine-server --example hsm_overhead --features hsm-scale-test --release -j 6",
+  "scope": "Both binaries run BENCH_MODE=on. Same majority/apply acknowledgment, same gate, replicas=1, no UFS, no short circuit. Local SDK, 3 Masters + 1 Worker in each process.",
+  "safety_tests": "ACK loss is simulated at the RPC peer; majority/term tests use the real Raft core; lifecycle/restarts use real TCP/RocksDB/Raft."
+}

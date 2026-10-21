@@ -1,6 +1,6 @@
 # 引入 HSM 相对原版 Curvine 的性能差异
 
-日期：2026-10-21。本次使用 release 构建和普通 SDK RPC，实际比较引入 HSM 前后的前台性能。上一份 [百万规模报告](scale-validation.md) 中的“旧算法”仍有 HSM，不能用于回答原版 Curvine 与 HSM 的差异。
+日期：2026-10-21。本次使用 release 构建和普通 SDK RPC，实际比较引入 HSM 前后的前台性能。上一份 [百万规模报告](scale-validation.md) 中的“旧算法”仍有 HSM，不能用于回答原版 Curvine 与 HSM 的差异。本文测量的是普通日志提交回执改造**之前**的 HSM；P1 改造及其同语义前后对照见 [提交回执结果](commit-receipt-results.md)。
 
 **实测结论：当前 HSM 实现的每文件操作开销很大。** 16 并发创建/关闭空文件吞吐中位数从 5690.5 降至 96.9 ops/s，打开/关闭从 13292.9 降至 94.0 ops/s；get_status 基本持平。在线大文件读写也受固定协调成本影响，具体幅度见加长测试表。优先优化提交串行化与额外 barrier，比继续减少同键索引写入更直接。
 
@@ -136,12 +136,12 @@ on 组另以普通 SDK 预置 2048 个空文件，随后在同一规模、同一
 
 ## 影响来源与后续优化方向
 
-具体接口、实施顺序和安全验收要求见 [性能优化方案](optimization-plan.md)。这是设计建议，不是已实现的优化结果。
+具体接口、实施顺序和安全验收要求见 [性能优化方案](optimization-plan.md)。本节记录基线测量时的分析；P1 后来的实现与复测单独记录在 [提交回执结果](commit-receipt-results.md)。
 
 1. 元数据修改的全局串行协调、额外 Raft barrier 与强制 flush 批次，是当前每文件操作的主要结构性成本。该解释来自 [MasterHandler](../../curvine-master/src/master/master_handler.rs)、[hsm_read_barrier](../../curvine-master/src/master/hsm.rs) 和 [SenderTask](../../curvine-master/src/master/journal/sender_task.rs)；本次没有用 tracing 精确分摊各部分耗时。
 2. 受保护读取打开、关闭会更新访问观察/读取租约并等待提交，在线大文件也有固定成本。原版纯查询式 open 的性能不能直接保留到当前实现。
 3. Record JSON、真实 atime 候选迁移和持久控制结果增加写入与日志量；前轮差量索引优化减少冗余写，但没有移除全局 gate 或每 RPC barrier。
-4. 后续应优先研究让普通修改等待自身日志的提交、而不是另发 barrier，以及在同一提交序列下安全批量化；保持 fencing/CAS 与 Release 安全后再考虑缩小串行范围。禁用 HSM 时可评估缓存能力探测。当前报告未宣称这些优化已经实现。
+4. 普通修改等待自身日志提交、而不是另发 barrier，现已作为 P1 落地；本报告的数据仍为改造前版本。同一提交序列下安全批量化、缩小串行范围及禁用 HSM 时缓存能力探测仍待后续验收。
 
 未测量：磁带、真实 Archive/Recall 搬运对前台的带宽竞争、百万普通客户端写入的性能验收、原版与 HSM 在百万 checkpoint 恢复上的 A/B、冷缓存物理盘和跨物理机网络上限。上一轮的百万 Record KV/RSS 优化数字也不能替代这些差值。
 

@@ -1,0 +1,51 @@
+{
+  "automatic_recall": {
+    "application_reads": 3,
+    "bytes_and_data_keys_preserved": true,
+    "explicit_recall_calls": 0,
+    "ms": 2619,
+    "recall_intents": 2
+  },
+  "checkpoint_restore_observed": true,
+  "controller_processes": 1,
+  "elapsed_ms": 1243093,
+  "kind": "real-curvine-namespace-scale",
+  "masters": 3,
+  "namespace_files": 1000000,
+  "payload_files": 2,
+  "prefill": {
+    "elapsed_ms": 584145,
+    "files": 1000000,
+    "files_per_batch": 1000,
+    "mode": "isolated-internal-batch-prefill",
+    "normal_client_ingestion_benchmark": false,
+    "prefix": "/__hsm_scale_fixture__/records"
+  },
+  "pve_cluster": false,
+  "recovery_ms": 61144,
+  "release_ms": 222559,
+  "restart_resets": [
+    {
+      "elapsed_ms": 16644,
+      "keys": 2015713,
+      "max_batch_bytes": 81932,
+      "max_batch_keys": 1024
+    },
+    {
+      "elapsed_ms": 16763,
+      "keys": 2015713,
+      "max_batch_bytes": 81932,
+      "max_batch_keys": 1024
+    }
+  ],
+  "sdk_count_ms": 35785,
+  "server_processes": 1,
+  "worker_nodes": 1,
+  "workers": 1,
+  "zero_match_scan": {
+    "admitted": 0,
+    "examined": 1000002,
+    "ms": 241131,
+    "pages": 3908
+  }
+}

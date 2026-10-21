@@ -1,0 +1,52 @@
+{
+  "started_utc": "2026-10-21T06:54:41.915929+00:00",
+  "platform": "Linux-6.8.0-142-generic-x86_64-with-glibc2.39",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "clock_ticks_per_second": 100,
+  "memory_total_kib": 32860356,
+  "original_rev": "837b5cc4a508fc194de9a3e08dc32f00bc76674c",
+  "hsm_rev": "826a2ae9be052b2bf86d1a1647551e396adfcc5f",
+  "binaries": {
+    "before": {
+      "sha256": "fe20a445c5a675c01f6ac3554af546a2d1eabee21360e6c4c998898df467dd39",
+      "bytes": 35194952
+    },
+    "after": {
+      "sha256": "3b17b0ef23435c8fa4d87e7190b4d4b7d08f5e0da22adff384b47dc25b7789a7",
+      "bytes": 35266168
+    }
+  },
+  "rounds": 3,
+  "hsm_pair": true,
+  "smoke": false,
+  "io_only": false,
+  "large_files": 8,
+  "profile": "release (both builds; see build commands)",
+  "cache": "fresh process and DB per invocation; no OS page cache purge",
+  "execution": "sequential clusters; rotated order; shared VM; loopback RPC; no physical node fault isolation"
+}
