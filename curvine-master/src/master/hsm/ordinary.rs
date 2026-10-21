@@ -23,10 +23,20 @@ pub(super) fn write_record(
 ) -> CommonResult<()> {
     let index = index_key(record);
     let old_index = old.map(index_key);
+    let bytes = pack(record)?;
+    if let Ok(metrics) = crate::master::Master::get_metrics() {
+        metrics
+            .hsm_record_write_bytes
+            .with_label_values(&["base"])
+            .inc_by(bytes.len() as i64);
+    }
     batch.hsm_put(
         &record_key(record.state.data.entity.entity.parse()?),
-        &pack(record)?,
+        &bytes,
     )?;
+    if old.is_some_and(|old| old.access_base.is_some()) {
+        batch.hsm_delete(&access_key(record.state.data.entity.entity.parse()?))?;
+    }
     if old_index.as_ref() != Some(&index) {
         if let Some(old_index) = old_index {
             batch.hsm_delete(&old_index)?;
@@ -55,6 +65,38 @@ pub(super) fn write_record(
             Some(entity) => batch.hsm_put(&gc, &pack(entity)?)?,
             None => batch.hsm_delete(&gc)?,
         }
+    }
+    Ok(())
+}
+pub(super) fn write_access(
+    batch: &mut InodeWriteBatch,
+    old: &Record,
+    record: &Record,
+    clock_ms: i64,
+) -> CommonResult<()> {
+    let id = record.state.data.entity.entity.parse()?;
+    let access = ReadState {
+        clock_ms,
+        data: record.state.data.clone(),
+        base_version: old.access_base.unwrap_or(old.version),
+        version: record.version,
+        revision: record.state.revision,
+        atime_ms: record.atime_ms,
+        readers: record.readers.clone(),
+    };
+    let bytes = pack(&access)?;
+    if let Ok(metrics) = crate::master::Master::get_metrics() {
+        metrics
+            .hsm_record_write_bytes
+            .with_label_values(&["access"])
+            .inc_by(bytes.len() as i64);
+    }
+    batch.hsm_put(&access_key(id), &bytes)?;
+    let previous = index_key(old);
+    let next = index_key(record);
+    if previous != next {
+        batch.hsm_delete(&previous)?;
+        batch.hsm_put(&next, &pack(&record.state.data.entity.entity)?)?;
     }
     Ok(())
 }
@@ -88,6 +130,7 @@ impl FsDir {
         }
         let writing = file.features.file_write.is_some();
         let mut record = old.clone().unwrap_or_else(|| Record {
+            access_base: None,
             ordinary: true,
             native_blocks: true,
             sealed: false,
@@ -221,6 +264,9 @@ impl FsDir {
         for record in records {
             batch.hsm_delete(&index_key(&record))?;
             batch.hsm_delete(&record_key(record.state.data.entity.entity.parse()?))?;
+            if record.access_base.is_some() {
+                batch.hsm_delete(&access_key(record.state.data.entity.entity.parse()?))?;
+            }
         }
         batch.commit()
     }
@@ -270,7 +316,7 @@ impl FsDir {
                 && record.pending.is_none()
                 && record.views.is_empty()
                 && record.seal_token.is_none()
-                && !readers_active(&record, curvine_runtime::common::LocalTime::mills() as i64)
+                && !self.hsm_readers_active(&record)?
             {
                 return Ok(());
             }
@@ -278,28 +324,106 @@ impl FsDir {
         self.hsm_guard_id(id)
     }
 }
+pub(super) enum OrdinaryPlan {
+    Immediate(Value),
+    Transaction(Transaction, Option<Record>),
+}
+
 impl MasterFilesystem {
     pub(super) async fn hsm_ordinary(&self, ns: &Namespace, request: &Value) -> HsmResult<Value> {
+        match self.hsm_prepare_ordinary(ns, request, None)? {
+            OrdinaryPlan::Immediate(value) => Ok(value),
+            OrdinaryPlan::Transaction(tx, _) => self.hsm_submit(&tx).await,
+        }
+    }
+    pub(super) fn hsm_prepare_ordinary(
+        &self,
+        ns: &Namespace,
+        request: &Value,
+        projected: Option<Record>,
+    ) -> HsmResult<OrdinaryPlan> {
         let op = request["op"].as_str().unwrap();
+        let now = curvine_runtime::common::LocalTime::mills() as i64;
+        let read_time = self.fs_dir.read().hsm_read_time().map_err(io)?;
+        let lease_now = read_time.now;
+        let identity = if matches!(op, "read_path" | "read_close" | "read_renew") {
+            let fs = self.fs_dir.read();
+            let identity = read_history::identity(&fs, request, now)?;
+            if let Some(key) = &identity {
+                if let Some(outcome) = fs.hsm_outcome(key).map_err(io)? {
+                    if outcome.fingerprint != request_fingerprint(request)? {
+                        return Err(HsmError::Conflict("read request identity rebound".into()));
+                    }
+                    if outcome.response["kind"] == "read" {
+                        let handle: ReadHandle = field(&outcome.response, "data")?;
+                        let id = entity_id(&handle.data.entity, ns)?;
+                        let current = match projected.as_ref() {
+                            Some(record) if record.state.data.entity.entity == id.to_string() => {
+                                Some(record.clone())
+                            }
+                            _ => fs.hsm_record(id).map_err(io)?,
+                        };
+                        if handle.expires_ms <= lease_now
+                            || current.is_none_or(|record| {
+                                record.state.data != handle.data
+                                    || record
+                                        .readers
+                                        .get(&handle.reader)
+                                        .is_none_or(|deadline| !read_time.active(*deadline))
+                            })
+                        {
+                            return Err(HsmError::Fenced);
+                        }
+                    }
+                    if op == "read_renew" {
+                        let entity: EntityKey = field(request, "entity")?;
+                        let reader: String = field(request, "reader")?;
+                        let id = entity_id(&entity, ns)?;
+                        let current = match projected.as_ref() {
+                            Some(record) if record.state.data.entity.entity == id.to_string() => {
+                                Some(record.clone())
+                            }
+                            _ => fs.hsm_record(id).map_err(io)?,
+                        };
+                        if current.is_none_or(|record| {
+                            record
+                                .readers
+                                .get(&reader)
+                                .is_none_or(|deadline| !read_time.active(*deadline))
+                        }) {
+                            return Err(HsmError::Fenced);
+                        }
+                    }
+                    return Ok(OrdinaryPlan::Immediate(outcome.response));
+                }
+            }
+            identity
+        } else {
+            None
+        };
+
         let (mut record, id) = {
             let fs = self.fs_dir.read();
             let id = if op == "read_path" {
                 let path: String = field(request, "path")?;
                 let inp = InodePath::resolve(fs.root_ptr(), path, &fs.store).map_err(io)?;
                 let Some(inode) = inp.get_last_inode() else {
-                    return Ok(reply("normal", Value::Null));
+                    return Ok(OrdinaryPlan::Immediate(reply("normal", Value::Null)));
                 };
                 inode.id()
             } else {
                 entity_id(&field::<EntityKey>(request, "entity")?, ns)?
             };
-            let Some(record) = fs.hsm_record(id).map_err(io)? else {
-                return Ok(reply("normal", Value::Null));
+            let record = match projected {
+                Some(record) => Some(record),
+                None => fs.hsm_record(id).map_err(io)?,
+            };
+            let Some(record) = record else {
+                return Ok(OrdinaryPlan::Immediate(reply("normal", Value::Null)));
             };
             (record, id)
         };
         record.path = self.fs_dir.read().get_inode_path(id).map_err(io)?;
-        let now = curvine_runtime::common::LocalTime::mills() as i64;
         let previous = record.version;
         let mut controls = vec![];
         let response;
@@ -330,7 +454,7 @@ impl MasterFilesystem {
                             intent.last_error.unwrap_or_default()
                         ))));
                     }
-                    return Ok(reply("pending", iid));
+                    return Ok(OrdinaryPlan::Immediate(reply("pending", iid)));
                 } else {
                     let anchor =
                         record.state.anchors.first().ok_or_else(|| {
@@ -370,7 +494,7 @@ impl MasterFilesystem {
                 response = reply("pending", iid);
             } else {
                 if record.writing {
-                    return Ok(reply("normal", Value::Null));
+                    return Ok(OrdinaryPlan::Immediate(reply("normal", Value::Null)));
                 }
                 let mut blocks = if record.native_blocks {
                     self.get_block_locations(&record.path).map_err(io)?
@@ -394,11 +518,13 @@ impl MasterFilesystem {
                 if !record.native_blocks && endpoint.is_none() {
                     return Err(HsmError::Busy("private import".into()));
                 }
-                record.atime_ms = now;
+                record.atime_ms = record.atime_ms.max(now);
                 record.state.revision += 1;
-                blocks.status.atime = now;
-                record.readers.retain(|_, expiry| *expiry > now);
-                record.readers.insert(reader.clone(), now + 120_000);
+                blocks.status.atime = record.atime_ms;
+                record.readers.retain(|_, expiry| read_time.active(*expiry));
+                record
+                    .readers
+                    .insert(reader.clone(), lease_now + read_clock::LEASE_MS);
                 response = reply(
                     "read",
                     ReadHandle {
@@ -406,35 +532,55 @@ impl MasterFilesystem {
                         data: record.state.data.clone(),
                         reader,
                         endpoint,
-                        expires_ms: now + 120_000,
+                        granted_ms: lease_now,
+                        expires_ms: lease_now + read_clock::LEASE_MS,
                     },
                 );
             }
         } else if op == "read_close" || op == "read_renew" {
             let reader: String = field(request, "reader")?;
+            if let Some(data) = request.get("data") {
+                let data: DataKey = serde_json::from_value(data.clone()).map_err(io)?;
+                if data != record.state.data {
+                    return if op == "read_close" {
+                        Ok(OrdinaryPlan::Immediate(reply("done", Value::Null)))
+                    } else {
+                        Err(HsmError::Fenced)
+                    };
+                }
+            }
             if op == "read_close" {
                 if record
                     .readers
                     .remove(&reader)
-                    .is_some_and(|deadline| deadline > now)
+                    .is_some_and(|deadline| read_time.active(deadline))
                     && record.state.residency != Residency::Offline
                 {
-                    record.atime_ms = now;
+                    record.atime_ms = record.atime_ms.max(now);
                     record.state.revision += 1;
                 }
             } else {
                 if record
                     .readers
                     .get(&reader)
-                    .is_none_or(|expiry| *expiry <= now)
+                    .is_none_or(|expiry| !read_time.active(*expiry))
                 {
                     return Err(HsmError::Fenced);
                 }
-                record.atime_ms = now;
+                record.atime_ms = record.atime_ms.max(now);
                 record.state.revision += 1;
-                record.readers.insert(reader, now + 120_000);
+                record
+                    .readers
+                    .insert(reader, lease_now + read_clock::LEASE_MS);
             }
-            response = reply("done", Value::Null);
+            response = reply(
+                "done",
+                if op == "read_renew" {
+                    serde_json::json!({"granted_ms":lease_now,"expires_ms":lease_now + read_clock::LEASE_MS})
+                } else {
+                    Value::Null
+                },
+            );
         } else if op == "seal_begin" {
             if !record.native_blocks || record.writing {
                 return Err(HsmError::Busy(
@@ -442,7 +588,7 @@ impl MasterFilesystem {
                 ));
             }
             if record.sealed {
-                return Ok(reply("sealed", record.state));
+                return Ok(OrdinaryPlan::Immediate(reply("sealed", record.state)));
             }
             let requested: DataKey = field(request, "data")?;
             if requested != record.state.data {
@@ -478,16 +624,33 @@ impl MasterFilesystem {
             return Err(HsmError::Unsupported(op.into()));
         }
         record.version += 1;
+        let access_only = matches!(op, "read_path" | "read_close" | "read_renew");
+        let read_state = access_only.then(|| ReadState {
+            clock_ms: lease_now,
+            data: record.state.data.clone(),
+            base_version: record.access_base.unwrap_or(previous),
+            version: record.version,
+            revision: record.state.revision,
+            atime_ms: record.atime_ms,
+            readers: record.readers.clone(),
+        });
+        let projected = read_state.as_ref().map(|access| {
+            let mut projected = record.clone();
+            projected.access_base = Some(access.base_version);
+            projected
+        });
         let tx = Transaction {
+            scan_progress_only: false,
+            read_state,
             controls,
             record_checks: vec![],
             workflow: None,
-            outcome: format!("ordinary-{op}-{}", token()),
+            outcome: identity.unwrap_or_else(|| format!("ordinary-{op}-{}", token())),
             fingerprint: request_fingerprint(request)?,
             response,
             inode: Some(id),
             expected_version: Some(previous),
-            record: Some(record),
+            record: (!access_only).then_some(record),
             namespace: None,
             expected_epoch: Some(ns.epoch),
             create: false,
@@ -495,6 +658,6 @@ impl MasterFilesystem {
             data: None,
             action: None,
         };
-        self.hsm_submit(&tx).await
+        Ok(OrdinaryPlan::Transaction(tx, projected))
     }
 }

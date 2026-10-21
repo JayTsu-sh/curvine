@@ -7,6 +7,207 @@ use curvine_rocksdb::DBConf;
 use serde_json::json;
 use std::time::Instant;
 
+#[test]
+fn read_delta_keeps_base_bytes_unchanged_and_materializes_on_stable_change() -> CommonResult<()> {
+    crate::master::Master::init_test_metrics();
+    let root = tempfile::tempdir()?;
+    let mut conf = curvine_config::ClusterConf::format();
+    conf.testing = true;
+    conf.journal.enable = false;
+    conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+    conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+    let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+    let status = fs.create("/tracked", false)?;
+    fs.complete_file("/tracked", None, 0, vec![], "unit", false, None)?;
+    let mut dir = fs.fs_dir.write();
+    dir.hsm_enabled = true;
+    let mut initial = record(1001);
+    initial.state.data.entity.entity = status.id.to_string();
+    initial.path = "/tracked".into();
+    initial.state.length = 0;
+    let mut batch = dir.get_rocks_store().new_batch();
+    ordinary::write_record(&mut batch, None, &initial)?;
+    batch.commit()?;
+    let base = dir
+        .get_rocks_store()
+        .hsm_get(&record_key(status.id))?
+        .unwrap();
+    let mut access = ReadState {
+        clock_ms: 0,
+        data: initial.state.data.clone(),
+        base_version: 1,
+        version: 2,
+        revision: 2,
+        atime_ms: initial.atime_ms + 1,
+        readers: [("reader".into(), i64::MAX)].into(),
+    };
+    let mut tx = Transaction {
+        scan_progress_only: false,
+        read_state: Some(access.clone()),
+        controls: vec![],
+        record_checks: vec![],
+        workflow: None,
+        outcome: "delta-test-1".into(),
+        fingerprint: "delta".into(),
+        response: reply("done", Value::Null),
+        inode: Some(status.id),
+        expected_version: Some(1),
+        record: None,
+        namespace: None,
+        expected_epoch: None,
+        create: false,
+        time: 1000,
+        data: None,
+        action: None,
+    };
+    dir.apply_hsm(&pack(&tx)?)?;
+    assert_eq!(
+        dir.get_rocks_store()
+            .hsm_get(&record_key(status.id))?
+            .unwrap(),
+        base
+    );
+    let current = dir.hsm_record(status.id)?.unwrap();
+    assert_eq!(current.version, 2);
+    assert_eq!(current.access_base, Some(1));
+    assert!(current.readers.contains_key("reader"));
+    assert!(dir
+        .get_rocks_store()
+        .hsm_get(&ordinary::index_key(&initial))?
+        .is_none());
+    assert!(dir
+        .get_rocks_store()
+        .hsm_get(&ordinary::index_key(&current))?
+        .is_some());
+    access.version = 3;
+    access.revision = 3;
+    access.atime_ms += 1;
+    tx.outcome = "delta-test-2".into();
+    tx.expected_version = Some(2);
+    tx.read_state = Some(access.clone());
+    dir.apply_hsm(&pack(&tx)?)?;
+    assert_eq!(
+        dir.get_rocks_store()
+            .hsm_get(&record_key(status.id))?
+            .unwrap(),
+        base
+    );
+    let mut materialized = dir.hsm_record(status.id)?.unwrap();
+    materialized.version += 1;
+    materialized.state.revision += 1;
+    materialized.sealed = false;
+    tx.outcome = "delta-materialize".into();
+    tx.expected_version = Some(3);
+    tx.read_state = None;
+    tx.record = Some(materialized);
+    dir.apply_hsm(&pack(&tx)?)?;
+    assert!(dir
+        .get_rocks_store()
+        .hsm_get(&access_key(status.id))?
+        .is_none());
+    let current = dir.hsm_record(status.id)?.unwrap();
+    assert_eq!(current.version, 4);
+    assert_eq!(current.access_base, None);
+    assert!(current.readers.contains_key("reader"));
+    let mut batch = dir.get_rocks_store().new_batch();
+    batch.hsm_put(&access_key(status.id), &pack(&access)?)?;
+    batch.commit()?;
+    assert!(
+        dir.hsm_record(status.id).is_err(),
+        "an overlay for an old base must fail closed"
+    );
+    Ok(())
+}
+
+#[test]
+fn reservation_aggregate_is_atomic_idempotent_and_rebuilds_old_checkpoint() -> CommonResult<()> {
+    crate::master::Master::init_test_metrics();
+    let root = tempfile::tempdir()?;
+    let mut conf = curvine_config::ClusterConf::format();
+    conf.testing = true;
+    conf.journal.enable = false;
+    conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+    conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+    let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+    let mut dir = fs.fs_dir.write();
+    dir.hsm_enabled = true;
+    let mut intent = LifecycleIntent {
+        id: "a".repeat(64),
+        policy: "test".into(),
+        policy_revision: 1,
+        version: 1,
+        expected: record(1001).state,
+        action: ManagedAction::Release,
+        context: OperationContext {
+            operation_id: "budget-test".into(),
+            controller_epoch: 1,
+            attempt_epoch: 1,
+        },
+        status: IntentStatus::Ready,
+        claim: None,
+        last_error: None,
+        result: None,
+    };
+    let key = lifecycle::intent_key(&intent.id)?;
+    let make_tx =
+        |id: &str, old: Option<Vec<u8>>, value: &LifecycleIntent| -> CommonResult<Transaction> {
+            Ok(Transaction {
+                scan_progress_only: false,
+                read_state: None,
+                controls: vec![ControlChange {
+                    key: key.clone(),
+                    expected: old,
+                    value: Some(pack(value)?),
+                }],
+                record_checks: vec![],
+                workflow: None,
+                outcome: id.into(),
+                fingerprint: id.into(),
+                response: reply("done", Value::Null),
+                inode: None,
+                expected_version: None,
+                record: None,
+                namespace: None,
+                expected_epoch: None,
+                create: false,
+                time: 0,
+                data: None,
+                action: None,
+            })
+        };
+    let initial = make_tx("budget-create", None, &intent)?;
+    dir.apply_hsm(&pack(&initial)?)?;
+    assert_eq!(lifecycle::reservation_total(&dir)?, 1024);
+    dir.apply_hsm(&pack(&initial)?)?;
+    assert_eq!(lifecycle::reservation_total(&dir)?, 1024);
+    // Old snapshots have reservation rows but no derived aggregate.
+    let mut batch = dir.get_rocks_store().new_batch();
+    batch.hsm_delete(lifecycle::RESERVATION_TOTAL)?;
+    batch.commit()?;
+    assert_eq!(lifecycle::reservation_total(&dir)?, 1024);
+    let old = Some(pack(&intent)?);
+    intent.status = IntentStatus::Running;
+    intent.version += 1;
+    dir.apply_hsm(&pack(&make_tx("budget-running", old, &intent)?)?)?;
+    assert_eq!(lifecycle::reservation_total(&dir)?, 1024);
+    assert!(dir
+        .get_rocks_store()
+        .hsm_get(lifecycle::RESERVATION_TOTAL)?
+        .is_some());
+    let old = Some(pack(&intent)?);
+    intent.status = IntentStatus::Failed;
+    intent.version += 1;
+    let terminal = make_tx("budget-finish", old, &intent)?;
+    dir.apply_hsm(&pack(&terminal)?)?;
+    dir.apply_hsm(&pack(&terminal)?)?;
+    assert_eq!(lifecycle::reservation_total(&dir)?, 0);
+    let mut rebound = initial;
+    rebound.outcome = "budget-conflicting-create".into();
+    dir.apply_hsm(&pack(&rebound)?)?;
+    assert_eq!(lifecycle::reservation_total(&dir)?, 0);
+    Ok(())
+}
+
 fn record(id: usize) -> Record {
     serde_json::from_value(json!({
         "ordinary":true,"native_blocks":true,"sealed":true,
@@ -354,14 +555,15 @@ fn hsm_metadata_scale_benchmark() -> CommonResult<()> {
         batch.commit()?;
         json!({"keys":count,"batches":1,"max_batch_keys":count})
     } else {
-        let stats = store.reset_hsm_projection_bounded(1024, 256 * 1024)?;
-        assert!(stats.max_batch_keys <= 1024 && stats.max_batch_bytes <= 256 * 1024);
-        json!({"keys":stats.keys,"batches":stats.batches,"max_batch_keys":stats.max_batch_keys,"max_batch_bytes":stats.max_batch_bytes})
+        store.reset_hsm_projection()?;
+        json!({"keys":null,"keys_visited":0,"batches":1,"range_tombstones":1})
     };
     let reset_ms = started.elapsed().as_secs_f64() * 1000.0;
     stop.store(true, Ordering::Relaxed);
     thread.join().unwrap();
-    assert_eq!(reset["keys"].as_u64(), Some(n as u64 * 2));
+    if baseline {
+        assert_eq!(reset["keys"].as_u64(), Some(n as u64 * 2));
+    }
     assert!(store.hsm_scan(b"\x03hsm:", None, 1)?.is_empty());
     report["reset"] = reset;
     report["reset"]["ms"] = json!(reset_ms);

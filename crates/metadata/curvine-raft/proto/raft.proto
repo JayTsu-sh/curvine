@@ -87,6 +87,16 @@ message ProposeResponse {
     optional uint64 applied_index = 1;
 }
 
+// Quorum-confirmed read on the originating member, without a journal entry.
+message ReadIndexRequest {
+    required uint64 expected_term = 1;
+}
+
+message ReadIndexResponse {
+    required uint64 term = 1;
+    required uint64 applied_index = 2;
+}
+
 message RaftRequest {
     required eraftpb.Message message = 1;
     // Process incarnation, verified by a correlated heartbeat RPC response.

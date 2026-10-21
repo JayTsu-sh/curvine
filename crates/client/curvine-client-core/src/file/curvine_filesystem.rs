@@ -148,10 +148,18 @@ impl CurvineFileSystem {
     }
 
     pub async fn open(&self, path: &Path) -> FsResult<FsReader> {
-        if let Some(handle) = super::hsm_io::open_managed(self, path).await? {
-            return FsReader::new_managed(path.clone(), self.fs_context.clone(), handle);
-        }
-        let file_blocks = self.fs_client.get_block_locations(path).await?;
+        let file_blocks = match super::hsm_io::open_managed(self, path).await? {
+            super::hsm_io::OpenedFile::Managed(handle, deadline) => {
+                return FsReader::new_managed(
+                    path.clone(),
+                    self.fs_context.clone(),
+                    handle,
+                    deadline,
+                );
+            }
+            super::hsm_io::OpenedFile::Native(blocks) => blocks,
+            super::hsm_io::OpenedFile::Legacy => self.fs_client.get_block_locations(path).await?,
+        };
 
         let reader = FsReader::new(path.clone(), self.fs_context.clone(), file_blocks)?;
         Ok(reader)

@@ -117,6 +117,22 @@ impl RaftClient {
             .block_on(async { self.timeout_rpc(node_id, request).await.map_err(|(_, e)| e) })
     }
 
+    /// Read qualification never redirects to a different member or term.
+    pub async fn send_local_read_index(
+        &self,
+        node_id: u64,
+        term: u64,
+    ) -> RaftResult<ReadIndexResponse> {
+        let request = Builder::new_rpc(RaftCode::ReadIndex)
+            .proto_header(ReadIndexRequest {
+                expected_term: term,
+            })
+            .build();
+        self.timeout_rpc(node_id, request)
+            .await
+            .map_err(|(_, error)| error)
+    }
+
     // Join the cluster.
     pub async fn join_cluster(&self, id: NodeId, addr: &InetAddr) -> RaftResult<()> {
         let change = ConfChange {

@@ -1658,6 +1658,7 @@ fn hsm_mutating_rpc(code: RpcCode) -> bool {
             | RpcCode::Link
             | RpcCode::ResizeFile
             | RpcCode::AssignWorker
+            | RpcCode::SetLock
             | RpcCode::Mount
             | RpcCode::UnMount
     )

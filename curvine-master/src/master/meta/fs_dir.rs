@@ -42,8 +42,11 @@ const MODE_SETGID: u32 = 0o2000;
 pub struct FsDir {
     pub(crate) hsm_replaying: bool,
     pub(crate) hsm_mutation_gate: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) hsm_read_batcher: Arc<crate::master::hsm::read_batch::ReadBatcher>,
+    pub(crate) hsm_read_clock: crate::master::hsm::read_clock::ReadClock,
     pub(crate) hsm_mutation_batcher: Arc<HsmMutationBatcher>,
-    pub(crate) hsm_local_apply: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    pub(crate) hsm_local_apply:
+        Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<Vec<serde_json::Value>>>>,
     pub(crate) hsm_enabled: bool,
     pub(crate) hsm_distributed: bool,
     pub(crate) hsm_rpc_conf: curvine_rpc::client::ClientConf,
@@ -125,6 +128,8 @@ impl FsDir {
         let fs_dir = Self {
             hsm_replaying: false,
             hsm_mutation_gate: Default::default(),
+            hsm_read_batcher: Default::default(),
+            hsm_read_clock: Default::default(),
             hsm_mutation_batcher: Default::default(),
             hsm_local_apply: Default::default(),
             hsm_enabled: conf.master.hsm_enabled,
@@ -1097,6 +1102,7 @@ impl FsDir {
     // Restore in-memory tree from RocksDB without checkpoint (for testing only).
     // In production, use restore() with checkpoint path via Raft snapshot.
     pub fn restore_from_rocksdb(&mut self) -> CommonResult<()> {
+        self.hsm_read_clock.reset();
         let (last_inode_id, root_dir) = self.store.create_tree()?;
         self.root_dir = root_dir;
         self.update_last_inode_id(last_inode_id)?;
@@ -1108,6 +1114,7 @@ impl FsDir {
     }
 
     pub fn restore<T: AsRef<str>>(&mut self, path: T, checkpoint_size: u64) -> CommonResult<()> {
+        self.hsm_read_clock.reset();
         let mut spend = TimeSpent::new();
         let path = path.as_ref();
 

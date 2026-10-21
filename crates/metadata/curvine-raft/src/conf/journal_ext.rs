@@ -42,6 +42,7 @@ impl JournalConfExt for JournalConf {
             max_committed_size_per_ready: self.raft_max_committed_size_per_ready,
 
             check_quorum: self.raft_check_quorum,
+            read_only_option: raft::ReadOnlyOption::Safe,
             skip_bcast_commit: true,
             pre_vote: true,
             batch_append: true,

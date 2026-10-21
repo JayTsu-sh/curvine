@@ -17,7 +17,7 @@ use curvine_runtime::common::Utils;
 use curvine_runtime::runtime::Runtime;
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClientConf {
     pub io_threads: usize,
     pub worker_threads: usize,

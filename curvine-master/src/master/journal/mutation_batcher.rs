@@ -159,7 +159,13 @@ impl HsmMutationBatcher {
             // Yield once so already-ready callers can join without adding a
             // fixed timer penalty when a client has only one RPC connection.
             tokio::task::yield_now().await;
+            let wait = std::time::Instant::now();
             let serial = gate.clone().lock_owned().await;
+            writer
+                .metrics
+                .hsm_stage_duration
+                .with_label_values(&["native", "gate"])
+                .observe(wait.elapsed().as_micros() as f64);
             let Some(batch) = self.take_batch() else {
                 return;
             };
@@ -174,6 +180,7 @@ impl HsmMutationBatcher {
                     // current leader. Already executed requests still commit.
                     continue;
                 }
+                let execute_at = std::time::Instant::now();
                 if request.start.send(term).is_err() {
                     // Canceled before admission: no mutation occurred.
                     continue;
@@ -188,15 +195,31 @@ impl HsmMutationBatcher {
                     log::error!("admitted HSM mutation vanished before commit; aborting master");
                     std::process::abort();
                 }
+                writer
+                    .metrics
+                    .hsm_stage_duration
+                    .with_label_values(&["native", "execute"])
+                    .observe(execute_at.elapsed().as_micros() as f64);
                 completed.push(request.committed);
             }
             if !completed.is_empty() {
+                writer
+                    .metrics
+                    .hsm_batch_size
+                    .with_label_values(&["native"])
+                    .observe(completed.len() as f64);
+                let commit_at = std::time::Instant::now();
                 if let Err(error) = writer.commit_pending().await {
                     // An unknown result cannot safely release the gate over
                     // speculative native state. Recovery rebuilds from Raft.
                     log::error!("HSM mutation batch commit uncertain: {error}; aborting master");
                     std::process::abort();
                 }
+                writer
+                    .metrics
+                    .hsm_stage_duration
+                    .with_label_values(&["native", "commit"])
+                    .observe(commit_at.elapsed().as_micros() as f64);
                 for waiter in completed {
                     let _ = waiter.send(());
                 }

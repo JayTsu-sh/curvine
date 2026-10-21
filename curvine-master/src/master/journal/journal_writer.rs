@@ -65,8 +65,9 @@ pub struct JournalWriter {
     pub(crate) hsm_waiters: HsmWaiters,
     node_id: u64,
     sender: BlockingSender<JournalMessage>,
+    client: RaftClient,
     journal_term: Option<Arc<AtomicU64>>,
-    metrics: &'static MasterMetrics,
+    pub(crate) metrics: &'static MasterMetrics,
     receiver: Option<Mutex<BlockingReceiver<JournalMessage>>>,
 
     leader_create_snapshot: bool,
@@ -94,7 +95,7 @@ impl JournalWriter {
         let hsm_waiters = HsmWaiters::default();
         let receiver = if !testing {
             // Start the send log thread.
-            let mut task = SenderTask::new(client, conf, 0)?;
+            let mut task = SenderTask::new(client.clone(), conf, 0)?;
             task.hsm_waiters = hsm_waiters.clone();
             task.spawn(receiver)?;
             None
@@ -111,6 +112,7 @@ impl JournalWriter {
             hsm_waiters,
             node_id,
             sender,
+            client,
             journal_term,
             metrics,
             receiver,
@@ -149,6 +151,43 @@ impl JournalWriter {
         });
         self.sender.send(JournalMessage::Entry { entry, term })?;
         self.metrics.journal_queue_len.inc();
+        Ok(())
+    }
+
+    pub(crate) fn current_term(&self) -> u64 {
+        self.journal_term
+            .as_ref()
+            .map_or(0, |term| term.load(Ordering::Acquire))
+    }
+
+    /// Drain earlier speculative native writes, then prove the local leader's
+    /// quorum qualification and applied prefix without appending an empty log.
+    pub(crate) async fn read_committed(&self) -> FsResult<()> {
+        if !self.hsm_ready {
+            return err_box!("read qualification requires the committed HSM journal");
+        }
+        let term = self.current_term();
+        if term == 0 {
+            return err_box!("read qualification has no active term");
+        }
+        self.commit_pending().await?;
+        if self.current_term() != term {
+            return err_box!("read qualification changed originating term");
+        }
+        let started = std::time::Instant::now();
+        let response = self
+            .client
+            .send_local_read_index(self.node_id, term)
+            .await
+            .map_err(|error| curvine_error::FsError::common(error.to_string()))?;
+        if response.term != term || self.current_term() != term || response.applied_index == 0 {
+            return err_box!("read qualification returned an invalid term or apply watermark");
+        }
+        self.metrics.journal_read_indexes.inc();
+        self.metrics
+            .hsm_stage_duration
+            .with_label_values(&["read_index", "quorum_apply"])
+            .observe(started.elapsed().as_micros() as f64);
         Ok(())
     }
 

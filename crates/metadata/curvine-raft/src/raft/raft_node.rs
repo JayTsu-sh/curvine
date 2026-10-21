@@ -36,13 +36,24 @@ use raft::prelude::ConfChangeType;
 use raft::{RawNode, Ready, SoftState};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
 
 struct ProposeApply {
     response: ProposeResponse,
     apply_done: Option<CallReceiver<RaftResult<()>>>,
+}
+
+const MAX_PENDING_READS: usize = 128;
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
+struct PendingRead {
+    req_id: i64,
+    callback: Option<Callback>,
+    term: u64,
+    queued: Instant,
+    index: Option<u64>,
+    submitted: bool,
 }
 
 struct PendingReady {
@@ -69,6 +80,8 @@ where
     session_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     recovery: Recovery,
     pending_ready: Option<PendingReady>,
+    pending_reads: HashMap<Vec<u8>, PendingRead>,
+    read_sequence: u64,
     snapshot_done: Option<tokio::sync::oneshot::Receiver<RaftResult<()>>>,
 
     storage: PeerStorage<A, B>,
@@ -146,6 +159,8 @@ where
             session_receiver,
             recovery,
             pending_ready: None,
+            pending_reads: HashMap::new(),
+            read_sequence: 0,
             snapshot_done: None,
             storage,
             receiver,
@@ -205,6 +220,8 @@ where
             session_receiver,
             recovery,
             pending_ready: None,
+            pending_reads: HashMap::new(),
+            read_sequence: 0,
             snapshot_done: None,
             storage,
             receiver,
@@ -361,6 +378,7 @@ where
             }
 
             self.on_ready(&mut promise).await?;
+            self.finish_reads();
             if self.recovery.active
                 && self.pending_ready.is_none()
                 && !self.storage.is_snapshot_applying()
@@ -577,6 +595,134 @@ where
         Ok(())
     }
 
+    fn handle_read_index(&mut self, env: Envelope) -> RaftResult<()> {
+        if !self.is_leader() || self.raw.raft.state != raft::StateRole::Leader {
+            return Self::send_not_leader(self.leader(), env, &self.group);
+        }
+        if self.recovery.active || self.storage.is_snapshot_applying() {
+            return Self::send_request_error(env, RaftError::leader_not_ready());
+        }
+        if self.raw.raft.read_only.option != raft::ReadOnlyOption::Safe {
+            return Self::send_request_error(
+                env,
+                RaftError::other("quorum read requires ReadOnlyOption::Safe".into()),
+            );
+        }
+        let request: ReadIndexRequest = match env.msg.parse_header() {
+            Ok(request) => request,
+            Err(error) => return Self::send_malformed_request_error(env, error.into()),
+        };
+        if request.expected_term == 0 || request.expected_term != self.raw.raft.term {
+            return Self::send_request_error(
+                env,
+                RaftError::other("read fenced by originating term".into()),
+            );
+        }
+        if self.pending_reads.len() >= MAX_PENDING_READS {
+            return Self::send_request_error(
+                env,
+                RaftError::other("read qualification queue is full".into()),
+            );
+        }
+        let Some(sequence) = self.read_sequence.checked_add(1) else {
+            return Self::send_request_error(
+                env,
+                RaftError::other("read qualification sequence exhausted".into()),
+            );
+        };
+        self.read_sequence = sequence;
+        let context = [self.session.to_be_bytes(), sequence.to_be_bytes()].concat();
+        self.pending_reads.insert(
+            context.clone(),
+            PendingRead {
+                req_id: env.msg.req_id(),
+                callback: Some(env.cb),
+                term: request.expected_term,
+                queued: Instant::now(),
+                index: None,
+                submitted: false,
+            },
+        );
+        // raft-rs uses ReadOnlyOption::Safe by default: the state appears only
+        // after quorum confirmation and a committed entry in this term.
+        self.issue_reads();
+        Ok(())
+    }
+
+    fn issue_reads(&mut self) {
+        if !self.is_leader() || self.recovery.active || !self.raw.raft.commit_to_current_term() {
+            return;
+        }
+        for (context, pending) in &mut self.pending_reads {
+            if !pending.submitted
+                && pending.term == self.raw.raft.term
+                && pending.queued.elapsed() < READ_TIMEOUT
+            {
+                // raft-rs drops pre-current-term-commit read requests. Keep
+                // those admissions private until the election no-op commits.
+                self.raw.read_index(context.clone());
+                pending.submitted = true;
+            }
+        }
+    }
+
+    fn finish_reads(&mut self) {
+        self.issue_reads();
+        let qualified = self.is_leader()
+            && self.raw.raft.state == raft::StateRole::Leader
+            && !self.recovery.active
+            && self.pending_ready.is_none()
+            && !self.storage.is_snapshot_applying();
+        let term = self.raw.raft.term;
+        let applied = self.storage.get_fsm_state().applied.index;
+        self.pending_reads.retain(|_, pending| {
+            let result = if !qualified || pending.term != term {
+                Some(Err(RaftError::other(
+                    "read qualification lost its leader term".into(),
+                )))
+            } else if let Some(index) = pending.index.filter(|index| applied >= *index) {
+                Some(Ok(ReadIndexResponse {
+                    term,
+                    applied_index: index,
+                }))
+            } else {
+                None
+            };
+            if let Some(result) = result {
+                if let Some(callback) = pending.callback.take() {
+                    let builder = Builder::new_rpc(RaftCode::ReadIndex).req_id(pending.req_id);
+                    let reply = match result {
+                        Ok(response) => builder
+                            .response(ResponseStatus::Success)
+                            .proto_header(response)
+                            .build(),
+                        Err(error) => builder
+                            .response(ResponseStatus::Error)
+                            .data(DataSlice::Buffer(error.encode()))
+                            .build(),
+                    };
+                    let _ = callback.send(Ok(reply));
+                }
+                return false;
+            }
+            if pending.queued.elapsed() >= READ_TIMEOUT {
+                if let Some(callback) = pending.callback.take() {
+                    let error = RaftError::other("read qualification timed out".into());
+                    let _ = callback.send(Ok(Builder::new_rpc(RaftCode::ReadIndex)
+                        .req_id(pending.req_id)
+                        .response(ResponseStatus::Error)
+                        .data(DataSlice::Buffer(error.encode()))
+                        .build()));
+                }
+                // Until raft confirms/cancels its context, retain an admission
+                // slot even after timeout. A lost quorum cannot grow the raw
+                // read-only queue through repeated timed-out caller requests.
+                return pending.submitted && pending.index.is_none();
+            }
+            true
+        });
+    }
+
     fn handle_ping(&self, env: Envelope) -> RaftResult<()> {
         let header = PingResponse {
             leader_id: self.leader(),
@@ -623,6 +769,7 @@ where
             RaftCode::ConfChange => self.handle_conf_change(env, promise),
 
             RaftCode::Propose => self.handle_propose(env, promise),
+            RaftCode::ReadIndex => self.handle_read_index(env),
 
             RaftCode::Ping => self.handle_ping(env),
 
@@ -668,6 +815,11 @@ where
         soft_state: Option<SoftState>,
         promise: &mut HashMap<i64, Callback>,
     ) -> RaftResult<()> {
+        for state in ready.take_read_states() {
+            if let Some(pending) = self.pending_reads.get_mut(state.request_ctx.as_slice()) {
+                pending.index = Some(state.index);
+            }
+        }
         // Persist entries before the HardState that may commit them. A crash may
         // leave extra uncommitted entries, but must never leave commit past tail.
         if !ready.entries().is_empty() {

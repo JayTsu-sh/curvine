@@ -28,7 +28,8 @@ pub struct FsReader {
     inner: Inner,
     hsm: Option<curvine_model::hsm::native::ReadHandle>,
     hsm_offset: u64,
-    hsm_renew_ms: i64,
+    hsm_renew_at: Option<std::time::Instant>,
+    hsm_deadline: Option<std::time::Instant>,
     fs_context: Arc<FsContext>,
     chunk: DataSlice,
     chunk_size: usize,
@@ -66,7 +67,8 @@ impl FsReader {
             inner,
             hsm: None,
             hsm_offset: 0,
-            hsm_renew_ms: 0,
+            hsm_renew_at: None,
+            hsm_deadline: None,
             fs_context,
             chunk: DataSlice::Empty,
             chunk_size,
@@ -82,19 +84,32 @@ impl FsReader {
         path: Path,
         context: Arc<FsContext>,
         handle: curvine_model::hsm::native::ReadHandle,
+        deadline: std::time::Instant,
     ) -> FsResult<Self> {
         let mut reader = Self::new(path, context, handle.blocks.clone())?;
-        reader.hsm_renew_ms = curvine_runtime::common::LocalTime::mills() as i64;
+        reader.hsm_deadline = Some(deadline);
+        reader.hsm_renew_at =
+            Some((std::time::Instant::now() + std::time::Duration::from_secs(30)).min(deadline));
         reader.hsm = Some(handle);
         Ok(reader)
     }
     async fn renew_hsm(&mut self) -> FsResult<()> {
-        let now = curvine_runtime::common::LocalTime::mills() as i64;
-        if now - self.hsm_renew_ms >= 30_000 {
+        let now = std::time::Instant::now();
+        if self.hsm_deadline.is_some_and(|deadline| now >= deadline) {
+            return err_box!("HSM read authorization expired before data access");
+        }
+        if self.hsm_renew_at.is_some_and(|renew| now >= renew) {
             if let Some(handle) = &self.hsm {
-                super::hsm_io::reader_control(self.fs_context.clone(), handle, "read_renew")
-                    .await?;
-                self.hsm_renew_ms = now;
+                let deadline =
+                    super::hsm_io::reader_control(self.fs_context.clone(), handle, "read_renew")
+                        .await?
+                        .ok_or_else(|| {
+                            curvine_error::FsError::common("missing renewed read deadline")
+                        })?;
+                self.hsm_deadline = Some(deadline);
+                self.hsm_renew_at = Some(
+                    (std::time::Instant::now() + std::time::Duration::from_secs(30)).min(deadline),
+                );
             }
         }
         Ok(())

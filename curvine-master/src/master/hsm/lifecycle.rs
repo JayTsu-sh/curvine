@@ -6,6 +6,10 @@ const POLICIES: &[u8] = b"\x03hsm:policy:";
 const INTENTS: &[u8] = b"\x03hsm:intent:";
 const PAGE_MAX: usize = 16;
 const SCAN_MAX: usize = 256;
+const ADMISSION_MAX: usize = 16;
+#[path = "scan.rs"]
+mod scan;
+use scan::ScanSnapshot;
 
 fn policy_key(id: &str) -> HsmResult<Vec<u8>> {
     if id.is_empty()
@@ -106,6 +110,55 @@ fn selected_path(policy: &LifecyclePolicy, record: &Record) -> bool {
 fn selected(policy: &LifecyclePolicy, record: &Record, now: i64) -> bool {
     selected_metadata(policy, record, now) && selected_path(policy, record)
 }
+
+/// Only observational scan progress can omit durable request history. Actual
+/// task admission and every file/workflow transition retain their outcomes.
+pub(super) fn validate_scan_progress(tx: &Transaction) -> CommonResult<()> {
+    if !tx.scan_progress_only {
+        return Ok(());
+    }
+    if tx.workflow.is_some()
+        || tx.inode.is_some()
+        || tx.record.is_some()
+        || tx.read_state.is_some()
+        || tx.namespace.is_some()
+        || tx.create
+        || !tx.record_checks.is_empty()
+        || tx.expected_version.is_some()
+        || tx.expected_epoch.is_none()
+        || tx.data.is_some()
+        || tx.action.is_some()
+        || tx.controls.is_empty()
+        || tx.controls.len() > 2
+        || tx.response["kind"] != "scan"
+    {
+        return Err("invalid scan-only transaction".into());
+    }
+    let result: ScanBatch = serde_json::from_value(tx.response["data"].clone())?;
+    if !result.admitted.is_empty()
+        || result.examined > SCAN_MAX
+        || result.to_seal.len() > ADMISSION_MAX
+    {
+        return Err("scan-only transaction cannot admit work".into());
+    }
+    let policy = &tx.controls[0];
+    if !policy.key.starts_with(POLICIES) || policy.expected != policy.value {
+        return Err("scan-only transaction must assert its policy".into());
+    }
+    let value: LifecyclePolicy = required(policy.expected.clone())?;
+    if policy.key != policy_key(&value.id)? {
+        return Err("scan-only policy identity mismatch".into());
+    }
+    if let Some(progress) = tx.controls.get(1) {
+        if progress.key != format!("\u{3}hsm:scan:{}:{}", value.id, value.revision).as_bytes()
+            || progress.value.is_none()
+        {
+            return Err("scan-only transaction modified another control".into());
+        }
+        let _: PolicyRun = required(progress.value.clone())?;
+    }
+    Ok(())
+}
 pub(super) fn selected_current_path(
     policy: &LifecyclePolicy,
     record: &mut Record,
@@ -127,6 +180,15 @@ impl MasterFilesystem {
         ns: &Namespace,
         ctx: &OperationContext,
         request: &Value,
+    ) -> HsmResult<Value> {
+        self.hsm_lifecycle_with_scan(ns, ctx, request, None).await
+    }
+    async fn hsm_lifecycle_with_scan(
+        &self,
+        ns: &Namespace,
+        ctx: &OperationContext,
+        request: &Value,
+        snapshot: Option<ScanSnapshot>,
     ) -> HsmResult<Value> {
         let op = request["op"].as_str().unwrap();
         let key = operation_key(&ctx.operation_id, op);
@@ -201,6 +263,8 @@ impl MasterFilesystem {
             }
             let now = curvine_runtime::common::LocalTime::mills() as i64;
             let mut tx = Transaction {
+                scan_progress_only: false,
+                read_state: None,
                 controls: vec![],
                 record_checks: vec![],
                 workflow: Some(WorkflowBinding {
@@ -256,6 +320,11 @@ impl MasterFilesystem {
                     let id: String = field(request, "id")?;
                     let pkey = policy_key(&id)?;
                     let pbytes = store.hsm_get(&pkey).map_err(io)?;
+                    if snapshot.as_ref().is_some_and(|s| s.policy_bytes != pbytes) {
+                        return Err(HsmError::Conflict(
+                            "policy changed during snapshot scan".into(),
+                        ));
+                    }
                     let policy: LifecyclePolicy = required(pbytes.clone())?;
                     let limit = request["limit"].as_u64().unwrap_or(16) as usize;
                     if !(1..=SCAN_MAX).contains(&limit) {
@@ -265,6 +334,11 @@ impl MasterFilesystem {
                     let rkey =
                         format!("\u{3}hsm:scan:{}:{}", policy.id, policy.revision).into_bytes();
                     let runbytes = store.hsm_get(&rkey).map_err(io)?;
+                    if snapshot.as_ref().is_some_and(|s| s.run_bytes != runbytes) {
+                        return Err(HsmError::Conflict(
+                            "scan progress changed during snapshot scan".into(),
+                        ));
+                    }
                     let mut run: PolicyRun = raw(runbytes.clone())?.unwrap_or_default();
                     if scheduled && (run.next_due_ms > now || !policy.enabled) {
                         return Ok(reply(
@@ -319,8 +393,18 @@ impl MasterFilesystem {
                         .filter(|s| states.contains(s))
                         .unwrap_or(states[0]);
                     let prefix = format!("\u{3}hsm:candidate:{state}:").into_bytes();
+                    if snapshot
+                        .as_ref()
+                        .is_some_and(|s| s.cursor != cursor || s.state != state)
+                    {
+                        return Err(HsmError::Conflict(
+                            "scan cursor changed during snapshot scan".into(),
+                        ));
+                    }
                     let mut page = if budget_bytes == 0 {
                         vec![]
+                    } else if let Some(snapshot) = &snapshot {
+                        snapshot.rows.clone()
                     } else {
                         store
                             .hsm_scan(
@@ -333,7 +417,8 @@ impl MasterFilesystem {
                             )
                             .map_err(io)?
                     };
-                    let more = page.len() > limit;
+                    let more = budget_bytes != 0
+                        && snapshot.as_ref().map_or(page.len() > limit, |s| s.more);
                     page.truncate(limit);
                     let mut next = if more {
                         page.last()
@@ -352,20 +437,42 @@ impl MasterFilesystem {
                         expected: pbytes.clone(),
                         value: pbytes,
                     });
-                    for (_, bytes) in &page {
+                    let mut visited: Option<String> = None;
+                    for (candidate_key, bytes) in &page {
+                        if admitted.len() + to_seal.len() >= ADMISSION_MAX {
+                            next = visited.clone();
+                            break;
+                        }
                         if run.admitted + to_seal.len() >= policy.selection.max_candidates
                             || budget_bytes == 0
                         {
                             break;
                         }
+                        visited = Some(String::from_utf8_lossy(candidate_key).into_owned());
                         let rid: String = decode(bytes).map_err(io)?;
-                        let Some(bytes) = store
-                            .hsm_get(&record_key(rid.parse().map_err(io)?))
-                            .map_err(io)?
-                        else {
-                            continue;
+                        let inode_id = rid.parse().map_err(io)?;
+                        let mut record = if let Some(snapshot) = &snapshot {
+                            let Some(record) = snapshot.records.get(&inode_id) else {
+                                continue;
+                            };
+                            // Snapshot filtering never authorizes admission: reads,
+                            // writes and tier transitions may have happened since.
+                            if fs
+                                .hsm_record(inode_id)
+                                .map_err(io)?
+                                .as_ref()
+                                .map(|r| r.version)
+                                != Some(record.version)
+                            {
+                                continue;
+                            }
+                            record.clone()
+                        } else {
+                            let Some(record) = fs.hsm_record(inode_id).map_err(io)? else {
+                                continue;
+                            };
+                            record
                         };
-                        let mut record: Record = decode(&bytes).map_err(io)?;
                         if policy.selection.min_access_age_ms > 0
                             && record.atime_ms
                                 > now.saturating_sub(policy.selection.min_access_age_ms as i64)
@@ -384,6 +491,11 @@ impl MasterFilesystem {
                         if !selected_current_path(&policy, &mut record, now, || {
                             fs.get_inode_path(inode_id).ok()
                         }) {
+                            continue;
+                        }
+                        if policy.action == PolicyAction::Release
+                            && fs.hsm_readers_active(&record).map_err(io)?
+                        {
                             continue;
                         }
                         if !record.sealed {
@@ -495,6 +607,19 @@ impl MasterFilesystem {
                             .clone()
                             .or_else(|| Some(format!("\u{3}hsm:candidate:{state}:")));
                     }
+                    if admitted.is_empty() && !scheduled && policy.selection.capacity.is_none() {
+                        // Observational manual pages have no durable effect or
+                        // workflow success to retain. Retrying simply rescans.
+                        return Ok(reply(
+                            "scan",
+                            ScanBatch {
+                                examined: page.len(),
+                                admitted,
+                                next,
+                                to_seal,
+                            },
+                        ));
+                    }
                     if scheduled || policy.selection.capacity.is_some() {
                         run.cursor = next.clone();
                         if next.is_none() || run.admitted >= policy.selection.max_candidates {
@@ -518,6 +643,10 @@ impl MasterFilesystem {
                             to_seal,
                         },
                     );
+                    if tx.record_checks.is_empty() {
+                        tx.scan_progress_only = true;
+                        tx.workflow = None;
+                    }
                 }
                 "intent_claim" | "intent_finish" => {
                     let id: String = field(request, "id")?;
@@ -584,14 +713,10 @@ impl MasterFilesystem {
                             intent.last_error = Some("admitting policy disabled or revised".into());
                         } else {
                             if let Some(policy) = &policy {
-                                let record: Record = required(
-                                    store
-                                        .hsm_get(&record_key(entity_id(
-                                            &intent.expected.data.entity,
-                                            ns,
-                                        )?))
-                                        .map_err(io)?,
-                                )?;
+                                let record = fs
+                                    .hsm_record(entity_id(&intent.expected.data.entity, ns)?)
+                                    .map_err(io)?
+                                    .ok_or_else(|| HsmError::NotFound("intent record".into()))?;
                                 if !selected(policy, &record, now) {
                                     return Err(HsmError::Busy(
                                         "policy eligibility changed; defer candidate".into(),
@@ -706,21 +831,33 @@ struct PolicyRun {
     admitted: usize,
     pressure: bool,
 }
+pub(super) const RESERVATION_TOTAL: &[u8] = b"\x03hsm:budget:online:v1";
+
 fn outstanding_bytes(fs: &FsDir, _policy: &LifecyclePolicy) -> HsmResult<u64> {
-    // All rules target the same online worker pool; reserve against a shared budget.
+    reservation_total(fs).map_err(io)
+}
+
+/// Derived shared budget, updated atomically with reservation rows. Old
+/// checkpoints without the aggregate rebuild in bounded pages once, then the
+/// next committed lifecycle command installs the aggregate.
+pub(super) fn reservation_total(fs: &FsDir) -> CommonResult<u64> {
+    if let Some(value) = fs.get_rocks_store().hsm_get(RESERVATION_TOTAL)? {
+        return decode(&value);
+    }
     let prefix = b"\x03hsm:reserved:online:".to_vec();
     let mut bytes = 0u64;
     let mut cursor: Option<Vec<u8>> = None;
     loop {
         let page = fs
             .get_rocks_store()
-            .hsm_scan(&prefix, cursor.as_deref(), 128)
-            .map_err(io)?;
+            .hsm_scan(&prefix, cursor.as_deref(), 128)?;
         if page.is_empty() {
             break;
         }
         for (_, value) in &page {
-            bytes = bytes.saturating_add(decode::<u64>(value).map_err(io)?);
+            bytes = bytes
+                .checked_add(decode::<u64>(value)?)
+                .ok_or("HSM reservation budget overflow")?;
         }
         cursor = page.last().map(|(key, _)| key.clone());
     }
@@ -744,6 +881,110 @@ fn pressure_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scan_progress_returns_apply_result_without_retaining_workflow_history() -> CommonResult<()> {
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+        let mut dir = fs.fs_dir.write();
+        dir.hsm_enabled = true;
+        let namespace = Namespace {
+            ordinary_format: 2,
+            root_inode: 1,
+            storage: "s".into(),
+            incarnation: "n".into(),
+            epoch: 1,
+        };
+        let policy: LifecyclePolicy = serde_json::from_value(serde_json::json!({
+            "id":"cold", "revision":1, "enabled":true, "prefix":"/data/",
+            "min_size":0,"max_size":null,"min_residency_ms":0,"action":"release","backend":"local"
+        }))?;
+        let pkey = policy_key(&policy.id)?;
+        let policy = pack(&policy)?;
+        let progress = b"\x03hsm:scan:cold:1".to_vec();
+        let run = PolicyRun {
+            cursor: Some("after".into()),
+            next_due_ms: 0,
+            admitted: 0,
+            pressure: false,
+        };
+        let mut batch = dir.get_rocks_store().new_batch();
+        batch.hsm_put(NS, &pack(&namespace)?)?;
+        batch.hsm_put(&pkey, &policy)?;
+        batch.commit()?;
+        let mut tx = Transaction {
+            scan_progress_only: true,
+            read_state: None,
+            controls: vec![
+                ControlChange {
+                    key: pkey,
+                    expected: Some(policy.clone()),
+                    value: Some(policy),
+                },
+                ControlChange {
+                    key: progress.clone(),
+                    expected: None,
+                    value: Some(pack(&run)?),
+                },
+            ],
+            record_checks: vec![],
+            workflow: None,
+            outcome: "empty-page".into(),
+            fingerprint: "scan".into(),
+            response: reply(
+                "scan",
+                ScanBatch {
+                    examined: 256,
+                    admitted: vec![],
+                    next: Some("after".into()),
+                    to_seal: vec![],
+                },
+            ),
+            inode: None,
+            expected_version: None,
+            record: None,
+            namespace: None,
+            expected_epoch: Some(1),
+            create: false,
+            time: 1000,
+            data: None,
+            action: None,
+        };
+        let (reply_tx, result) = tokio::sync::oneshot::channel();
+        dir.hsm_local_apply.insert("receipt".into(), reply_tx);
+        dir.apply_hsm_entry(&HsmEntry {
+            op_id: 1,
+            ticket: "receipt".into(),
+            payload: pack(&tx)?,
+        })?;
+        assert_eq!(result.blocking_recv().unwrap()[0]["kind"], "scan");
+        assert_eq!(dir.get_rocks_store().hsm_get(&progress)?, Some(pack(&run)?));
+        assert!(dir.hsm_outcome("empty-page")?.is_none());
+        assert!(dir
+            .get_rocks_store()
+            .hsm_scan(b"\x03hsm:binding:", None, 1)?
+            .is_empty());
+        // A lost reply can cause progress to be retried. CAS prevents stale
+        // progress from moving the cursor backwards, without retaining a row.
+        assert_eq!(
+            dir.apply_hsm_results(&pack(&tx)?)?[0]["data"]["code"],
+            "conflict"
+        );
+        assert!(dir.hsm_outcome("empty-page")?.is_none());
+        tx.controls[1].key = b"\x03hsm:intent:forbidden".to_vec();
+        assert!(dir.apply_hsm(&pack(&tx)?).is_err());
+        assert!(dir
+            .get_rocks_store()
+            .hsm_get(&tx.controls[1].key)?
+            .is_none());
+        Ok(())
+    }
+
     #[test]
     fn closed_unpinned_files_are_filtered_by_access_age_size_and_exclusions() {
         let policy: LifecyclePolicy = serde_json::from_value(serde_json::json!({

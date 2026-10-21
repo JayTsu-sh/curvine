@@ -99,3 +99,4 @@ mod tests {
 }
 
 pub mod native;
+pub mod wire;

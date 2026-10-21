@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-pub const CHUNK_BYTES: usize = 64 * 1024;
+pub const CHUNK_BYTES: usize = 1024 * 1024;
 pub const HSM_ROOT: &str = "/.hsm";
 pub const MANAGED_ATTR: &str = "curvine.internal.hsm.v1";
 pub fn token() -> String {
@@ -101,6 +101,9 @@ fn sealed_default() -> bool {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
+    /// Runtime projection provenance; never persisted in a journal payload.
+    #[serde(skip)]
+    pub access_base: Option<u64>,
     /// Ordinary namespace file; keeps its inode and path across tier changes.
     #[serde(default)]
     pub ordinary: bool,
@@ -151,6 +154,12 @@ pub struct WorkflowBinding {
 /// A committed compare-and-swap, not a speculative inode update.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Transaction {
+    /// Empty scan pages may checkpoint only their cursor/pressure state. They
+    /// create no workflow and need no permanently retained success result.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scan_progress_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_state: Option<ReadState>,
     #[serde(default)]
     pub controls: Vec<ControlChange>,
     #[serde(default)]
@@ -168,6 +177,19 @@ pub struct Transaction {
     pub time: i64,
     pub data: Option<DataKey>,
     pub action: Option<ManagedAction>,
+}
+/// High-frequency state overlays an immutable base record version. Anchors,
+/// stable views, publication layouts and pending workflow data stay in Record.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ReadState {
+    #[serde(default)]
+    pub clock_ms: i64,
+    pub data: DataKey,
+    pub base_version: u64,
+    pub version: u64,
+    pub revision: u64,
+    pub atime_ms: i64,
+    pub readers: BTreeMap<String, i64>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -237,5 +259,7 @@ pub struct ReadHandle {
     pub data: DataKey,
     pub reader: String,
     pub endpoint: Option<Endpoint>,
+    #[serde(default)]
+    pub granted_ms: i64,
     pub expires_ms: i64,
 }

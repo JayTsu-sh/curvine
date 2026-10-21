@@ -32,10 +32,14 @@ pub fn validate_boot(conf: &curvine_config::ClusterConf) -> curvine_error::FsRes
     Ok(())
 }
 
+const READ_BATCH_MAGIC: &[u8] = b"hsm-read-batch-v1\n";
 const LIFECYCLE_MAGIC: &[u8] = b"hsm-lifecycle-v1\n";
 const NS: &[u8] = b"\x03hsm:namespace:v1";
 fn record_key(id: i64) -> Vec<u8> {
     format!("\u{3}hsm:record:{id}").into_bytes()
+}
+fn access_key(id: i64) -> Vec<u8> {
+    format!("\u{3}hsm:access:{id}").into_bytes()
 }
 fn operation_key(id: &str, step: &str) -> String {
     serde_json::to_string(&(id, step)).expect("serializable key")
@@ -65,12 +69,34 @@ fn pack(value: impl Serialize) -> CommonResult<Vec<u8>> {
     Ok(serde_json::to_vec(&value)?)
 }
 
+/// The same base/access merge is used by live reads and RocksDB snapshots.
+fn read_record(
+    id: i64,
+    mut get: impl FnMut(&[u8]) -> CommonResult<Option<Vec<u8>>>,
+) -> CommonResult<Option<Record>> {
+    let Some(bytes) = get(&record_key(id))? else {
+        return Ok(None);
+    };
+    let mut record: Record = decode(&bytes)?;
+    if let Some(bytes) = get(&access_key(id))? {
+        let access: ReadState = decode(&bytes)?;
+        if access.base_version != record.version
+            || access.data != record.state.data
+            || access.version <= record.version
+        {
+            return err_box!("HSM access state does not match its base generation/version");
+        }
+        record.access_base = Some(record.version);
+        record.version = access.version;
+        record.state.revision = access.revision;
+        record.atime_ms = access.atime_ms;
+        record.readers = access.readers;
+    }
+    Ok(Some(record))
+}
 impl FsDir {
     pub fn hsm_record(&self, id: i64) -> CommonResult<Option<Record>> {
-        self.get_rocks_store()
-            .hsm_get(&record_key(id))?
-            .map(|v| decode(&v))
-            .transpose()
+        read_record(id, |key| self.get_rocks_store().hsm_get(key))
     }
     fn hsm_namespace(&self) -> CommonResult<Option<Namespace>> {
         self.get_rocks_store()
@@ -103,13 +129,15 @@ impl FsDir {
         if !self.hsm_enabled {
             return err_box!("HSM journal requires hsm_enabled=true on every Master");
         }
-        if entry.payload.is_empty() {
-            if let Some((_, tx)) = self.hsm_local_apply.remove(&entry.ticket) {
-                let _ = tx.send(());
-            }
-            return Ok(());
+        let results = if entry.payload.is_empty() {
+            vec![]
+        } else {
+            self.apply_hsm_results(&entry.payload)?
+        };
+        if let Some((_, tx)) = self.hsm_local_apply.remove(&entry.ticket) {
+            let _ = tx.send(results);
         }
-        self.apply_hsm(&entry.payload)
+        Ok(())
     }
     pub fn hsm_guard_id(&self, id: i64) -> curvine_error::FsResult<()> {
         if self.hsm_replaying || !self.hsm_enabled {
@@ -121,10 +149,7 @@ impl FsDir {
                 && record.seal_token.is_none()
                 && record.views.is_empty()
                 && record.pending.is_none()
-                && !ordinary::readers_active(
-                    &record,
-                    curvine_runtime::common::LocalTime::mills() as i64,
-                )
+                && !self.hsm_readers_active(&record)?
             {
                 return Ok(());
             }
@@ -158,13 +183,40 @@ impl FsDir {
     }
     /// Executed for BOTH leader and follower, only from committed journal apply.
     pub fn apply_hsm(&mut self, payload: &[u8]) -> CommonResult<()> {
-        let tx: Transaction = decode(payload.strip_prefix(LIFECYCLE_MAGIC).unwrap_or(payload))?;
-        if self.hsm_outcome(&tx.outcome)?.is_some() {
-            return Ok(());
+        self.apply_hsm_results(payload).map(|_| ())
+    }
+    fn apply_hsm_results(&mut self, payload: &[u8]) -> CommonResult<Vec<Value>> {
+        if let Some(bytes) = payload.strip_prefix(READ_BATCH_MAGIC) {
+            let transactions: Vec<Transaction> = decode(bytes)?;
+            if transactions.is_empty() || transactions.len() > 32 {
+                return err_box!("invalid bounded HSM read batch");
+            }
+            let mut results = Vec::with_capacity(transactions.len());
+            for tx in transactions {
+                results.extend(self.apply_hsm_results(&pack(&tx)?)?);
+            }
+            return Ok(results);
+        }
+        let mut tx: Transaction = decode(payload.strip_prefix(LIFECYCLE_MAGIC).unwrap_or(payload))?;
+        lifecycle::validate_scan_progress(&tx)?;
+        if !tx.scan_progress_only {
+            if let Some(outcome) = self.hsm_outcome(&tx.outcome)? {
+                return Ok(vec![if outcome.fingerprint == tx.fingerprint {
+                    outcome.response
+                } else {
+                    failure(
+                        "conflict",
+                        "operation step already committed with different input",
+                    )
+                }]);
+            }
         }
         let mut response = tx.response.clone();
         let namespace = self.hsm_namespace()?;
-        let mut valid = true;
+        let mut valid = read_history::admissible(self, &tx.outcome, tx.time)?;
+        if !valid {
+            response = failure("fenced", "read request identity was retired");
+        }
         if let Some(expected) = tx.expected_epoch {
             if namespace.as_ref().map(|n| n.epoch) != Some(expected) {
                 valid = false;
@@ -196,6 +248,40 @@ impl FsDir {
             if self.hsm_record(*id)?.as_ref().map(|r| r.version) != Some(*version) {
                 valid = false;
                 response = failure("conflict", "candidate changed before admission");
+            }
+        }
+        let access_only = tx.read_state.is_some();
+        if access_only && (tx.record.is_some() || tx.create) {
+            return err_box!("read state cannot create or replace a base record");
+        }
+        if valid {
+            if let Some(access) = &tx.read_state {
+                let current = tx
+                    .inode
+                    .map(|id| self.hsm_record(id))
+                    .transpose()?
+                    .flatten();
+                if let Some(mut current) = current.filter(|current| {
+                    access.data == current.state.data
+                        && access.base_version == current.access_base.unwrap_or(current.version)
+                        && current.version.checked_add(1) == Some(access.version)
+                        && access.revision >= current.state.revision
+                        && current
+                            .state
+                            .revision
+                            .checked_add(1)
+                            .is_some_and(|max| access.revision <= max)
+                        && access.atime_ms >= current.atime_ms
+                }) {
+                    current.version = access.version;
+                    current.state.revision = access.revision;
+                    current.atime_ms = access.atime_ms;
+                    current.readers = access.readers.clone();
+                    tx.record = Some(current);
+                } else {
+                    valid = false;
+                    response = failure("conflict", "read state no longer matches its base record");
+                }
             }
         }
         // Reserve the inode ID in queue order even if the conditional create fails.
@@ -315,8 +401,28 @@ impl FsDir {
                 {
                     record.state_since_ms = tx.time;
                 }
-                ordinary::write_record(&mut batch, old.as_ref(), &record)?;
+                if access_only {
+                    ordinary::write_access(
+                        &mut batch,
+                        old.as_ref().ok_or("read state lost its base record")?,
+                        &record,
+                        tx.read_state.as_ref().unwrap().clock_ms,
+                    )?;
+                    let clock = tx.read_state.as_ref().unwrap().clock_ms;
+                    let old = self
+                        .get_rocks_store()
+                        .hsm_get(read_clock::FLOOR)?
+                        .map(|v| decode::<i64>(&v))
+                        .transpose()?
+                        .unwrap_or(0);
+                    if clock > old {
+                        batch.hsm_put(read_clock::FLOOR, &pack(&clock)?)?;
+                    }
+                } else {
+                    ordinary::write_record(&mut batch, old.as_ref(), &record)?;
+                }
             }
+            let mut reservation_changes = std::collections::BTreeMap::new();
             for change in &tx.controls {
                 if change.key.starts_with(b"\x03hsm:intent:") {
                     if let Some(value) = &change.value {
@@ -324,10 +430,16 @@ impl FsDir {
                         let key = lifecycle::work_key(&intent);
                         let reserved =
                             format!("\u{3}hsm:reserved:online:{}", intent.id).into_bytes();
+                        let previous_reserved = self
+                            .get_rocks_store()
+                            .hsm_get(&reserved)?
+                            .map(|bytes| decode::<u64>(&bytes))
+                            .transpose()?;
+                        let mut next_reserved = previous_reserved;
                         if matches!(intent.status, IntentStatus::Ready | IntentStatus::Running)
                             && !matches!(intent.action, ManagedAction::Recall(_))
                         {
-                            if self.get_rocks_store().hsm_get(&reserved)?.is_none() {
+                            if previous_reserved.is_none() {
                                 let id: i64 = intent.expected.data.entity.entity.parse()?;
                                 let copies = if self
                                     .hsm_record(id)?
@@ -342,14 +454,22 @@ impl FsDir {
                                 } else {
                                     1
                                 };
-                                batch.hsm_put(
-                                    &reserved,
-                                    &pack(intent.expected.length.saturating_mul(copies))?,
-                                )?;
+                                let amount = intent
+                                    .expected
+                                    .length
+                                    .checked_mul(copies)
+                                    .ok_or("HSM reservation size overflow")?;
+                                batch.hsm_put(&reserved, &pack(&amount)?)?;
+                                next_reserved = Some(amount);
                             }
                         } else {
                             batch.hsm_delete(&reserved)?;
+                            next_reserved = None;
                         }
+                        reservation_changes.insert(
+                            reserved,
+                            (previous_reserved.unwrap_or(0), next_reserved.unwrap_or(0)),
+                        );
                         if matches!(intent.status, IntentStatus::Ready | IntentStatus::Running) {
                             batch.hsm_put(&key, &pack(&intent.id)?)?;
                         } else {
@@ -362,6 +482,15 @@ impl FsDir {
                     None => batch.hsm_delete(&change.key)?,
                 }
             }
+            if !tx.controls.is_empty() || tx.namespace.is_some() {
+                let mut total = lifecycle::reservation_total(self)? as i128;
+                for (old, new) in reservation_changes.values() {
+                    total += i128::from(*new) - i128::from(*old);
+                }
+                let total =
+                    u64::try_from(total).map_err(|_| "invalid HSM reservation aggregate")?;
+                batch.hsm_put(lifecycle::RESERVATION_TOTAL, &pack(&total)?)?;
+            }
             if let Some(child) = &changed_inode {
                 batch.write_inode(child.as_ref())?;
             }
@@ -371,13 +500,23 @@ impl FsDir {
                 batch.add_child(parent.id(), child.name(), child.id())?;
             }
         }
-        let outcome = Outcome {
-            fingerprint: tx.fingerprint,
-            response,
-            data: tx.data,
-            action: tx.action,
-        };
-        batch.hsm_put(&outcome_key(&tx.outcome), &pack(outcome)?)?;
+        if !tx.scan_progress_only {
+            let outcome = Outcome {
+                fingerprint: tx.fingerprint,
+                response: response.clone(),
+                data: tx.data,
+                action: tx.action,
+            };
+            let bytes = pack(outcome)?;
+            if let Ok(metrics) = crate::master::Master::get_metrics() {
+                metrics
+                    .hsm_record_write_bytes
+                    .with_label_values(&["outcome"])
+                    .inc_by(bytes.len() as i64);
+            }
+            batch.hsm_put(&outcome_key(&tx.outcome), &bytes)?;
+            read_history::record(self, &mut batch, &tx.outcome, tx.time)?;
+        }
         batch.commit()?;
         if valid && tx.create {
             self.store.fs_stats.increment_file_count();
@@ -386,7 +525,7 @@ impl FsDir {
             self.store.fs_stats.increment_dir_count();
             self.hsm_enroll_pending()?;
         }
-        Ok(())
+        Ok(vec![response])
     }
 }
 
@@ -397,7 +536,26 @@ struct Plan {
 }
 impl MasterFilesystem {
     pub(crate) async fn hsm_read_barrier(&self) -> HsmResult<()> {
-        let ticket = token();
+        let writer = self.fs_dir.read().journal_writer.clone();
+        writer.read_committed().await.map_err(io)
+    }
+    async fn hsm_submit(&self, tx: &Transaction) -> HsmResult<Value> {
+        Ok(self
+            .hsm_submit_many(std::slice::from_ref(tx), None)
+            .await?
+            .remove(0))
+    }
+    async fn hsm_submit_many(
+        &self,
+        transactions: &[Transaction],
+        originating_term: Option<u64>,
+    ) -> HsmResult<Vec<Value>> {
+        if transactions.is_empty() {
+            return Ok(vec![]);
+        }
+        if transactions.len() > 32 {
+            return Err(HsmError::Invalid("HSM batch exceeds 32 commands".into()));
+        }
         let (writer, op_id, local) = {
             let fs = self.fs_dir.read();
             (
@@ -406,64 +564,45 @@ impl MasterFilesystem {
                 fs.hsm_local_apply.clone(),
             )
         };
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        local.insert(ticket.clone(), tx);
+        let ticket = token();
+        let (applied, result) = tokio::sync::oneshot::channel();
+        local.insert(ticket.clone(), applied);
         let _cleanup = BarrierWait {
             ticket: ticket.clone(),
             waiters: local,
         };
-        let remote = writer
-            .submit_hsm(HsmEntry {
-                op_id,
-                ticket,
-                payload: vec![],
-            })
-            .map_err(io)?;
-        tokio::time::timeout(std::time::Duration::from_secs(60), async {
-            remote.await.map_err(io)?.map_err(HsmError::Unknown)?;
-            rx.await.map_err(io)
-        })
-        .await
-        .map_err(|_| HsmError::Unknown("HSM read barrier outcome unknown".into()))??;
-        Ok(())
-    }
-    async fn hsm_submit(&self, tx: &Transaction) -> HsmResult<Value> {
-        let (writer, op_id) = {
-            let fs = self.fs_dir.read();
-            (fs.journal_writer.clone(), fs.next_op_id())
+        let payload = if transactions.len() > 1 {
+            [READ_BATCH_MAGIC, pack(transactions).map_err(io)?.as_slice()].concat()
+        } else {
+            let bytes = pack(&transactions[0]).map_err(io)?;
+            if transactions[0].controls.is_empty() {
+                bytes
+            } else {
+                [LIFECYCLE_MAGIC, bytes.as_slice()].concat()
+            }
         };
         let entry = HsmEntry {
             op_id,
-            ticket: token(),
-            payload: {
-                let bytes = pack(tx).map_err(io)?;
-                if tx.controls.is_empty() {
-                    bytes
-                } else {
-                    [LIFECYCLE_MAGIC, bytes.as_slice()].concat()
-                }
-            },
+            ticket,
+            payload,
         };
-        let waiter = writer.submit_hsm(entry).map_err(io)?;
-        let ack = tokio::time::timeout(std::time::Duration::from_secs(60), waiter)
-            .await
-            .map_err(|_| HsmError::Unknown("HSM committed apply timeout; query outcome".into()))?
-            .map_err(io)?;
-        ack.map_err(HsmError::Unknown)?;
-        let outcome = self
-            .fs_dir
-            .read()
-            .hsm_outcome(&tx.outcome)
-            .map_err(io)?
-            .ok_or_else(|| {
-                HsmError::Unknown("committed outcome not visible on this leader".into())
-            })?;
-        if outcome.fingerprint != tx.fingerprint {
-            return Err(HsmError::Conflict(
-                "operation step already committed with different input".into(),
+        let waiter = match originating_term {
+            Some(term) => writer.in_origin_term_at(term, || writer.submit_hsm(entry)),
+            None => writer.submit_hsm(entry),
+        }
+        .map_err(io)?;
+        let results = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            waiter.await.map_err(io)?.map_err(HsmError::Unknown)?;
+            result.await.map_err(io)
+        })
+        .await
+        .map_err(|_| HsmError::Unknown("HSM committed apply timeout; query outcome".into()))??;
+        if results.len() != transactions.len() {
+            return Err(HsmError::Unknown(
+                "committed apply returned an invalid response count".into(),
             ));
         }
-        Ok(outcome.response)
+        Ok(results)
     }
     async fn hsm_namespace_init(&self) -> HsmResult<Namespace> {
         let current = self.fs_dir.read().hsm_namespace().map_err(io)?;
@@ -472,6 +611,8 @@ impl MasterFilesystem {
                 let mut upgraded = namespace.clone();
                 upgraded.ordinary_format = 2;
                 let tx = Transaction {
+                    scan_progress_only: false,
+                    read_state: None,
                     controls: vec![],
                     record_checks: vec![],
                     workflow: None,
@@ -502,6 +643,8 @@ impl MasterFilesystem {
             epoch: 1,
         };
         let tx = Transaction {
+            scan_progress_only: false,
+            read_state: None,
             controls: vec![],
             record_checks: vec![],
             workflow: None,
@@ -523,11 +666,50 @@ impl MasterFilesystem {
     }
     pub async fn hsm_control(&self, request: HsmControlRequest) -> HsmControlResponse {
         let enabled = self.fs_dir.read().hsm_enabled;
-        if !enabled
-            || request.protocol_version != 1
-            || request.payload.len() > HSM_MAX_CONTROL_BYTES
-        {
+        if request.protocol_version != 1 || request.payload.len() > HSM_MAX_CONTROL_BYTES {
             return curvine_model::hsm::control_response(request);
+        }
+        if !enabled {
+            if let Ok(value) = serde_json::from_slice::<Value>(&request.payload) {
+                if value["op"] == "open_path" {
+                    let result = self.hsm_native_open(&value).unwrap_or_else(error_value);
+                    return HsmControlResponse {
+                        protocol_version: 1,
+                        payload: result.to_string().into_bytes(),
+                    };
+                }
+            }
+            return curvine_model::hsm::control_response(request);
+        }
+        if let Ok(value) = serde_json::from_slice::<Value>(&request.payload) {
+            if value["op"] == "policy_scan" {
+                let fs = self.clone();
+                // Admission owns its lifetime after acceptance. Losing the
+                // connection cannot drop the gate across an unknown commit.
+                let result = tokio::spawn(async move { fs.hsm_policy_scan(value).await })
+                    .await
+                    .map_err(io)
+                    .and_then(|result| result)
+                    .unwrap_or_else(error_value);
+                return HsmControlResponse {
+                    protocol_version: 1,
+                    payload: result.to_string().into_bytes(),
+                };
+            }
+            if matches!(
+                value["op"].as_str(),
+                Some("open_path" | "read_path" | "read_close" | "read_renew")
+            ) {
+                let batcher = self.fs_dir.read().hsm_read_batcher.clone();
+                let value = batcher
+                    .execute(self.clone(), value)
+                    .await
+                    .unwrap_or_else(error_value);
+                return HsmControlResponse {
+                    protocol_version: 1,
+                    payload: value.to_string().into_bytes(),
+                };
+            }
         }
         // Normal metadata RPCs use this same gate until their journal barrier completes.
         // This prevents speculative leader metadata from changing a committed HSM CAS.
@@ -556,7 +738,18 @@ impl MasterFilesystem {
             payload: value.to_string().into_bytes(),
         }
     }
-    async fn hsm_execute(&self, request: Value) -> HsmResult<Value> {
+    fn hsm_native_open(&self, request: &Value) -> HsmResult<Value> {
+        let path: String = field(request, "path")?;
+        Ok(reply(
+            "normal_blocks",
+            self.get_block_locations(path).map_err(io)?,
+        ))
+    }
+    async fn hsm_execute(&self, mut request: Value) -> HsmResult<Value> {
+        let unified_open = request["op"] == "open_path";
+        if unified_open {
+            request["op"] = Value::String("read_path".into());
+        }
         let op = request["op"]
             .as_str()
             .ok_or_else(|| HsmError::Invalid("missing operation".into()))?;
@@ -581,7 +774,12 @@ impl MasterFilesystem {
             op,
             "read_path" | "read_close" | "read_renew" | "seal_begin" | "seal_commit"
         ) {
-            return self.hsm_ordinary(&namespace, &request).await;
+            let response = self.hsm_ordinary(&namespace, &request).await?;
+            return if unified_open && response["kind"] == "normal" {
+                self.hsm_native_open(&request)
+            } else {
+                Ok(response)
+            };
         }
         if op == "namespace" {
             return Ok(reply("namespace", namespace));
@@ -940,6 +1138,8 @@ impl MasterFilesystem {
         let op = request["op"].as_str().unwrap();
         let fs = self.fs_dir.read();
         let mut tx = Transaction {
+            scan_progress_only: false,
+            read_state: None,
             controls: vec![],
             record_checks: vec![],
             workflow: None,
@@ -1039,6 +1239,7 @@ impl MasterFilesystem {
             tx.response = reply("recall", &target);
             allocate = Some(layout.clone());
             Record {
+                access_base: None,
                 ordinary: false,
                 native_blocks: false,
                 sealed: true,
@@ -1188,7 +1389,7 @@ impl MasterFilesystem {
                 if !record.views.is_empty() || record.pending.is_some() {
                     return Err(HsmError::Busy("view or private layout active".into()));
                 }
-                if ordinary::readers_active(&record, tx.time)
+                if fs.hsm_readers_active(&record).map_err(io)?
                     || record.writing
                     || record.seal_token.is_some()
                 {
@@ -1329,6 +1530,8 @@ impl MasterFilesystem {
                     let previous = record.version;
                     record.version += 1;
                     let tx = Transaction {
+                        scan_progress_only: false,
+                        read_state: None,
                         controls: vec![],
                         record_checks: vec![],
                         workflow: None,
@@ -1374,6 +1577,8 @@ impl MasterFilesystem {
             let expected = record.version;
             record.version += 1;
             let tx = Transaction {
+                scan_progress_only: false,
+                read_state: None,
                 controls: vec![],
                 record_checks: vec![],
                 workflow: None,
@@ -1454,6 +1659,8 @@ fn rejected(
             data,
         });
     Transaction {
+        scan_progress_only: false,
+        read_state: None,
         controls: vec![],
         record_checks: vec![],
         workflow,
@@ -1498,7 +1705,7 @@ fn request_fingerprint(request: &Value) -> HsmResult<String> {
 
 struct BarrierWait {
     ticket: String,
-    waiters: std::sync::Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    waiters: std::sync::Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<Vec<Value>>>>,
 }
 impl Drop for BarrierWait {
     fn drop(&mut self) {
@@ -1508,6 +1715,33 @@ impl Drop for BarrierWait {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unmanaged_open_returns_native_blocks_without_capability_cache() {
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir().unwrap();
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let status = fs.create("/plain", false).unwrap();
+        let response = rt.block_on(fs.hsm_control(curvine_proto::HsmControlRequest {
+            protocol_version: 1,
+            payload: br#"{"op":"open_path","path":"/plain"}"#.to_vec(),
+        }));
+        let value: serde_json::Value = serde_json::from_slice(&response.payload).unwrap();
+        assert_eq!(value["kind"], "normal_blocks");
+        assert_eq!(value["data"]["status"]["id"], status.id);
+        let response = rt.block_on(fs.hsm_control(curvine_proto::HsmControlRequest {
+            protocol_version: 1,
+            payload: br#"{"op":"release"}"#.to_vec(),
+        }));
+        let value: serde_json::Value = serde_json::from_slice(&response.payload).unwrap();
+        assert_eq!(value["kind"], "error");
+    }
+
     #[test]
     fn hsm_format_refusal_does_not_format_existing_metadata() {
         let root = tempfile::tempdir().unwrap();
@@ -1538,3 +1772,10 @@ mod scale_tests;
 
 #[cfg(feature = "hsm-scale-test")]
 mod scale_fixture;
+
+pub(crate) mod read_batch;
+
+mod read_history;
+
+#[path = "hsm/read_clock.rs"]
+pub(crate) mod read_clock;

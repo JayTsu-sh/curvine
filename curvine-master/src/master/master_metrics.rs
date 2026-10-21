@@ -132,6 +132,7 @@ pub struct MasterMetrics {
     pub(crate) journal_flush_time: Counter,
     pub(crate) journal_commit_fences: Counter,
     pub(crate) journal_hsm_barriers: Counter,
+    pub(crate) journal_read_indexes: Counter,
     pub(crate) journal_committed: Gauge,
     pub(crate) journal_term: Gauge,
     pub(crate) journal_applied: Gauge,
@@ -150,6 +151,9 @@ pub struct MasterMetrics {
     pub(crate) replication_timeout_count: Counter,
 
     pub(crate) operation_duration: HistogramVec,
+    pub(crate) hsm_stage_duration: HistogramVec,
+    pub(crate) hsm_batch_size: HistogramVec,
+    pub(crate) hsm_record_write_bytes: CounterVec,
 
     // Delay from request receipt to the executor starting to run the handler,
     // i.e. how long a request waited in the RPC runtime's queue. operation_duration
@@ -200,6 +204,7 @@ impl MasterMetrics {
             "flushes": self.journal_flush_count.get(),
             "commit_fences": self.journal_commit_fences.get(),
             "hsm_barriers": self.journal_hsm_barriers.get(),
+            "read_indexes": self.journal_read_indexes.get(),
         })
     }
 
@@ -262,6 +267,7 @@ impl MasterMetrics {
             journal_flush_time: m::new_counter("journal_flush_time", "Log entry flush time")?,
             journal_commit_fences: m::new_counter("journal_commit_fences", "Runtime queue-prefix commit fences")?,
             journal_hsm_barriers: m::new_counter("journal_hsm_barriers", "Empty HSM entries submitted to Raft")?,
+            journal_read_indexes: m::new_counter("journal_read_indexes", "Quorum and local-apply confirmed reads without journal entries")?,
             journal_committed: m::new_gauge(
                 "journal_committed",
                 "Raft commit index of the journal",
@@ -308,6 +314,17 @@ impl MasterMetrics {
                 "Operation duration including WorkerHeartbeat",
                 &["operation"],
                 &buckets,
+            )?,
+            hsm_stage_duration: m::new_histogram_vec_with_buckets(
+                "hsm_stage_duration", "HSM stage duration in microseconds; bounded path/stage labels",
+                &["path", "stage"], &buckets,
+            )?,
+            hsm_batch_size: m::new_histogram_vec_with_buckets(
+                "hsm_batch_size", "Commands in a committed HSM batch", &["path"],
+                &[1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0],
+            )?,
+            hsm_record_write_bytes: m::new_counter_vec(
+                "hsm_record_write_bytes", "Encoded authority value bytes written, excluding RocksDB/WAL overhead", &["kind"],
             )?,
 
             rpc_queue_duration: m::new_histogram_vec_with_buckets(

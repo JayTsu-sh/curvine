@@ -24,7 +24,7 @@ use curvine_runtime::common::SerdeUtils;
 use curvine_runtime::common::{FileUtils, Utils};
 use log::info;
 use std::collections::{HashMap, HashSet, LinkedList, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 
 // ---------------------------------------------------------------------------
 // Private helper structs for bulk-load snapshot restore (Issue #964)
@@ -98,6 +98,30 @@ pub struct InodeStore {
     pub(crate) store: Arc<RocksInodeStore>,
     pub(crate) fs_stats: Arc<FileSystemStats>,
     ttl_bucket_list: Arc<TtlBucketList>,
+    snapshot_readers: Arc<(Mutex<usize>, Condvar)>,
+}
+
+/// An owned, bounded background read pins the database until its snapshot is
+/// dropped. Restore waits for these readers rather than failing the Arc check.
+/// The store cannot escape the lease through this interface.
+pub(crate) struct InodeReadLease {
+    store: Option<Arc<RocksInodeStore>>,
+    readers: Arc<(Mutex<usize>, Condvar)>,
+}
+impl InodeReadLease {
+    pub(crate) fn store(&self) -> &RocksInodeStore {
+        self.store.as_deref().unwrap()
+    }
+}
+impl Drop for InodeReadLease {
+    fn drop(&mut self) {
+        // Release the DB reference before waking snapshot restore.
+        drop(self.store.take());
+        let (count, changed) = &*self.readers;
+        let mut count = count.lock().unwrap();
+        *count -= 1;
+        changed.notify_all();
+    }
 }
 
 impl InodeStore {
@@ -106,7 +130,16 @@ impl InodeStore {
             store: Arc::new(store),
             fs_stats: Arc::new(FileSystemStats::new()?),
             ttl_bucket_list,
+            snapshot_readers: Arc::new((Mutex::new(0), Condvar::new())),
         })
+    }
+
+    pub(crate) fn snapshot_read_lease(&self) -> InodeReadLease {
+        *self.snapshot_readers.0.lock().unwrap() += 1;
+        InodeReadLease {
+            store: Some(self.store.clone()),
+            readers: self.snapshot_readers.clone(),
+        }
     }
 
     pub fn get_ttl_bucket_list(&self) -> Arc<TtlBucketList> {
@@ -892,6 +925,14 @@ impl InodeStore {
     }
 
     pub fn restore<T: AsRef<str>>(&mut self, path: T) -> CommonResult<()> {
+        // Callers hold FsDir exclusively, so no new lease can be registered.
+        // A snapshot reader uses only its leased DB and never reacquires FsDir.
+        let (count, changed) = &*self.snapshot_readers;
+        let mut count = count.lock().unwrap();
+        while *count != 0 {
+            count = changed.wait(count).unwrap();
+        }
+        drop(count);
         // Check if there are other references to the Arc, which would prevent the lock from being released
         let ref_count = Arc::strong_count(&self.store);
         if ref_count > 1 {
@@ -983,6 +1024,42 @@ mod tests {
         )));
         let rocks = RocksInodeStore::new(conf, true)?;
         InodeStore::new(rocks, Arc::new(TtlBucketList::new(60_000)?))
+    }
+
+    #[test]
+    fn hsm_snapshot_restore_waits_until_the_old_database_lease_is_released() -> CommonResult<()> {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let mut store = new_store("hsm-snapshot-read-lease")?;
+        let mut batch = store.new_batch();
+        batch.hsm_put(b"\x03hsm:test", b"checkpoint")?;
+        batch.commit()?;
+        let path = store.create_checkpoint(71)?;
+        let lease = store.snapshot_read_lease();
+        let (started, starting) = mpsc::channel();
+        let (done, result) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            let restored = store.restore(path);
+            done.send(restored.map(|_| store)).unwrap();
+        });
+        starting.recv_timeout(Duration::from_secs(5))?;
+        assert!(matches!(
+            result.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert_eq!(
+            lease.store().hsm_get(b"\x03hsm:test")?.as_deref(),
+            Some(b"checkpoint".as_slice())
+        );
+        drop(lease);
+        let store = result.recv_timeout(Duration::from_secs(5))??;
+        worker.join().unwrap();
+        assert_eq!(
+            store.store.hsm_get(b"\x03hsm:test")?.as_deref(),
+            Some(b"checkpoint".as_slice())
+        );
+        Ok(())
     }
 
     #[test]

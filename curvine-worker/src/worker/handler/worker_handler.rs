@@ -104,26 +104,51 @@ impl MessageHandler for WorkerHandler {
             RpcCode::HsmData => {
                 let ctx = curvine_data_transfer::RpcContext::new(msg);
                 let request: HsmControlRequest = ctx.parse_header()?;
-                let response =
-                    if request.protocol_version != 1 || request.payload.len() > 512 * 1024 {
-                        curvine_model::hsm::native::WorkerReply::Error {
-                            code: "invalid".into(),
-                            message: "invalid HSM data envelope".into(),
-                        }
-                    } else if let Some(store) = &self.store.hsm {
-                        match serde_json::from_slice(&request.payload) {
-                            Ok(req) => store.execute(req),
-                            Err(_) => curvine_model::hsm::native::WorkerReply::Error {
-                                code: "invalid".into(),
-                                message: "invalid HSM data request".into(),
-                            },
-                        }
+                let binary = request.protocol_version == curvine_model::hsm::wire::DATA_PROTOCOL;
+                let response = if !matches!(request.protocol_version, 1 | 2) {
+                    curvine_model::hsm::native::WorkerReply::Error {
+                        code: "invalid".into(),
+                        message: "invalid HSM data envelope".into(),
+                    }
+                } else if let Some(store) = &self.store.hsm {
+                    let decoded = if binary {
+                        curvine_model::hsm::wire::decode_request(
+                            &request.payload,
+                            msg.data_bytes().unwrap_or_default(),
+                        )
+                    } else if request.payload.len() <= 512 * 1024 && msg.data_len() == 0 {
+                        serde_json::from_slice(&request.payload).map_err(|error| {
+                            curvine_model::hsm::native::HsmError::Invalid(error.to_string())
+                        })
                     } else {
-                        curvine_model::hsm::native::WorkerReply::Error {
-                            code: "unsupported".into(),
-                            message: "Worker HSM disabled".into(),
-                        }
+                        Err(curvine_model::hsm::native::HsmError::Invalid(
+                            "invalid legacy HSM data frame".into(),
+                        ))
                     };
+                    match decoded {
+                        Ok(req) => store.execute(req),
+                        Err(_) => curvine_model::hsm::native::WorkerReply::Error {
+                            code: "invalid".into(),
+                            message: "invalid HSM data request".into(),
+                        },
+                    }
+                } else {
+                    curvine_model::hsm::native::WorkerReply::Error {
+                        code: "unsupported".into(),
+                        message: "Worker HSM disabled".into(),
+                    }
+                };
+                if binary {
+                    let (payload, body) = curvine_model::hsm::wire::encode_reply(response)
+                        .map_err(|error| FsError::common(error.to_string()))?;
+                    return Ok(Builder::success(msg)
+                        .proto_header(HsmControlResponse {
+                            protocol_version: curvine_model::hsm::wire::DATA_PROTOCOL,
+                            payload,
+                        })
+                        .data(curvine_io::DataSlice::Bytes(bytes::Bytes::from(body)))
+                        .build());
+                }
                 ctx.response(HsmControlResponse {
                     protocol_version: 1,
                     payload: serde_json::to_vec(&response)

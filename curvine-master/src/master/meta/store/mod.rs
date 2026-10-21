@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod inode_store;
+pub(crate) use self::inode_store::InodeReadLease;
 pub use self::inode_store::InodeStore;
 
 mod rocks_inode_store;

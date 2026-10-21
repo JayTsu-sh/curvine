@@ -32,14 +32,6 @@ pub struct RocksInodeStore {
     pub(crate) db: DBEngine,
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct HsmResetStats {
-    pub(crate) keys: usize,
-    pub(crate) batches: usize,
-    pub(crate) max_batch_keys: usize,
-    pub(crate) max_batch_bytes: usize,
-}
-
 impl RocksInodeStore {
     pub const CF_INODES: &'static str = "inodes";
     pub const CF_EDGES: &'static str = "edges";
@@ -155,68 +147,21 @@ impl RocksInodeStore {
         Ok(result)
     }
 
-    /// Rebuild the HSM authority from committed journal/snapshot on each boot.
-    /// Unsynced derived metadata must not suppress replay of committed outcomes.
+    /// Discard the untrusted projection before committed journal recovery.
+    /// A range tombstone bounds this operation independently of record count.
+    /// It is ordered before replay writes, so replayed keys inside the range
+    /// remain visible. Physical reclamation belongs to RocksDB compaction.
     pub fn reset_hsm_projection(&self) -> CommonResult<()> {
         let started = std::time::Instant::now();
-        let stats = self.reset_hsm_projection_bounded(1024, 256 * 1024)?;
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+        let cf = self.db.cf(Self::CF_COMMON)?;
+        batch.delete_range_cf(cf, b"\x03hsm:", b"\x03hsm;");
+        self.db.write_batch(batch)?;
         log::info!(
-            "reset HSM projection: keys={}, batches={}, max_batch_keys={}, max_batch_bytes={}, elapsed_ms={}",
-            stats.keys, stats.batches, stats.max_batch_keys, stats.max_batch_bytes,
-            started.elapsed().as_millis()
+            "reset HSM projection: one range tombstone, elapsed_us={}",
+            started.elapsed().as_micros()
         );
         Ok(())
-    }
-
-    pub(crate) fn reset_hsm_projection_bounded(
-        &self,
-        max_keys: usize,
-        max_bytes: usize,
-    ) -> CommonResult<HsmResetStats> {
-        if max_keys == 0 || max_bytes <= 12 {
-            return Err("invalid HSM reset batch limits".into());
-        }
-        let mut stats = HsmResetStats::default();
-        let mut start = b"\x03hsm:".to_vec();
-        loop {
-            let mut batch = self.new_batch();
-            let mut count = 0;
-            let mut last = None;
-            // Drop this iterator before committing. Keep only a bounded batch,
-            // not all keys or Record values, and never pin a scan across writes.
-            {
-                let iter = self.db.range_scan(
-                    Self::CF_COMMON,
-                    start.as_slice(),
-                    b"\x03hsm;".as_slice(),
-                )?;
-                for item in iter.take(max_keys) {
-                    let (key, _) = item?;
-                    // A deletion needs the key plus CF/tag/varint encoding.
-                    // Reserve conservatively and fail closed on an oversized key.
-                    if key.len().saturating_add(32) > max_bytes.saturating_sub(12) {
-                        return Err("HSM key exceeds reset batch byte limit".into());
-                    }
-                    if batch.batch.size_in_bytes() + key.len() + 32 > max_bytes {
-                        break;
-                    }
-                    batch.hsm_delete(&key)?;
-                    count += 1;
-                    last = Some(key.to_vec());
-                }
-            }
-            let Some(mut last) = last else {
-                return Ok(stats);
-            };
-            stats.keys += count;
-            stats.batches += 1;
-            stats.max_batch_keys = stats.max_batch_keys.max(count);
-            stats.max_batch_bytes = stats.max_batch_bytes.max(batch.batch.size_in_bytes());
-            batch.commit()?;
-            // Seek past the deleted page, rather than rescanning its tombstones.
-            last.push(0);
-            start = last;
-        }
     }
     pub fn hsm_scan(
         &self,
@@ -524,7 +469,7 @@ mod tests {
     use curvine_runtime::common::Utils;
 
     #[test]
-    fn hsm_reset_bounds_batches_preserves_other_metadata_and_resumes() -> CommonResult<()> {
+    fn hsm_range_reset_preserves_neighbors_and_replayed_keys_across_reopen() -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
         let conf = DBConf::new(directory.path().to_string_lossy().into_owned());
         let store = RocksInodeStore::new(conf.clone(), true)?;
@@ -538,21 +483,13 @@ mod tests {
             batch.hsm_put(format!("\u{3}hsm:record:{id:06}").as_bytes(), &[1; 8192])?;
         }
         batch.commit()?;
-        // Persist a partially completed prior cleanup, then reopen like a new boot.
-        let mut batch = store.new_batch();
-        for id in 0..11 {
-            batch.hsm_delete(format!("\u{3}hsm:record:{id:06}").as_bytes())?;
-        }
-        batch.commit()?;
         store.db.flush(true)?;
         drop(store);
-        let store = RocksInodeStore::new(conf, false)?;
-        let stats = store.reset_hsm_projection_bounded(7, 256)?;
-        assert_eq!(stats.keys, 102);
-        assert!(stats.batches > 102 / 7);
-        assert!(stats.max_batch_keys <= 7);
-        assert!(stats.max_batch_bytes <= 256);
+        let store = RocksInodeStore::new(conf.clone(), false)?;
+        store.reset_hsm_projection()?;
         assert!(store.hsm_scan(b"\x03hsm:", None, 1)?.is_empty());
+        // Point reads and bounded scans must both respect the tombstone.
+        assert!(store.hsm_get(b"\x03hsm:record:000001")?.is_none());
         for key in keep {
             assert_eq!(store.hsm_get(key)?.as_deref(), Some(b"keep".as_slice()));
         }
@@ -563,25 +500,22 @@ mod tests {
                 .as_deref(),
             Some(b"native".as_slice())
         );
-        assert_eq!(store.reset_hsm_projection_bounded(7, 256)?.keys, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn hsm_reset_rejects_invalid_limits_without_deleting_metadata() -> CommonResult<()> {
-        let directory = tempfile::tempdir()?;
-        let store = RocksInodeStore::new(
-            DBConf::new(directory.path().to_string_lossy().into_owned()),
-            true,
-        )?;
-        let key = [b"\x03hsm:".as_slice(), &[b'x'; 1024]].concat();
+        // Idempotent interrupted recovery starts over, then committed replay
+        // may reuse precisely the same keys without resurrecting old rows.
+        store.reset_hsm_projection()?;
         let mut batch = store.new_batch();
-        batch.hsm_put(&key, b"value")?;
+        batch.hsm_put(b"\x03hsm:record:000001", b"committed")?;
+        batch.hsm_put(b"\x03hsm:namespace:v1", b"restored")?;
         batch.commit()?;
-        assert!(store.reset_hsm_projection_bounded(0, 256).is_err());
-        assert!(store.reset_hsm_projection_bounded(1, 12).is_err());
-        assert!(store.reset_hsm_projection_bounded(1, 256).is_err());
-        assert_eq!(store.hsm_get(&key)?.as_deref(), Some(b"value".as_slice()));
+        store.db.flush(true)?;
+        drop(store);
+        let store = RocksInodeStore::new(conf, false)?;
+        assert_eq!(
+            store.hsm_get(b"\x03hsm:record:000001")?.as_deref(),
+            Some(b"committed".as_slice())
+        );
+        assert!(store.hsm_get(b"\x03hsm:record:000002")?.is_none());
+        assert_eq!(store.hsm_scan(b"\x03hsm:", None, 256)?.len(), 2);
         Ok(())
     }
 

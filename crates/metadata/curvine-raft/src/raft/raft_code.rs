@@ -26,4 +26,5 @@ pub enum RaftCode {
     Raft = 5,
     SnapshotDownload = 6,
     ReportSnapshot = 7,
+    ReadIndex = 8,
 }

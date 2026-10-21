@@ -1,6 +1,26 @@
 # HSM 性能优化方案
 
-状态：分阶段实施。P1 的普通日志回执和本节点/任期提交约束已改造，具体行为与验收见 [提交回执](commit-receipts.md)；P2 已落地普通请求的[过渡微批](mutation-microbatch.md)。SDK 关闭路径缓存、P2 统一 committed 状态机及 P3—P5 仍为目标设计。依据是 [原版与 HSM 的性能实测](performance-comparison.md)，生产代码基线为 `837b5cc4`，性能报告发布于 `5abe1b80`。现有差量索引、有界清理、元数据条件前置继续保留。
+状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 仍是安全的普通请求过渡微批，统一 committed 状态机和普通请求持久去重尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志（38 项 Raft、15 项 HSM 单元回归及真实三 Master 读批处理测试通过）。P3 读取保护批处理、基准记录/高频访问状态拆分已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+
+## 当前实现与完成门槛（2026-10-21）
+
+| 项目 | 本轮代码行为 | 仍需完成或验收 |
+|---|---|---|
+| 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
+| 读取保护 | 最多 32 个条件读命令合并一次日志；私有批内记录保证热 inode 的读者不会互相覆盖；提交后回执直接返回 apply 结果 | 混合原生/HSM 统一提交；真实故障注入 |
+| 高频状态 | `record:{inode}` 保存稳定实体；`access:{inode}` 保存 base/version、revision、atime、readers；稳定变更原子合并并删除 overlay | 精确 atime 仍迁移候选索引、仍更新原生 inode，语义保持 |
+| 租约 | 任期内单调时间；`read-clock:v1` 持久时间下界；新任期/恢复时对既有读者保守等待 120 秒；SDK 截止期从发请求时计算 | 节点暂停、墙钟跳变与换主的端到端组合故障测试；无日志 delegation 未启用 |
+| 策略筛查 | 提交前缀后固定 RocksDB 快照，后台最多 4 个扫描；每页软预算 10 ms/2 MiB（允许首条进展），最多 256 行；不填充 RocksDB block cache | 前台持续 I/O 下的百万 namespace 验收；最终调度优先级 |
+| 策略入队 | 每批最多 16 个候选；重新检查 policy/run、record version、当前路径、读保护和共享预算 | 已用无日志 ReadIndex 建立前后读取资格；P2 完成后缩短跨提交 gate |
+| 空扫描页 | 手动纯查询不记工作流结果；周期页面只条件提交 cursor/pressure，通过 apply 回执返回，无永久 outcome/binding；真正入队继续持久保存结果 | 新旧日志/checkpoint 及取消/丢回执回归 |
+| 容量预算 | `budget:online:v1` 与 Ready/Running/终态 reservation 同批增减；正常读取 O(1)；旧 checkpoint 缺项时有界分页重建 | 并发规则与换主压力测试；不是 Recall 硬容量预留 |
+| 冷恢复 | 精确 `\x03hsm:` 前缀范围 tombstone，替代逐记录删除；快照读租约在 restore 前排空；随后按既有 checkpoint/尾日志恢复 | 完整百万恢复验收；namespace 构建和日志重放仍随实际恢复内容增长 |
+| 读历史 | 时间身份 + 持久 floor 拒绝过期请求，每次最多回收 8 对普通读结果/索引；工作流原始成功结果不清理 | 旧 checkpoint 中无历史索引的 legacy outcome 不会被猜测删除 |
+| 数据通道 | 1 MiB 原始二进制 body、有界 JSON 头；连接按 Worker/config 复用，失败/取消丢弃；私有布局、Seal、摘要校验仍保留 | 本轮完整回归后再测传输收益；单副本 Recall HA 不在此优化中假装解决 |
+
+统一提交层采用两入口（submit/read）的内部模块和 SDK 私有适配；准备确定的 owned 变更集、稳定请求身份和原始回复，Leader/Follower 同样 apply。未选用“把全部旧 handler 放入双树影子环境”的方案：它还需隔离 TTL、统计、Worker 删除、mount 和后台写入，正确性改造面更大。不能仅删除当前 gate 或把非确定 handler 原样移到 follower apply。
+
+专项回归覆盖读状态物化、预算去重、快照规则变更、范围清理后的重放、恢复等待短快照、时钟跳变及空页不增长历史。真实 MiniCluster 已验证同 inode 32 读者合批与覆盖隔离；本轮代码使用路径 patch 接入 hsm-rs 后，workspace 的 30 项功能测试及全部文档测试通过，包含普通写入纳管、策略执行、并发自动 Recall、控制器资格切换和进程重启；百万测试保持 ignored，未把前一轮百万结果当成本轮验收。尚不能据此声明 P2 或全部性能优化完成。
 
 HA 为 P0/P1 起的前置约束。分层接管、微批换主、读取保护、控制器/执行器恢复及数据冗余见 [HA 设计](ha-design.md)。当前控制器自动接管、归档后端与 Recall 私有布局的端到端 HA 缺口仍待实现。
 

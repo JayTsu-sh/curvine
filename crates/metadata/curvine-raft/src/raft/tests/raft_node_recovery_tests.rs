@@ -21,6 +21,12 @@ use std::time::Instant;
 
 fn test_node(rt: Arc<Runtime>) -> RaftNode<MemLogStorage, HashAppStorage<String, String>> {
     let mut conf = JournalConf::with_test();
+    // These unit fixtures have synthetic peers with no RPC servers. A local
+    // snapshot must not spend the production 60-second report retry budget
+    // inside a test that waits ten seconds for its background job to finish.
+    conf.rpc_retry_max_duration_ms = 0;
+    conf.conn_timeout_ms = 100;
+    conf.io_timeout_ms = 500;
     let ports = [
         conf.rpc_port,
         NetUtils::get_available_port(),
@@ -69,6 +75,8 @@ fn test_node(rt: Arc<Runtime>) -> RaftNode<MemLogStorage, HashAppStorage<String,
         session_receiver,
         recovery: Recovery::new(false),
         pending_ready: None,
+        pending_reads: HashMap::new(),
+        read_sequence: 0,
         snapshot_done: None,
         storage,
         receiver,
@@ -456,4 +464,178 @@ fn journal_receipt_waits_for_majority_commit_and_local_apply() {
         Some("committed")
     );
     assert!(promise.is_empty());
+}
+
+#[test]
+fn read_index_needs_current_quorum_and_local_apply_without_appending_a_log() {
+    let rt = JournalConf::with_test().create_runtime();
+    let mut node = test_node(rt.clone());
+    node.raw.raft.become_candidate();
+    node.raw.raft.become_leader();
+    let term = node.raw.raft.term;
+    let index = node.raw.raft.raft_log.last_index();
+    let mut promise = HashMap::new();
+    let (tx, mut rx) = tokio::sync::oneshot::channel();
+    let request = Builder::new_rpc(RaftCode::ReadIndex)
+        .proto_header(ReadIndexRequest {
+            expected_term: term,
+        })
+        .build();
+    node.handle_read_index(Envelope::new(request, tx)).unwrap();
+    rt.block_on(node.on_ready(&mut promise)).unwrap();
+    node.finish_reads();
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+    assert_eq!(node.raw.raft.raft_log.last_index(), index);
+    let mut ack = raft::eraftpb::Message {
+        from: 2,
+        to: node.id(),
+        term,
+        index,
+        ..Default::default()
+    };
+    ack.set_msg_type(MessageType::MsgAppendResponse);
+    node.raw.step(ack).unwrap();
+    rt.block_on(node.on_ready(&mut promise)).unwrap();
+    node.finish_reads();
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+    let context = node.pending_reads.keys().next().unwrap().clone();
+    let mut quorum = raft::eraftpb::Message {
+        from: 2,
+        to: node.id(),
+        term,
+        context,
+        ..Default::default()
+    };
+    quorum.set_msg_type(MessageType::MsgHeartbeatResponse);
+    node.raw.step(quorum).unwrap();
+    rt.block_on(node.on_ready(&mut promise)).unwrap();
+    assert_eq!(
+        node.pending_reads.values().next().unwrap().index,
+        Some(index)
+    );
+    // Hold only the application watermark back after the real Raft core has
+    // established quorum. It must not be confused with RawNode.advance_apply.
+    rt.block_on(node.storage.app_store.apply_snapshot(SnapshotData {
+        bytes_data: Some(SerdeUtils::serialize(&HashMap::<String, String>::new()).unwrap()),
+        fsm_state: FsmState::default(),
+        ..Default::default()
+    }))
+    .unwrap();
+    node.finish_reads();
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+    rt.block_on(node.storage.app_store.apply(
+        true,
+        ApplyMsg::new_entry(Entry {
+            index,
+            term,
+            ..Default::default()
+        }),
+    ))
+    .unwrap();
+    node.finish_reads();
+    let response = rt.block_on(rx).unwrap().unwrap();
+    assert_eq!(response.response_status(), ResponseStatus::Success);
+    let receipt: ReadIndexResponse = response.parse_header().unwrap();
+    assert_eq!(receipt.applied_index, index);
+    assert_eq!(receipt.term, term);
+    assert_eq!(node.raw.raft.raft_log.last_index(), index);
+    assert!(node.pending_reads.is_empty());
+}
+
+#[test]
+fn read_index_fences_wrong_terms_and_pending_reads_after_role_loss() {
+    let rt = JournalConf::with_test().create_runtime();
+    let mut node = test_node(rt.clone());
+    node.raw.raft.become_candidate();
+    node.raw.raft.become_leader();
+    let term = node.raw.raft.term;
+    let index = node.raw.raft.raft_log.last_index();
+    for expected_term in [0, term + 1] {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let request = Builder::new_rpc(RaftCode::ReadIndex)
+            .proto_header(ReadIndexRequest { expected_term })
+            .build();
+        node.handle_read_index(Envelope::new(request, tx)).unwrap();
+        assert_eq!(
+            rt.block_on(rx).unwrap().unwrap().response_status(),
+            ResponseStatus::Error
+        );
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let request = Builder::new_rpc(RaftCode::ReadIndex)
+        .proto_header(ReadIndexRequest {
+            expected_term: term,
+        })
+        .build();
+    node.handle_read_index(Envelope::new(request, tx)).unwrap();
+    node.raw.raft.become_follower(term + 1, 2);
+    node.finish_reads();
+    assert_eq!(
+        rt.block_on(rx).unwrap().unwrap().response_status(),
+        ResponseStatus::Error
+    );
+    assert!(node.pending_reads.is_empty());
+    assert_eq!(node.raw.raft.raft_log.last_index(), index);
+}
+
+#[test]
+fn timed_out_read_contexts_keep_bounded_admission_until_raft_cancels_them() {
+    let rt = JournalConf::with_test().create_runtime();
+    let mut node = test_node(rt.clone());
+    node.raw.raft.become_candidate();
+    node.raw.raft.become_leader();
+    let term = node.raw.raft.term;
+    // Establish the term before exercising bounded raw read-only contexts.
+    let index = node.raw.raft.raft_log.last_index();
+    let mut promise = HashMap::new();
+    rt.block_on(node.on_ready(&mut promise)).unwrap();
+    let mut ack = raft::eraftpb::Message {
+        from: 2,
+        to: node.id(),
+        term,
+        index,
+        ..Default::default()
+    };
+    ack.set_msg_type(MessageType::MsgAppendResponse);
+    node.raw.step(ack).unwrap();
+    rt.block_on(node.on_ready(&mut promise)).unwrap();
+    for _ in 0..MAX_PENDING_READS {
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let request = Builder::new_rpc(RaftCode::ReadIndex)
+            .proto_header(ReadIndexRequest {
+                expected_term: term,
+            })
+            .build();
+        node.handle_read_index(Envelope::new(request, tx)).unwrap();
+    }
+    for pending in node.pending_reads.values_mut() {
+        pending.queued -= READ_TIMEOUT + Duration::from_secs(1);
+    }
+    node.finish_reads();
+    assert_eq!(node.pending_reads.len(), MAX_PENDING_READS);
+    assert!(node.pending_reads.values().all(|p| p.callback.is_none()));
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let request = Builder::new_rpc(RaftCode::ReadIndex)
+        .proto_header(ReadIndexRequest {
+            expected_term: term,
+        })
+        .build();
+    node.handle_read_index(Envelope::new(request, tx)).unwrap();
+    assert_eq!(
+        rt.block_on(rx).unwrap().unwrap().response_status(),
+        ResponseStatus::Error
+    );
+    assert_eq!(node.pending_reads.len(), MAX_PENDING_READS);
+    node.raw.raft.become_follower(term + 1, 2);
+    node.finish_reads();
+    assert!(node.pending_reads.is_empty());
 }
