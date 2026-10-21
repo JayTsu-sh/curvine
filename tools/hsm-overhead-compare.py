@@ -35,11 +35,14 @@ def main():
     parser.add_argument('--hsm-pair', action='store_true', help='Compare both binaries with HSM enabled (before/after); original-binary is the before build')
     parser.add_argument('--io-only', action='store_true', help='Only measure large-file I/O after warmup')
     parser.add_argument('--large-files', type=int, default=None, help='Large files per concurrency level (default 8, smoke 2)')
+    parser.add_argument('--master-connections', type=int, default=1, help='Master RPC connections per SDK client (default 1)')
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error('--rounds must be positive')
     if args.large_files is not None and not 1 <= args.large_files <= 1024:
         parser.error('--large-files must be 1..1024')
+    if not 1 <= args.master_connections <= 64:
+        parser.error('--master-connections must be 1..64')
     if args.output.exists() and any(args.output.iterdir()):
         parser.error('--output must be new or empty')
     args.output.mkdir(parents=True, exist_ok=True)
@@ -62,6 +65,7 @@ def main():
         'smoke': args.smoke,
         'io_only': args.io_only,
         'large_files': args.large_files or (2 if args.smoke else 8),
+        'master_connections': args.master_connections,
         'profile': 'release (both builds; see build commands)',
         'cache': 'fresh process and DB per invocation; no OS page cache purge',
         'execution': 'sequential clusters; rotated order; shared VM; loopback RPC; no physical node fault isolation',
@@ -75,7 +79,8 @@ def main():
             run = args.output / f'r{round_index+1}-{mode}'
             env = os.environ.copy()
             workload_mode = 'on' if args.hsm_pair else mode
-            env.update(BENCH_ROOT=str(run.resolve()), BENCH_MODE=workload_mode)
+            env.update(BENCH_ROOT=str(run.resolve()), BENCH_MODE=workload_mode,
+                       BENCH_MASTER_CONN_POOL_SIZE=str(args.master_connections))
             env.pop('BENCH_SMOKE', None)
             env.pop('BENCH_IO_ONLY', None)
             env.pop('BENCH_LARGE_FILES', None)

@@ -358,6 +358,14 @@ fn main() -> Result {
         return Err("BENCH_LARGE_FILES must be 1..1024".into());
     }
     let metadata_count = if smoke { 16 } else { 256 };
+    let master_connections = std::env::var("BENCH_MASTER_CONN_POOL_SIZE")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()?
+        .unwrap_or(1);
+    if !(1..=64).contains(&master_connections) {
+        return Err("BENCH_MASTER_CONN_POOL_SIZE must be 1..64".into());
+    }
     let mut conf = ClusterConf::format();
     conf.testing = false;
     conf.journal.enable = true;
@@ -373,6 +381,7 @@ fn main() -> Result {
     conf.journal.journal_dir = root.join("journal").to_string_lossy().into_owned();
     conf.worker.data_dir = vec![root.join("worker").to_string_lossy().into_owned()];
     conf.client.short_circuit = false;
+    conf.client.master_conn_pool_size = master_connections;
     conf.client.replicas = 1;
     conf.client.rpc_timeout_ms = 120000;
     conf.client.rpc_retry_max_duration_ms = 120000;
@@ -453,7 +462,7 @@ fn main() -> Result {
     let mut report = results;
     report["elapsed_seconds"] = json!(start.elapsed().as_secs_f64());
     report["process_final"] = proc_stats()?;
-    report["topology"] = json!({"masters":3,"workers":1,"server_and_client_processes":1,"replicas":1,"ufs":false,"short_circuit":false,"metadata_files_per_suite":metadata_count,"smoke":smoke,"io_only":io_only,"large_files":large_files});
+    report["topology"] = json!({"masters":3,"workers":1,"server_and_client_processes":1,"replicas":1,"ufs":false,"short_circuit":false,"master_connections":master_connections,"metadata_files_per_suite":metadata_count,"smoke":smoke,"io_only":io_only,"large_files":large_files});
     fs::write(
         root.join("report.json"),
         serde_json::to_vec_pretty(&report)?,

@@ -11,13 +11,11 @@ use curvine_error::FsResult;
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
 
 const MAX_PENDING: usize = 128;
 const MAX_BATCH: usize = 32;
 const MAX_BATCH_BYTES: usize = 256 * 1024;
-const GATHER_TIME: Duration = Duration::from_micros(750);
 
 #[derive(Default)]
 struct BatchState {
@@ -158,8 +156,9 @@ impl HsmMutationBatcher {
         monitor: MasterMonitor,
     ) {
         loop {
-            // Wait briefly for concurrent clients before taking the gate.
-            tokio::time::sleep(GATHER_TIME).await;
+            // Yield once so already-ready callers can join without adding a
+            // fixed timer penalty when a client has only one RPC connection.
+            tokio::task::yield_now().await;
             let serial = gate.clone().lock_owned().await;
             let Some(batch) = self.take_batch() else {
                 return;
