@@ -11,6 +11,7 @@ mod session;
 mod transport;
 mod view;
 pub(crate) use coordinator::NativeCoordinator;
+pub(crate) use garbage::{has_retirement, retirement_snapshot, stage_record_retirements};
 pub(crate) use input::NativeInput;
 
 pub(crate) fn legacy_fenced(

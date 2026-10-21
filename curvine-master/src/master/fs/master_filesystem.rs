@@ -76,6 +76,8 @@ pub struct LostWorkerLocationCleanup {
 
 pub(crate) enum BlockInodeState {
     File,
+    // Durable retirement still needs an actual Worker deletion acknowledgement.
+    Retired,
     Missing,
     NotFile,
 }
@@ -1265,6 +1267,10 @@ impl MasterFilesystem {
                     };
                     match state {
                         BlockInodeState::File => checked.push((item, Some(BlockInodeState::File))),
+                        BlockInodeState::Retired => {
+                            delete_blocks.push(item.id);
+                            checked.push((item, Some(BlockInodeState::Retired)));
+                        }
                         BlockInodeState::Missing if defer_writing_delete => {
                             warn!(
                                 "block_report deferred deletion for writing block {} on worker {} because its inode is missing",
@@ -1318,6 +1324,13 @@ impl MasterFilesystem {
 
                     match state {
                         BlockInodeState::File => batch.push((true, item.id, loc)),
+                        BlockInodeState::Retired => {
+                            // Sending deletion does not acknowledge it. Preserve
+                            // this replica until a Deleted report or a complete
+                            // report reconciliation proves it absent.
+                            batch.push((true, item.id, loc));
+                            wm.remove_block(list.worker_id, item.id);
+                        }
                         BlockInodeState::Missing | BlockInodeState::NotFile => {
                             batch.push((false, item.id, loc));
                             wm.remove_block(list.worker_id, item.id);
@@ -1765,6 +1778,99 @@ mod tests {
             Utils::rand_str(6)
         ));
         JournalSystem::fs_only_for_test(&conf).unwrap()
+    }
+
+    #[test]
+    fn hsm_block_reports_reject_old_layouts_and_keep_retirement_until_deleted() -> FsResult<()> {
+        use crate::master::meta::{BlockMeta, InodeId};
+        use curvine_model::hsm::native::Namespace;
+        let fs = test_fs("hsm-retired-report");
+        fs.worker_manager.write().add_test_worker(WorkerInfo {
+            address: WorkerAddress {
+                worker_id: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let status = fs.create("/payload", false)?;
+        let old = InodeId::create_block_id(status.id, 0)?;
+        let live = InodeId::create_block_id(status.id, 1)?;
+        let mut record = {
+            let mut dir = fs.fs_dir.write();
+            let mut inode = dir.store.get_inode(status.id, None)?.unwrap();
+            inode.as_file_mut()?.blocks.push(BlockMeta::new(live, 0));
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.write_inode(&inode)?;
+            batch.commit()?;
+            // Exercise an enabled authority after fixture construction without
+            // starting a real cluster in this synchronous block-report test.
+            dir.hsm_enabled = true;
+            crate::master::hsm::native_record(
+                &Namespace {
+                    ordinary_format: 2,
+                    root_inode: 1,
+                    storage: "storage".into(),
+                    incarnation: "namespace".into(),
+                    epoch: 1,
+                },
+                "/payload",
+                inode.as_file_ref()?,
+                None,
+            )?
+            .unwrap()
+        };
+        let report = |id, state| BlockReportList {
+            cluster_id: "test".into(),
+            worker_id: 1,
+            full_report: false,
+            total_len: 1,
+            report_id: 0,
+            blocks: vec![BlockReportInfo::new(id, state, StorageType::Disk, 0)],
+        };
+        let stale = fs.block_report(report(old, BlockReportStatus::Finalized), None)?;
+        assert!(
+            stale.delete_blocks.contains(&old),
+            "an inode's existence must not revive a retired layout"
+        );
+        assert!(fs.fs_dir.read().get_block_locations(old)?.is_empty());
+        // Release's Record-based outbox also needs durable replica sentinels.
+        record
+            .native_garbage
+            .insert(old, vec![BlockLocation::with_id(1)]);
+        {
+            let dir = fs.fs_dir.read();
+            let mut batch = dir.get_rocks_store().new_batch();
+            crate::master::hsm::write_native_record(&mut batch, None, &record)?;
+            batch.commit()?;
+        }
+        assert_eq!(fs.fs_dir.read().get_block_locations(old)?.len(), 1);
+        let stale = fs.block_report(report(old, BlockReportStatus::Finalized), None)?;
+        assert!(stale.delete_blocks.contains(&old));
+        assert_eq!(
+            fs.fs_dir.read().get_block_locations(old)?.len(),
+            1,
+            "a delete command is not a deletion acknowledgement"
+        );
+        fs.block_report(report(old, BlockReportStatus::Deleted), None)?;
+        assert!(fs.fs_dir.read().get_block_locations(old)?.is_empty());
+        {
+            let dir = fs.fs_dir.read();
+            let mut next = record.clone();
+            next.native_garbage.clear();
+            next.version += 1;
+            let mut batch = dir.get_rocks_store().new_batch();
+            crate::master::hsm::write_native_record(&mut batch, Some(&record), &next)?;
+            batch.commit()?;
+        }
+        let stale = fs.block_report(report(old, BlockReportStatus::Finalized), None)?;
+        assert!(stale.delete_blocks.contains(&old));
+        assert!(fs.fs_dir.read().get_block_locations(old)?.is_empty());
+        assert!(fs
+            .block_report(report(live, BlockReportStatus::Finalized), None)?
+            .delete_blocks
+            .is_empty());
+        assert_eq!(fs.fs_dir.read().get_block_locations(live)?.len(), 1);
+        Ok(())
     }
 
     fn assert_file_not_found_roundtrip(err: &FsError) {

@@ -21,6 +21,7 @@ pub(crate) fn write_record(
     old: Option<&Record>,
     record: &Record,
 ) -> CommonResult<()> {
+    crate::master::committed::stage_record_retirements(batch, old, record)?;
     let index = index_key(record);
     let old_index = old.map(index_key);
     let bytes = pack(record)?;

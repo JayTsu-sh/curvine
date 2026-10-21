@@ -336,16 +336,32 @@ fn changed_seal_and_gc_facts_keep_their_recovery_indexes() -> CommonResult<()> {
     assert_eq!(seal, current.state.data);
     let old = current.clone();
     current.native_garbage.insert(42, vec![]);
-    assert_eq!(persist(&store, Some(&old), &current)?, 2);
+    assert_eq!(persist(&store, Some(&old), &current)?, 3);
+    assert!(store
+        .hsm_get(b"\x03hsm:native-gc:v1:000000000000002a")?
+        .is_some());
+    let old = current.clone();
+    current.version += 1;
+    assert_eq!(
+        persist(&store, Some(&old), &current)?,
+        1,
+        "unchanged retirement must not rewrite its index"
+    );
     let old = current.clone();
     current.native_garbage.insert(43, vec![]);
-    assert_eq!(persist(&store, Some(&old), &current)?, 1);
+    assert_eq!(persist(&store, Some(&old), &current)?, 2);
     assert!(store.hsm_get(b"\x03hsm:gc:1001")?.is_some());
     let old = current.clone();
     current.native_garbage.clear();
     current.sealed = true;
     current.seal_token = None;
-    assert_eq!(persist(&store, Some(&old), &current)?, 3);
+    assert_eq!(persist(&store, Some(&old), &current)?, 5);
+    assert!(store
+        .hsm_get(b"\x03hsm:native-gc:v1:000000000000002a")?
+        .is_none());
+    assert!(store
+        .hsm_get(b"\x03hsm:native-gc:v1:000000000000002b")?
+        .is_none());
     assert!(store.hsm_get(b"\x03hsm:seal:1001")?.is_none());
     assert!(store.hsm_get(b"\x03hsm:gc:1001")?.is_none());
     Ok(())

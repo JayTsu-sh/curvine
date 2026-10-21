@@ -76,6 +76,84 @@ pub(super) fn apply_ack(fs: &mut FsDir, ack: &GarbageAck) -> CommonResult<()> {
     }
     batch.commit()
 }
+/// Record-backed Release and native overwrite use the same per-block lookup.
+/// The Record remains the source for legacy Release cleanup; these facts also
+/// provide a bounded lookup instead of decoding a large Record per report.
+pub(crate) fn stage_record_retirements(
+    batch: &mut crate::master::meta::store::InodeWriteBatch,
+    old: Option<&curvine_model::hsm::native::Record>,
+    record: &curvine_model::hsm::native::Record,
+) -> CommonResult<()> {
+    for (block, locations) in &record.native_garbage {
+        let previous = old.and_then(|record| record.native_garbage.get(block));
+        let changed = previous.is_none_or(|previous| {
+            previous.len() != locations.len()
+                || previous.iter().zip(locations).any(|(old, new)| {
+                    old.worker_id != new.worker_id || old.storage_type != new.storage_type
+                })
+        });
+        if changed {
+            batch.hsm_put(
+                &key(*block),
+                &SerdeUtils::serialize(&Garbage {
+                    incarnation: record.state.data.entity.namespace.clone(),
+                    block: *block,
+                    locations: locations.clone(),
+                })?,
+            )?;
+        }
+        for location in locations {
+            if previous.is_none_or(|old| {
+                !old.iter()
+                    .any(|prior| prior.worker_id == location.worker_id)
+            }) {
+                batch.add_location(*block, location)?;
+            }
+        }
+    }
+    if let Some(old) = old {
+        for block in old.native_garbage.keys() {
+            if !record.native_garbage.contains_key(block) {
+                batch.hsm_delete(&key(*block))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn has_retirement(fs: &FsDir, block: i64) -> CommonResult<bool> {
+    Ok(fs.get_rocks_store().hsm_get(&key(block))?.is_some())
+}
+
+pub(crate) struct RetirementSnapshot {
+    pub(crate) locations: Vec<BlockLocation>,
+    pub(crate) acknowledged: bool,
+}
+/// Replica placement can change after preparation. Deletion must cover both
+/// the durable manifest and all currently reported copies of this retired ID.
+pub(crate) fn retirement_snapshot(
+    fs: &FsDir,
+    block: i64,
+    known: &[BlockLocation],
+) -> CommonResult<RetirementSnapshot> {
+    let reported = fs.get_block_locations(block)?;
+    let acknowledged = reported.is_empty();
+    let mut locations: std::collections::BTreeMap<_, _> = known
+        .iter()
+        .cloned()
+        .map(|location| (location.worker_id, location))
+        .collect();
+    locations.extend(
+        reported
+            .into_iter()
+            .map(|location| (location.worker_id, location)),
+    );
+    Ok(RetirementSnapshot {
+        locations: locations.into_values().collect(),
+        acknowledged,
+    })
+}
+
 impl MasterFilesystem {
     /// Called under the existing qualified HSM mutation gate. Worker deletion
     /// commands are regenerated after a leader restart from persisted facts.
@@ -94,17 +172,14 @@ impl MasterFilesystem {
         let mut ready = vec![];
         for (key, bytes) in &page {
             let garbage = validate(key, bytes, &namespace.incarnation)?;
+            let snapshot =
+                retirement_snapshot(&self.fs_dir.read(), garbage.block, &garbage.locations)?;
             self.worker_manager.write().remove_blocks(&DeleteResult {
                 inodes: 0,
                 bytes: 0,
-                blocks: [(garbage.block, garbage.locations)].into_iter().collect(),
+                blocks: [(garbage.block, snapshot.locations)].into_iter().collect(),
             });
-            if self
-                .fs_dir
-                .read()
-                .get_block_locations(garbage.block)?
-                .is_empty()
-            {
+            if snapshot.acknowledged {
                 ready.push((key.clone(), bytes.clone()));
             }
         }
@@ -132,5 +207,59 @@ impl MasterFilesystem {
             }
         }
         Ok(page.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn gc_schedules_replicas_reported_after_the_retirement_plan() -> CommonResult<()> {
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+        let namespace = Namespace {
+            storage: "source".into(),
+            incarnation: "incarnation".into(),
+            epoch: 1,
+            ordinary_format: 2,
+            root_inode: 1,
+        };
+        {
+            let dir = fs.fs_dir.read();
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.hsm_put(b"\x03hsm:namespace:v1", &serde_json::to_vec(&namespace)?)?;
+            batch.hsm_put(
+                &key(42),
+                &SerdeUtils::serialize(&Garbage {
+                    incarnation: namespace.incarnation.clone(),
+                    block: 42,
+                    locations: vec![BlockLocation::with_id(1)],
+                })?,
+            )?;
+            // Worker 2 reported a copy after preparation took its manifest.
+            batch.add_location(42, &BlockLocation::with_id(2))?;
+            batch.commit()?;
+        }
+        assert_eq!(
+            futures::executor::block_on(fs.native_gc_batch(&namespace))?,
+            1
+        );
+        let commands = fs.worker_manager.write().block_map.handle_heartbeat(2);
+        assert!(commands.iter().any(|command| matches!(command, curvine_model::WorkerCommand::DeleteBlock(cmd) if cmd.blocks.contains(&42))),
+            "GC waited on a replica without ever scheduling its deletion");
+        assert!(fs
+            .fs_dir
+            .read()
+            .get_rocks_store()
+            .hsm_get(&key(42))?
+            .is_some());
+        assert_eq!(fs.fs_dir.read().get_block_locations(42)?.len(), 1);
+        Ok(())
     }
 }

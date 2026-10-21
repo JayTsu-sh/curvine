@@ -205,6 +205,10 @@ completed intent 不参与每轮 Ready/Running 工作索引扫描。共享预计
 
 退休时将预分配与已上报位置合并，在 `block/location` CF 写入哨兵，避免把尚无上报的副本当作已删除。外部 `gc_batch` 根据已提交事实给 Worker 下发幂等删除；观察删除确认后，把原事实字节、namespace incarnation/epoch 及游标送入 Native journal 的维护分支。apply 仅删除仍匹配的事实，并清除本地旧位置；不依赖原 inode 仍存在，也不为每块保留永久请求结果。批次未知仍需建立提交前缀隔离，否则停止服务。
 
+Release 的 `Record.native_garbage` 也在同批建立每块索引与副本哨兵；旧 checkpoint 缺该索引时仍能从 Record 判断清理义务。此索引不复制文件属性、路径或访问时间，属于相同存储权威域中的清理恢复入口。清理集合不变时不重写事实，也不会把已确认的副本位置重新加入。
+
+HSM 卷处理块报告时先判断块是否仍在当前 inode 的布局中。退休中的旧块会收到删除命令，位置仍保留到 Deleted/完整报告对账；退休已结束的过时上报会被拒绝登记。GC 给原清单与当前报告位置的并集下发删除，覆盖准备后新出现的副本。
+
 Native journal v1/v2 使用冻结 DTO 回放；v3 增加清理事实控制及维护确认，公共 NativeMutation RPC envelope 仍为 v1。格式 CF 是二进制降级栅栏，不保存另一份元数据镜像。
 
 ## 8. 一致性、提交与重放

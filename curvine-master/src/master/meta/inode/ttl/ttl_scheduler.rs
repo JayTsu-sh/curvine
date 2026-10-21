@@ -191,6 +191,10 @@ mod tests {
         create_expired_file(&fs, "/ttl/standby.log");
         std::thread::sleep(Duration::from_millis(100));
 
+        // Creation and close may fall into different 10ms buckets. Assert the
+        // skipped pass preserves the actual queue instead of assuming one row.
+        let queued = bucket_list.total_inodes();
+        assert!(queued > 0);
         // fs_only_for_test builds the filesystem without a journal role; the
         // node counts as a standby until it is explicitly promoted.
         assert!(!checker.is_active());
@@ -206,7 +210,7 @@ mod tests {
         );
         assert_eq!(
             bucket_list.total_inodes(),
-            1,
+            queued,
             "a skipped pass must not drain the bucket list"
         );
 

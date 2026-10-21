@@ -1530,16 +1530,24 @@ impl MasterFilesystem {
                 .map_err(io)?
                 .ok_or_else(|| HsmError::NotFound("managed entity".into()))?;
             if !record.native_garbage.is_empty() {
+                let blocks = {
+                    let fs = self.fs_dir.read();
+                    record
+                        .native_garbage
+                        .iter()
+                        .map(|(block, known)| {
+                            crate::master::committed::retirement_snapshot(&fs, *block, known)
+                                .map(|snapshot| (*block, snapshot.locations))
+                        })
+                        .collect::<CommonResult<std::collections::HashMap<_, _>>>()
+                        .map_err(io)?
+                };
                 self.worker_manager
                     .write()
                     .remove_blocks(&crate::master::fs::DeleteResult {
                         inodes: 0,
                         bytes: 0,
-                        blocks: record
-                            .native_garbage
-                            .iter()
-                            .map(|(k, v)| (*k, v.clone()))
-                            .collect(),
+                        blocks,
                     });
                 let acknowledged = {
                     let fs = self.fs_dir.read();

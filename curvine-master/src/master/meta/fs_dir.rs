@@ -1035,10 +1035,26 @@ impl FsDir {
         match inode {
             None => Ok(BlockInodeState::Missing),
             Some(v) => {
-                if v.is_file() {
-                    Ok(BlockInodeState::File)
+                if !v.is_file() {
+                    return Ok(BlockInodeState::NotFile);
+                }
+                let file = v.as_file_ref()?;
+                if !self.hsm_enabled
+                    || file
+                        .blocks
+                        .binary_search_by_key(&block_id, |block| block.id)
+                        .is_ok()
+                {
+                    return Ok(BlockInodeState::File);
+                }
+                if crate::master::committed::has_retirement(self, block_id)?
+                    // Old checkpoints can predate the per-block retirement
+                    // index. Preserve their Record-backed cleanup obligations.
+                    || self.hsm_record(file_id)?.is_some_and(|record| record.native_garbage.contains_key(&block_id))
+                {
+                    Ok(BlockInodeState::Retired)
                 } else {
-                    Ok(BlockInodeState::NotFile)
+                    Ok(BlockInodeState::Missing)
                 }
             }
         }
