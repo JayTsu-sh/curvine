@@ -1152,9 +1152,20 @@ impl MasterFilesystem {
                     }
                 }
             }
-            // Cleanup failure leaves the committed GC outbox, never rolls back Release.
+            // Cleanup failure leaves the committed GC outbox, never rolls back
+            // Release. A cleanup submission can still be uncertain even though
+            // the enclosing workflow already succeeded: fence its queue prefix
+            // before releasing coordination over that unconfirmed mutation.
             if let Some(entity) = &plan.gc {
-                let _ = self.hsm_gc(&namespace, entity, turn).await;
+                if matches!(
+                    self.hsm_gc(&namespace, entity, turn).await,
+                    Err(HsmError::Unknown(_))
+                ) {
+                    if let Err(error) = self.hsm_read_barrier().await {
+                        log::error!("uncertain post-commit GC could not be fenced: {error}; aborting master");
+                        std::process::abort();
+                    }
+                }
             }
         }
         Ok(response)
