@@ -534,7 +534,21 @@ impl MasterFilesystem {
         let gate = self.fs_dir.read().hsm_mutation_gate.clone();
         let _serial = gate.lock().await;
         let value = match serde_json::from_slice::<Value>(&request.payload) {
-            Ok(value) => self.hsm_execute(value).await.unwrap_or_else(error_value),
+            Ok(value) => {
+                let result = self.hsm_execute(value).await;
+                if matches!(&result, Err(HsmError::Unknown(_))) {
+                    // An unknown response may follow an already queued
+                    // authority command. Do not expose this projection to a
+                    // native mutation until the queue prefix is committed.
+                    if let Err(error) = self.hsm_read_barrier().await {
+                        log::error!(
+                            "HSM unknown outcome could not be fenced: {error}; aborting master"
+                        );
+                        std::process::abort();
+                    }
+                }
+                result.unwrap_or_else(error_value)
+            }
             Err(_) => failure("invalid", "invalid HSM request"),
         };
         HsmControlResponse {

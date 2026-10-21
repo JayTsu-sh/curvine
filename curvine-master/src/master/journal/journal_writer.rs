@@ -152,18 +152,14 @@ impl JournalWriter {
         Ok(())
     }
 
-    /// Bind every journal produced by one synchronous RPC to its entry term,
-    /// even if Raft changes term while that RPC is computing its mutations.
-    pub(crate) fn in_origin_term<T>(&self, action: impl FnOnce() -> T) -> T {
-        let Some(term) = &self.journal_term else {
+    /// Keep every entry in one speculative mutation group in the term that
+    /// admitted the group, even if the role changes during synchronous work.
+    pub(crate) fn in_origin_term_at<T>(&self, term: u64, action: impl FnOnce() -> T) -> T {
+        if self.journal_term.is_none() {
             return action();
-        };
-        let previous = ORIGIN_TERM.with(|value| {
-            value.replace(Some((
-                self as *const Self as usize,
-                term.load(Ordering::Acquire),
-            )))
-        });
+        }
+        let previous =
+            ORIGIN_TERM.with(|value| value.replace(Some((self as *const Self as usize, term))));
         let _restore = OriginTermGuard(previous);
         action()
     }
@@ -512,15 +508,50 @@ impl JournalWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::master::journal::HsmMutationBatcher;
     use crate::master::meta::inode::ttl::TtlBucketList;
     use crate::master::quota::eviction::evictor::{Evictor, LRUEvictor};
     use crate::master::quota::eviction::EvictionConf;
+    use crate::master::MasterMonitor;
     use curvine_config::{ClusterConf, RaftPeer};
-    use curvine_runtime::common::DurationUnit;
+    use curvine_net::net::{ConnState, NetUtils};
+    use curvine_raft::proto::raft::{ProposeRequest, ProposeResponse};
+    use curvine_raft::raft::{RaftClient, RaftCode, RaftError};
+    use curvine_rpc::handler::{HandlerService, MessageHandler};
+    use curvine_rpc::message::{Builder, Message};
+    use curvine_rpc::server::{RpcServer, ServerConf};
+    use curvine_runtime::common::{DurationUnit, SerdeUtils};
+    use curvine_runtime::sync::StateCtl;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    #[derive(Clone)]
+    struct DelayedProposalPeer {
+        proposals: Arc<Mutex<Vec<ProposeRequest>>>,
+    }
+
+    impl HandlerService for DelayedProposalPeer {
+        type Item = Self;
+        fn get_message_handler(&self, _: Option<ConnState>) -> Self {
+            self.clone()
+        }
+    }
+
+    impl MessageHandler for DelayedProposalPeer {
+        type Error = RaftError;
+        fn handle(&self, msg: &Message) -> Result<Message, Self::Error> {
+            assert_eq!(msg.code(), RaftCode::Propose as i8);
+            self.proposals.lock().unwrap().push(msg.parse_header()?);
+            std::thread::sleep(Duration::from_millis(150));
+            Ok(Builder::success(msg)
+                .proto_header(ProposeResponse {
+                    applied_index: Some(42),
+                })
+                .build())
+        }
+    }
 
     fn test_conf(name: &str) -> ClusterConf {
         let mut conf = ClusterConf {
@@ -587,7 +618,7 @@ mod tests {
                 mtime: 0,
             })
         };
-        writer.in_origin_term(|| -> FsResult<()> {
+        writer.in_origin_term_at(term.load(Ordering::Acquire), || -> FsResult<()> {
             writer.send_inner(entry())?;
             term.store(8, Ordering::Release);
             writer.send_inner(entry())
@@ -797,6 +828,106 @@ mod tests {
         writer.maybe_emit_snapshot(&fs_dir)?;
         assert_eq!(checkpoint_dirs(&conf).len(), 2);
 
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn canceled_caller_does_not_release_group_gate_before_commit() -> FsResult<()> {
+        Master::init_test_metrics();
+        let mut conf = JournalConf::with_test();
+        conf.rpc_port = NetUtils::hold_available_port();
+        conf.journal_addrs = vec![RaftPeer::from_addr(&conf.hostname, conf.rpc_port)];
+        conf.enable = true;
+        conf.leader_create_snapshot = Some(false);
+        conf.writer_channel_size = 0;
+        conf.writer_flush_batch_ms = 60_000;
+        conf.writer_flush_batch_size = 1000;
+        conf.io_timeout_ms = 2000;
+        let rt = conf.create_runtime();
+        let peer = DelayedProposalPeer {
+            proposals: Default::default(),
+        };
+        RpcServer::run_server(RpcServer::with_rt(
+            rt.clone(),
+            ServerConf::with_hostname(&conf.hostname, conf.rpc_port),
+            peer.clone(),
+        ));
+        let monitor = MasterMonitor::new(StateCtl::new(1), StateCtl::new(0));
+        monitor.journal_term.store(7, Ordering::Release);
+        let writer = Arc::new(JournalWriter::new_with_term(
+            false,
+            RaftClient::from_conf(rt, &conf),
+            &conf,
+            Some(monitor.journal_term.clone()),
+        )?);
+        let batcher = Arc::new(HsmMutationBatcher::default());
+        let gate = Arc::new(tokio::sync::Mutex::new(()));
+        let held = gate.lock().await;
+        let (mutated, observed) = tokio::sync::oneshot::channel();
+        let mut mutated = Some(mutated);
+        let mut tasks = Vec::new();
+        for id in 0..8_u64 {
+            let batcher = batcher.clone();
+            let gate = gate.clone();
+            let writer = writer.clone();
+            let monitor = monitor.clone();
+            let signal = if id == 0 { mutated.take() } else { None };
+            tasks.push(tokio::spawn(async move {
+                let mut ticket = batcher
+                    .enqueue(64, gate, writer.clone(), monitor)
+                    .await
+                    .unwrap();
+                let term = ticket.admitted().await.unwrap();
+                writer.in_origin_term_at(term, || {
+                    writer
+                        .send_inner(JournalEntry::Delete(DeleteEntry {
+                            op_id: id + 1,
+                            rpc_id: 0,
+                            path: format!("/batched-{id}"),
+                            mtime: 1,
+                        }))
+                        .unwrap();
+                });
+                ticket.finish();
+                if let Some(signal) = signal {
+                    let _ = signal.send(());
+                }
+                ticket.committed().await.unwrap();
+            }));
+        }
+        let (queued, queued_rx) = tokio::sync::oneshot::channel();
+        let canceled_before_start = {
+            let batcher = batcher.clone();
+            let gate = gate.clone();
+            let writer = writer.clone();
+            let monitor = monitor.clone();
+            tokio::spawn(async move {
+                let mut ticket = batcher.enqueue(64, gate, writer, monitor).await.unwrap();
+                let _ = queued.send(());
+                let _ = ticket.admitted().await;
+            })
+        };
+        queued_rx.await.unwrap();
+        canceled_before_start.abort();
+        // All requests are queued before the coordinator can acquire gate.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(held);
+        observed.await.unwrap();
+        tasks[0].abort();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), gate.lock())
+                .await
+                .is_err(),
+            "a canceled caller must not expose speculative state"
+        );
+        for task in tasks.into_iter().skip(1) {
+            task.await.unwrap();
+        }
+        let proposals = peer.proposals.lock().unwrap();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].expected_term, Some(7));
+        let batch: JournalBatch = SerdeUtils::deserialize(&proposals[0].data)?;
+        assert_eq!(batch.batch.len(), 8);
         Ok(())
     }
 }

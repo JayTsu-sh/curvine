@@ -1149,22 +1149,47 @@ impl MessageHandler for MasterHandler {
             match code {
                 RpcCode::HsmControl => {
                     let request: HsmControlRequest = ctx.parse_header()?;
-                    ctx.response(self.fs.hsm_control(request).await)
+                    let fs = self.fs.clone();
+                    // Keep the shared gate owned by this task even if the
+                    // client disconnects while an HSM command is in flight.
+                    let response = tokio::spawn(async move { fs.hsm_control(request).await })
+                        .await
+                        .unwrap_or_else(|error| {
+                            log::error!("HSM control task vanished: {error}; aborting master");
+                            std::process::abort();
+                        });
+                    ctx.response(response)
                 }
                 v if self.fs.conf.hsm_enabled && hsm_mutating_rpc(v) => {
-                    let gate = self.fs.fs_dir.read().hsm_mutation_gate.clone();
-                    let _serial = gate.lock().await;
-                    if !self.fs.master_monitor.is_active() {
-                        return Ok(
-                            msg.error_ext(&FsError::not_leader_master(ctx.code, self.client_ip()))
-                        );
+                    async {
+                        let (batcher, gate, writer) = {
+                            let fs = self.fs.fs_dir.read();
+                            (
+                                fs.hsm_mutation_batcher.clone(),
+                                fs.hsm_mutation_gate.clone(),
+                                fs.journal_writer.clone(),
+                            )
+                        };
+                        let mut ticket = batcher
+                            .enqueue(
+                                msg.header_len().saturating_add(msg.data_len()),
+                                gate,
+                                writer.clone(),
+                                self.fs.master_monitor.clone(),
+                            )
+                            .await?;
+                        let term = ticket.admitted().await?;
+                        // No await occurs between admission and finish. The
+                        // coordinator owns the gate and commits even if this RPC
+                        // is canceled after its synchronous handler returns.
+                        let response = writer.in_origin_term_at(term, || self.handle(&msg));
+                        ticket.finish();
+                        ticket.committed().await.map_err(|e| {
+                            FsError::common(format!("metadata commit outcome uncertain: {e}"))
+                        })?;
+                        response
                     }
-                    let writer = self.fs.fs_dir.read().journal_writer.clone();
-                    let response = writer.in_origin_term(|| self.handle(&msg));
-                    writer.commit_pending().await.map_err(|e| {
-                        FsError::common(format!("metadata commit outcome uncertain: {e}"))
-                    })?;
-                    response
+                    .await
                 }
                 RpcCode::SubmitJob => self.job_handler.submit_job(ctx).await,
                 RpcCode::GetJobStatus => self.job_handler.get_load_status(ctx),

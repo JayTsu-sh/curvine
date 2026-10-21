@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::master::fs::{BlockInodeState, DeleteResult};
-use crate::master::journal::{JournalEntry, JournalWriter};
+use crate::master::journal::{HsmMutationBatcher, JournalEntry, JournalWriter};
 use crate::master::meta::inode::ttl::TtlBucketList;
 use crate::master::meta::inode::InodeView::{Dir, File, FileEntry};
 use crate::master::meta::inode::*;
@@ -42,6 +42,7 @@ const MODE_SETGID: u32 = 0o2000;
 pub struct FsDir {
     pub(crate) hsm_replaying: bool,
     pub(crate) hsm_mutation_gate: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) hsm_mutation_batcher: Arc<HsmMutationBatcher>,
     pub(crate) hsm_local_apply: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<()>>>,
     pub(crate) hsm_enabled: bool,
     pub(crate) hsm_distributed: bool,
@@ -124,6 +125,7 @@ impl FsDir {
         let fs_dir = Self {
             hsm_replaying: false,
             hsm_mutation_gate: Default::default(),
+            hsm_mutation_batcher: Default::default(),
             hsm_local_apply: Default::default(),
             hsm_enabled: conf.master.hsm_enabled,
             hsm_distributed: conf.journal.journal_addrs.len() >= 3,

@@ -15,6 +15,9 @@
 mod journal_writer;
 pub use self::journal_writer::{JournalMessage, JournalWriter};
 
+mod mutation_batcher;
+pub(crate) use self::mutation_batcher::HsmMutationBatcher;
+
 mod journal_loader;
 pub use self::journal_loader::JournalLoader;
 
