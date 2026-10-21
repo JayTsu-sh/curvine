@@ -83,6 +83,12 @@ impl InodeTtlChecker {
             }
             match self.action_executor.execute_by_id(inode_id) {
                 Err(e) => {
+                    if matches!(e, FsError::NotLeaderMaster(_)) {
+                        // Leadership can change while waiting for the native
+                        // commit gate. Preserve the scheduled inode for retry.
+                        bucket.add(inode_id);
+                        continue;
+                    }
                     // A missing inode means it was already removed (e.g. by a
                     // concurrent delete); there is nothing left to clean up.
                     if !matches!(e, FsError::FileNotFound(_)) {

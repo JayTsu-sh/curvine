@@ -1,10 +1,15 @@
 #![cfg(feature = "hsm-scale-test")]
 use curvine_config::ClusterConf;
-use curvine_fs_api::{Path, Reader, Writer};
-use curvine_proto::HsmControlRequest;
+use curvine_fs_api::{Path, Reader, RpcCode, Writer};
+use curvine_model::{MkdirOpts, ProtoUtils};
+use curvine_proto::{
+    HsmControlRequest, MkdirRequest, NativeMutationRequest, NativeMutationResponse,
+    NativeMutationStatusProto as NativeStatus,
+};
 use curvine_runtime::{common::Utils, runtime::RpcRuntime};
 use curvine_server::test::MiniCluster;
 use futures::{stream, StreamExt, TryStreamExt};
+use prost::Message;
 use serde_json::{json, Value};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -28,6 +33,62 @@ async fn control(
         })
         .await?;
     Ok(serde_json::from_slice(&response.payload)?)
+}
+
+#[test]
+fn disabled_native_mkdir_preserves_legacy_confirmation_and_rejects_bound_namespace() -> Result {
+    let root = Utils::test_sub_dir(format!("native-disabled-{}", Utils::rand_str(8)));
+    let mut conf = ClusterConf::format();
+    conf.testing = false;
+    conf.master.meta_dir = format!("{root}/meta");
+    conf.journal.enable = true;
+    conf.journal.journal_dir = format!("{root}/journal");
+    conf.journal.leader_create_snapshot = Some(false);
+    conf.journal.raft_tick_interval_ms = 100;
+    conf.journal.raft_election_tick = 100;
+    conf.journal.raft_min_election_ticks = 100;
+    conf.journal.raft_max_election_ticks = 150;
+    conf.log.level = "WARN".into();
+    conf.log.log_dir = "stderr".into();
+    conf.master.log = conf.log.clone();
+    let cluster = MiniCluster::with_num(&conf, 1, 0);
+    cluster.start_cluster();
+    let fs = cluster.new_fs();
+    cluster.clone_client_rt().block_on(async {
+        let mut request = NativeMutationRequest {
+            version: 1,
+            incarnation: String::new(),
+            session: request_id(),
+            sequence: 1,
+            acknowledged: 0,
+            code: RpcCode::Mkdir as u32,
+            header: MkdirRequest {
+                path: "/off".into(),
+                opts: ProtoUtils::mkdir_opts_to_pb(MkdirOpts::with_create(false)),
+            }
+            .encode_to_vec(),
+        };
+        let response: NativeMutationResponse = fs
+            .fs_client()
+            .rpc(RpcCode::NativeMutation, request.clone())
+            .await?;
+        assert!(response.success);
+        assert_eq!(response.status, NativeStatus::LegacyResult as i32);
+        assert!(response.incarnation.is_empty());
+        assert!(fs.exists(&Path::from_str("/off")?).await?);
+        fs.mkdir(&Path::from_str("/sdk-off")?, false).await?;
+        request.incarnation = "bound-volume".into();
+        request.header = MkdirRequest {
+            path: "/must-not-create".into(),
+            opts: ProtoUtils::mkdir_opts_to_pb(MkdirOpts::with_create(false)),
+        }
+        .encode_to_vec();
+        let rejected: NativeMutationResponse =
+            fs.fs_client().rpc(RpcCode::NativeMutation, request).await?;
+        assert_eq!(rejected.status, NativeStatus::Fenced as i32);
+        assert!(!fs.exists(&Path::from_str("/must-not-create")?).await?);
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    })
 }
 
 #[test]
@@ -66,6 +127,104 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             payload: br#"{"op":"namespace"}"#.to_vec(),
         })
         .await?;
+        let before_native = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        stream::iter(0..32)
+            .map(|i| {
+                let fs = &fs;
+                async move {
+                    fs.mkdir(&Path::from_str(format!("/native-batch-{i}"))?, false)
+                        .await
+                }
+            })
+            .buffer_unordered(32)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let after_native = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let bundles = after_native["native_bundles"].as_u64().unwrap()
+            - before_native["native_bundles"].as_u64().unwrap();
+        let commands = after_native["native_commands"].as_f64().unwrap()
+            - before_native["native_commands"].as_f64().unwrap();
+        assert!(bundles > 0 && bundles < 32 && commands >= 32.0);
+        let native = fs.fs_client();
+        let make_header = |path: &str, parents| {
+            MkdirRequest {
+                path: path.into(),
+                opts: ProtoUtils::mkdir_opts_to_pb(MkdirOpts::with_create(parents)),
+            }
+            .encode_to_vec()
+        };
+        let mut request = NativeMutationRequest {
+            version: 1,
+            incarnation: String::new(),
+            session: request_id(),
+            sequence: 1,
+            acknowledged: 0,
+            code: RpcCode::Mkdir as u32,
+            header: make_header("/native/original", true),
+        };
+        let bootstrap: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, request.clone()).await?;
+        assert_eq!(bootstrap.status, NativeStatus::NeedsNamespace as i32);
+        assert!(!fs.exists(&Path::from_str("/native")?).await?);
+        request.incarnation = bootstrap.incarnation;
+        let first: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, request.clone()).await?;
+        assert!(first.success && first.status == NativeStatus::Committed as i32);
+        fs.rename(
+            &Path::from_str("/native")?,
+            &Path::from_str("/native-renamed")?,
+        )
+        .await?;
+        let repeated: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, request.clone()).await?;
+        assert_eq!(first, repeated);
+        assert!(!fs.exists(&Path::from_str("/native")?).await?);
+        let mut rebound = request.clone();
+        rebound.header = make_header("/rebound", true);
+        let rejected: NativeMutationResponse = native.rpc(RpcCode::NativeMutation, rebound).await?;
+        assert!(!rejected.success);
+        assert!(!fs.exists(&Path::from_str("/rebound")?).await?);
+        let mut next = request.clone();
+        next.sequence = 2;
+        next.acknowledged = 1;
+        next.header = make_header("/after-ack", false);
+        let second: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, next.clone()).await?;
+        assert!(second.success);
+        let retired: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, request.clone()).await?;
+        assert_eq!(retired.status, NativeStatus::Fenced as i32);
+        next.sequence = 3;
+        next.acknowledged = 2;
+        next.header = make_header("/missing/child", false);
+        let failed: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, next.clone()).await?;
+        assert!(!failed.success && failed.status == NativeStatus::Committed as i32);
+        fs.mkdir(&Path::from_str("/missing")?, false).await?;
+        let repeat_failure: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, next.clone()).await?;
+        assert_eq!(failed, repeat_failure);
+        assert!(!fs.exists(&Path::from_str("/missing/child")?).await?);
+        next.incarnation = "another-volume".into();
+        let fenced: NativeMutationResponse = native.rpc(RpcCode::NativeMutation, next).await?;
+        assert_eq!(fenced.status, NativeStatus::Fenced as i32);
+        // Native TTL still uses its original operation during migration, but
+        // joins the same gate and confirms its journal prefix on an OS thread.
+        let mut ttl_options = MkdirOpts::with_create(false);
+        ttl_options.storage_policy.ttl_ms = 1;
+        ttl_options.storage_policy.ttl_action = curvine_model::TtlAction::Delete;
+        let expired = fs
+            .mkdir_with_opts(&Path::from_str("/expired-native-dir")?, ttl_options)
+            .await?;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let active = cluster.get_active_master_fs();
+        let cleaned = tokio::task::spawn_blocking(move || {
+            curvine_master::master::meta::inode::ttl::InodeTtlExecutor::with_managers(active)
+                .execute_by_id(expired.id)
+        })
+        .await??;
+        assert!(cleaned.0);
+        assert!(!fs.exists(&Path::from_str("/expired-native-dir")?).await?);
         let path = Path::from_str("/hot")?;
         let mut writer = fs.create(&path, false).await?;
         writer.write(b"protected").await?;

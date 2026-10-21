@@ -90,6 +90,7 @@ pub enum RpcCode {
     // Versioned HSM control handshake. Data effects require native capabilities.
     HsmControl = 61,
     HsmData = 62,
+    NativeMutation = 63,
 
     // block interface.
     WriteBlock = 80,

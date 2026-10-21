@@ -68,6 +68,24 @@ impl InodeTtlExecutor {
     }
 
     pub fn execute_by_id(&self, inode_id: i64) -> FsResult<(bool, InodeView)> {
+        // Conservative no-op decisions need no mutation gate or commit. This
+        // avoids serializing a large TTL pass over files owned by HSM. The
+        // actual action repeats all checks under committed_background below.
+        {
+            let dir = self.filesystem.fs_dir.read();
+            if dir.hsm_enabled {
+                if let Some(inode) = dir.store.get_inode(inode_id, None)? {
+                    if dir.hsm_record(inode_id)?.is_some() || !inode.is_expired()? {
+                        return Ok((false, inode));
+                    }
+                }
+            }
+        }
+        self.filesystem
+            .committed_background(|| self.execute_by_id0(inode_id))
+    }
+
+    fn execute_by_id0(&self, inode_id: i64) -> FsResult<(bool, InodeView)> {
         let inode = if let Some(inode) = self.get_inode_from_store(inode_id)? {
             inode
         } else {

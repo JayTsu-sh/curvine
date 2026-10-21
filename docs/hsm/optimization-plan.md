@@ -1,12 +1,13 @@
 # HSM 性能优化方案
 
-状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 仍是安全的普通请求过渡微批，统一 committed 状态机和普通请求持久去重尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志（38 项 Raft、15 项 HSM 单元回归及真实三 Master 读批处理测试通过）。P3 读取保护批处理、基准记录/高频访问状态拆分已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir` 接入真实 committed 命令与 SDK 会话去重，其余普通修改仍走过渡微批，统一混合队列尚未切换；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
 
 ## 当前实现与完成门槛（2026-10-21）
 
 | 项目 | 本轮代码行为 | 仍需完成或验收 |
 |---|---|---|
 | 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
+| 普通 mkdir | SDK 使用 `NativeMutation` 稳定身份；最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
 | 读取保护 | 最多 32 个条件读命令合并一次日志；普通在线读增量再合并为一次 RocksDB WriteBatch；批内读者/版本按顺序合并；原生 atime 每 inode 只写最终值 | 混合原生/HSM 统一提交；真实故障注入 |
 | 大文件读结果 | 超过 32 块时，持久化原始授权、原始 FileStatus 和逻辑布局摘要；即时回复仍返回完整块位置，重试在有效保护下重建位置，不延长授权 | 大布局/复制位置变化及故障重试验收；此项减少结果编码量，不等同于吞吐收益 |
 | 高频状态 | `record:{inode}` 保存稳定实体；`access:{inode}` 保存 base/version、revision、atime、readers；稳定变更原子合并并删除 overlay | 精确 atime 仍迁移候选索引、仍更新原生 inode，语义保持 |
@@ -16,17 +17,26 @@
 | 空扫描页 | 手动纯查询不记工作流结果；周期页面只条件提交 cursor/pressure，通过 apply 回执返回，无永久 outcome/binding；真正入队继续持久保存结果 | 新旧日志/checkpoint 及取消/丢回执回归 |
 | 容量预算 | `budget:online:v1` 与 Ready/Running/终态 reservation 同批增减；正常读取 O(1)；旧 checkpoint 缺项时有界分页重建 | 并发规则与换主压力测试；不是 Recall 硬容量预留 |
 | 冷恢复 | HSM 卷用一个 WriteBatch 的 7 个 range tombstone 清除原生 inode/edge/block/location、HSM、mount、lock 投影，随后从 checkpoint/尾日志重建；保留无关 common 事实；restore 排空快照读租约 | 完整百万恢复验收；namespace 构建和日志重放仍随实际恢复内容增长 |
-| 格式与分配 | 新增 `hsm_native_v2` CF 作为降级拒绝标记；单条 access/progress 也用版本封装；提交原生/HSM 分配记录时持久推进 inode 分配上限，恢复取其与存量 ID 的最大值 | 旧 checkpoint 未记录过的历史已删除最大 ID 无法凭空恢复；P2 全路径接入仍待完成 |
+| 格式与分配 | `hsm_native_v2/v3` CF 分别标记访问增量与 Native journal 格式；单条 access/progress 也用版本封装；Native variant 只追加，不改变历史编号；持久推进 inode 分配上限 | 旧 checkpoint 未记录过的历史已删除最大 ID 无法凭空恢复；P2 全路径接入仍待完成 |
+| 后台写入排序 | TTL/配额回收与失联 Worker 清理的 namespace 修改取得相同 gate，并在 OS 线程等待自身 journal 前缀确认；换主后 TTL 重新入桶；HSM 文件与未过期 inode 的纯延期判断不争提交 gate | 后台修改也迁移为 owned 命令；旧路径的 Worker 删除还需全部改为持久 outbox |
 | 读历史 | 时间身份 + 持久 floor 拒绝过期请求，每次最多回收 8 对普通读结果/索引；工作流原始成功结果不清理 | 旧 checkpoint 中无历史索引的 legacy outcome 不会被猜测删除 |
 | 数据通道 | 1 MiB 原始二进制 body、有界 JSON 头；连接按 Worker/config 复用，失败/取消丢弃；私有布局、Seal、摘要校验仍保留 | 本轮完整回归后再测传输收益；单副本 Recall HA 不在此优化中假装解决 |
 
 统一提交层采用两入口（submit/read）的内部模块和 SDK 私有适配；准备确定的 owned 变更集、稳定请求身份和原始回复，Leader/Follower 同样 apply。未选用“把全部旧 handler 放入双树影子环境”的方案：它还需隔离 TTL、统计、Worker 删除、mount 和后台写入，正确性改造面更大。不能仅删除当前 gate 或把非确定 handler 原样移到 follower apply。
 
-`master/committed/` 当前只编译在单元测试中：已有稀疏 inode/edge 准备视图、mkdir/新文件创建变更集、条件发布和原始响应去重，用于验证 P2 边界。会话使用时间身份、序号、ack 退休下界、1024 条重试窗口及 32 MiB 结果预算；每次有界清理 ack 结果，并按过期会话范围回收。窗口/字节满返回不确定状态，不能改身份重试同一个逻辑操作。它没有接管生产 RPC，尚未覆盖块/覆盖/删除等文件修改及后台写入，不能计入已上线的性能收益。
+`master/committed/` 已为 `mkdir` 接通生产 RPC、版本化 Native journal、双角色 apply 与本地应用回执；文件创建 helper 已通过准备/双副本发布测试，尚未接入 SDK。准备只复制触及的 inode/edge，不复制全 namespace。会话使用时间身份、序号、ack 退休下界、1024 条重试窗口及 32 MiB 结果预算；每次清理最多 8 条 ack 结果、最多 4 个过期会话范围。退休时间下界精确到毫秒并在同一 WriteBatch 推进，避免时钟回退后复活刚过期身份。
+
+SDK 在客户端内部维护会话、序号和连续 ack；并发完成存在空洞时不越过未知请求。只为新的独立调用轮换会话，重试中的请求不改身份。首次正向绑定 namespace 时，服务端先返回 incarnation 而不执行原操作；关闭 HSM 不写负能力缓存。窗口/字节满或提交未知时继续用原身份对账；预算不足最终返回不确定结果。绑定过的客户端不自动切换到另一个 namespace。
+
+当前仍持有过渡 gate 等待 Native journal，防止未迁移的普通写入污染条件 apply；提交未知且无法建立前缀隔离时仍故障退出。不能据 mkdir 的局部切换宣称整个 P2 已完成。
 
 目录祖先 rename 不依靠重写所有后代路径缓存。读状态的通用 apply 与稳定视图按 inode 反查当前路径，在线读批量 apply 直接更新 inode ID 对应的原生 atime。测试覆盖先 rename 再读取；当前活动 HSM 保护仍会阻止相应目录 rename，未改变该并发语义。
 
 本轮追加验证：23 项 HSM 相关单元测试、11 项 committed 相关过滤测试及真实三 Master/一 Worker 测试通过；后者同时检查读命令/RocksDB 写批比例，覆盖 40 块文件、紧凑结果重试、目录 rename 后读取及关闭后拒绝旧授权。路径 patch 接入 hsm-rs 后，workspace 的 30 项功能测试和全部文档测试通过。百万测试仍保持 ignored，尚未重跑规模验收或原版性能比较。RocksDB 元数据投影自身关闭 WAL，WriteBatch 合并减少的是投影写入、重复处理及编码开销；同步持久确认来自 Raft 日志，不能把投影批次减少直接说成同步 WAL 次数下降。
+
+Native mkdir 接入后的回归：Master 全量 225 项通过、2 项 ignored；SDK 会话 2 项通过；真实集群验证 32 个 mkdir 合批、首次绑定无业务效果、成功/失败原始结果重试、参数重绑定拒绝、ack 退休及后台 TTL 提交。完整 hsm-rs workspace 的 30 项功能测试与文档测试再次通过。协调器使用统一 panic 监督，避免后台 task 消失而队列永久保持 running；这一点不代替后续故障注入验收。
+
+关闭 HSM 的普通卷返回明确的 `LegacyResult`，保留原有确认行为；已经绑定 incarnation 的请求不能在关闭卷上执行。无 HSM 单 Master 与启用 HSM 三 Master 的两个真实集群用例均通过。后续比较必须区分 legacy 确认与 committed 确认，不能只凭共用 RPC envelope 就视为等价。
 
 专项回归覆盖读状态物化、预算去重、快照规则变更、范围清理后的重放、恢复等待短快照、时钟跳变及空页不增长历史。真实 MiniCluster 已验证同 inode 32 读者合批与覆盖隔离；本轮代码使用路径 patch 接入 hsm-rs 后，workspace 的 30 项功能测试及全部文档测试通过，包含普通写入纳管、策略执行、并发自动 Recall、控制器资格切换和进程重启；百万测试保持 ignored，未把前一轮百万结果当成本轮验收。尚不能据此声明 P2 或全部性能优化完成。
 

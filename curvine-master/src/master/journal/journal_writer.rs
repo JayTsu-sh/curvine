@@ -45,6 +45,7 @@ pub enum JournalMessage {
         term: Option<u64>,
     },
     Commit(tokio::sync::oneshot::Sender<Result<(), String>>),
+    CommitBlocking(std::sync::mpsc::Sender<Result<(), String>>),
 }
 
 thread_local! {
@@ -141,6 +142,23 @@ impl JournalWriter {
         Ok(rx)
     }
 
+    pub(crate) fn submit_native(
+        &self,
+        entry: NativeEntry,
+    ) -> FsResult<tokio::sync::oneshot::Receiver<Result<(), String>>> {
+        if !self.hsm_ready {
+            return err_box!("native commits require the committed journal");
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let ticket = entry.ticket.clone();
+        self.hsm_waiters.insert(ticket.clone(), tx);
+        if let Err(error) = self.send_inner(JournalEntry::Native(entry)) {
+            self.hsm_waiters.remove(&ticket);
+            return Err(error);
+        }
+        Ok(rx)
+    }
+
     fn send_inner(&self, entry: JournalEntry) -> FsResult<()> {
         debug!("send_entry {:?}", entry);
         let term = self.journal_term.as_ref().map(|current| {
@@ -216,6 +234,21 @@ impl JournalWriter {
             Ok(Ok(Err(e))) => err_box!("journal commit outcome unknown: {}", e),
             Ok(Err(_)) => err_box!("journal commit receipt dropped; outcome unknown"),
             Err(_) => err_box!("journal commit receipt timed out; outcome unknown"),
+        }
+    }
+
+    /// Scheduled background writers run on dedicated OS threads. They need
+    /// the same prefix confirmation without nesting a Tokio runtime.
+    pub(crate) fn commit_pending_blocking(&self) -> FsResult<()> {
+        if !self.hsm_ready {
+            return err_box!("background receipt requires committed journal");
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.sender.send(JournalMessage::CommitBlocking(tx))?;
+        match rx.recv_timeout(Duration::from_secs(60)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => err_box!("background commit outcome unknown: {}", error),
+            Err(error) => err_box!("background commit outcome unknown: {}", error),
         }
     }
 

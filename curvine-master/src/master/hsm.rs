@@ -624,7 +624,7 @@ impl MasterFilesystem {
         }
         Ok(results)
     }
-    async fn hsm_namespace_init(&self) -> HsmResult<Namespace> {
+    pub(crate) async fn hsm_namespace_init(&self) -> HsmResult<Namespace> {
         let current = self.fs_dir.read().hsm_namespace().map_err(io)?;
         if let Some(namespace) = current {
             if namespace.ordinary_format < 2 {

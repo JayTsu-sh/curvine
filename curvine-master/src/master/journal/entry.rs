@@ -200,6 +200,21 @@ impl std::fmt::Debug for HsmEntry {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone)]
+pub struct NativeEntry {
+    pub op_id: u64,
+    pub ticket: String,
+    pub payload: Vec<u8>,
+}
+impl std::fmt::Debug for NativeEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeEntry")
+            .field("op_id", &self.op_id)
+            .field("bytes", &self.payload.len())
+            .finish()
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum JournalEntry {
     Mkdir(MkdirEntry),
@@ -222,6 +237,7 @@ pub enum JournalEntry {
     // Keep new variants appended so existing journal discriminants remain stable.
     CacheInvalidation(CacheInvalidationEntry),
     Hsm(HsmEntry),
+    Native(NativeEntry),
 }
 
 impl JournalEntry {
@@ -246,6 +262,7 @@ impl JournalEntry {
             JournalEntry::UfsApplied(e) => e.op_id,
             JournalEntry::Snapshot(e) => e.op_id,
             JournalEntry::Hsm(e) => e.op_id,
+            JournalEntry::Native(e) => e.op_id,
         }
     }
 
@@ -270,6 +287,7 @@ impl JournalEntry {
             JournalEntry::UfsApplied(e) => e.rpc_id,
             JournalEntry::Snapshot(e) => e.rpc_id,
             JournalEntry::Hsm(_) => 0,
+            JournalEntry::Native(_) => 0,
         }
     }
 
@@ -291,6 +309,14 @@ impl JournalEntry {
             JournalEntry::Mkdir(e) => Some(e.dir.id),
             JournalEntry::CreateFile(e) => Some(e.file.id),
             JournalEntry::Symlink(e) => Some(e.new_inode.id),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn committed_ticket(&self) -> Option<&str> {
+        match self {
+            Self::Hsm(entry) => Some(&entry.ticket),
+            Self::Native(entry) => Some(&entry.ticket),
             _ => None,
         }
     }

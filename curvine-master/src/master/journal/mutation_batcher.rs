@@ -117,7 +117,9 @@ impl HsmMutationBatcher {
         };
         if spawn {
             let coordinator = self.clone();
-            tokio::spawn(async move { coordinator.run(gate, writer, monitor).await });
+            crate::master::spawn_authority("legacy native", async move {
+                coordinator.run(gate, writer, monitor).await
+            });
         }
         Ok(MutationTicket {
             start: admitted,

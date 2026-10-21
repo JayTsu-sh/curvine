@@ -19,7 +19,7 @@ use crate::master::replication::master_replication_manager::MasterReplicationMan
 use crate::master::MountManager;
 use crate::master::{Master, MasterMetrics, RpcContext};
 use curvine_config::ClusterConf;
-use curvine_core_error::err_box;
+use curvine_core_error::{err_box, ErrorExt};
 use curvine_error::FsError;
 use curvine_error::FsResult;
 use curvine_fs_api::Path;
@@ -36,6 +36,7 @@ use curvine_rpc::handler::MessageHandler;
 use curvine_rpc::message::Message;
 use curvine_runtime::runtime::{GroupExecutor, Runtime};
 use dashmap::DashMap;
+use prost::Message as _;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -1039,6 +1040,7 @@ impl MessageHandler for MasterHandler {
                 | RpcCode::ReportTask
                 | RpcCode::GetCvMetadataSnapshotPage
                 | RpcCode::HsmControl
+                | RpcCode::NativeMutation
         )
     }
 
@@ -1147,6 +1149,60 @@ impl MessageHandler for MasterHandler {
             Err(FsError::not_leader_master(ctx.code, self.client_ip()))
         } else {
             match code {
+                RpcCode::NativeMutation => {
+                    let request: NativeMutationRequest = ctx.parse_header()?;
+                    if request.version != 1 || request.code != RpcCode::Mkdir as u32 {
+                        return err_box!("unsupported native mutation version or operation");
+                    }
+                    let mkdir = MkdirRequest::decode(request.header.as_slice())
+                        .map_err(|error| FsError::common(error.to_string()))?;
+                    ctx.set_audit(Some(mkdir.path.clone()), None);
+                    let response = if !self.fs.conf.hsm_enabled {
+                        if !request.incarnation.is_empty() {
+                            crate::master::committed::legacy_fenced(&request)
+                        } else {
+                            let result = self.fs.mkdir_with_opts(
+                                &mkdir.path,
+                                ProtoUtils::mkdir_opts_from_pb(mkdir.opts),
+                            );
+                            let (success, header, body) = match result {
+                                Ok(status) => (
+                                    true,
+                                    MkdirResponse {
+                                        status: ProtoUtils::file_status_to_pb(status),
+                                        ..Default::default()
+                                    }
+                                    .encode_to_vec(),
+                                    vec![],
+                                ),
+                                Err(error) => (false, vec![], error.encode().to_vec()),
+                            };
+                            NativeMutationResponse {
+                                version: 1,
+                                incarnation: String::new(),
+                                session: request.session,
+                                sequence: request.sequence,
+                                code: request.code,
+                                status: NativeMutationStatusProto::LegacyResult as i32,
+                                success,
+                                header,
+                                body,
+                            }
+                        }
+                    } else {
+                        let fs = self.fs.clone();
+                        let mount_manager = self.mount_manager.clone();
+                        tokio::spawn(async move { fs.native_mutate(request, mount_manager).await })
+                            .await
+                            .unwrap_or_else(|error| {
+                                log::error!(
+                                    "native mutation owner vanished: {error}; aborting master"
+                                );
+                                std::process::abort();
+                            })?
+                    };
+                    ctx.response(response)
+                }
                 RpcCode::HsmControl => {
                     let request: HsmControlRequest = ctx.parse_header()?;
                     let fs = self.fs.clone();

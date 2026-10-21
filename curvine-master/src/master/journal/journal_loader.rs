@@ -246,6 +246,9 @@ impl JournalLoader {
         if let JournalEntry::Hsm(e) = entry {
             return self.fs_dir.write().apply_hsm_entry(e);
         }
+        if let JournalEntry::Native(e) = entry {
+            return self.fs_dir.write().apply_native_entry(e);
+        }
         if is_leader {
             self.ufs_loader.apply_entry(entry).await
         } else {
@@ -313,12 +316,13 @@ impl JournalLoader {
                 JournalEntry::CacheInvalidation(_)
                 | JournalEntry::UfsApplied(_)
                 | JournalEntry::Hsm(_) => (),
+                JournalEntry::Native(_) => (),
 
                 _ => has_ufs_affecting = true,
             }
 
             if let Err(e) = self.replay_entry(is_leader, &op_entry).await {
-                if matches!(op_entry, JournalEntry::Hsm(_)) {
+                if matches!(op_entry, JournalEntry::Hsm(_) | JournalEntry::Native(_)) {
                     // A failed authority apply may never be skipped while serving.
                     error!("fatal HSM authority apply failure: {}", e);
                     std::process::abort();
@@ -666,7 +670,7 @@ impl JournalLoader {
     }
 
     pub fn apply_entry(&self, entry: JournalEntry) -> CommonResult<()> {
-        if matches!(entry, JournalEntry::Hsm(_)) {
+        if matches!(entry, JournalEntry::Hsm(_) | JournalEntry::Native(_)) {
             return self.apply_committed_entry(entry);
         }
         // Replaying an accepted mutation must not re-evaluate read leases using this node's clock.
@@ -680,6 +684,7 @@ impl JournalLoader {
 
         match entry {
             JournalEntry::Hsm(e) => self.fs_dir.write().apply_hsm_entry(&e),
+            JournalEntry::Native(e) => self.fs_dir.write().apply_native_entry(&e),
             JournalEntry::Mkdir(e) => self.mkdir(e),
 
             JournalEntry::CreateFile(e) => self.create_file(e),

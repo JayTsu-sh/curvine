@@ -41,6 +41,7 @@ impl RocksInodeStore {
     // An explicit RocksDB schema fence: an older binary omitting this family
     // cannot reopen a checkpoint containing access overlays and native facts.
     pub(crate) const CF_HSM_FORMAT: &'static str = "hsm_native_v2";
+    pub(crate) const CF_NATIVE_FORMAT: &'static str = "hsm_native_v3";
 
     pub const PREFIX_MOUNT: u8 = 0x01;
     pub const PREFIX_LOCK: u8 = 0x02;
@@ -527,7 +528,6 @@ impl<'a> InodeWriteBatch<'a> {
         self.put_cf(RocksInodeStore::CF_COMMON, key, value)
     }
 
-    #[cfg(test)]
     pub(crate) fn hsm_delete_range(&mut self, begin: &[u8], end: &[u8]) -> CommonResult<()> {
         self.batch
             .delete_range_cf(self.db.cf(RocksInodeStore::CF_COMMON)?, begin, end);
@@ -550,15 +550,20 @@ mod tests {
     fn hsm_schema_fence_survives_checkpoint_and_rejects_legacy_open() -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
         let legacy = DBConf::new(directory.path().to_string_lossy().into_owned());
-        let upgraded = legacy.clone().add_cf(RocksInodeStore::CF_HSM_FORMAT);
+        let overlay_only = legacy.clone().add_cf(RocksInodeStore::CF_HSM_FORMAT);
+        let upgraded = overlay_only
+            .clone()
+            .add_cf(RocksInodeStore::CF_NATIVE_FORMAT);
         let store = RocksInodeStore::new(upgraded.clone(), true)?;
         let checkpoint = store.db.create_checkpoint(1)?;
         drop(store);
         // The pre-overlay opener's exact family list cannot interpret this DB.
         assert!(RocksInodeStore::new(legacy, false).is_err());
+        assert!(RocksInodeStore::new(overlay_only, false).is_err());
         let mut store = RocksInodeStore::new(upgraded, false)?;
         store.db.restore(checkpoint)?;
         assert!(store.db.cf(RocksInodeStore::CF_HSM_FORMAT).is_ok());
+        assert!(store.db.cf(RocksInodeStore::CF_NATIVE_FORMAT).is_ok());
         Ok(())
     }
 

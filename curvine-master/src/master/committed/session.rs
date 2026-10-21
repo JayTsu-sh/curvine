@@ -81,7 +81,7 @@ impl Session {
             .map(|bytes| SerdeUtils::deserialize::<i64>(&bytes))
             .transpose()?
             .unwrap_or(0);
-        let floor = previous.max(now.saturating_sub(RETENTION_MS).max(0) / 60_000 * 60_000);
+        let floor = previous.max(now.saturating_sub(RETENTION_MS).max(0));
         let mut call = Self {
             id: id.into(),
             sequence,
@@ -111,7 +111,7 @@ impl Session {
             call.deleted.push(session_key(session));
             call.deleted.push(key);
         }
-        if stamp < previous.max(now.saturating_sub(RETENTION_MS)) {
+        if stamp < floor {
             return Ok(call);
         }
         let metadata = store.hsm_get(&session_key(id))?;
@@ -240,7 +240,9 @@ mod tests {
             Session::prepare(store, &id, WINDOW + 22, 20, 2000)?.decision,
             Decision::Full
         ));
-        let now = RETENTION_MS + 61_000;
+        // Retirement must remain final even just past a millisecond boundary;
+        // rounding the durable floor down to a minute can resurrect a session.
+        let now = RETENTION_MS + 1001;
         let new_id = format!("{now:016x}{}", "b".repeat(32));
         let call = Session::prepare(store, &new_id, 1, 0, now)?;
         let mut batch = store.new_batch();
@@ -248,7 +250,19 @@ mod tests {
         batch.commit()?;
         assert!(store.hsm_scan(&result_prefix(&id), None, 100)?.is_empty());
         assert!(matches!(
+            Session::prepare(store, &id, 22, 20, 1000)?.decision,
+            Decision::Fenced
+        ));
+        assert!(matches!(
             Session::prepare(store, &id, 1, 0, 1000)?.decision,
+            Decision::Fenced
+        ));
+        drop(dir);
+        drop(fs);
+        conf.format_master = false;
+        let reopened = JournalSystem::fs_only_for_test(&conf)?;
+        assert!(matches!(
+            Session::prepare(reopened.fs_dir.read().get_rocks_store(), &id, 22, 20, 1000)?.decision,
             Decision::Fenced
         ));
         Ok(())

@@ -94,6 +94,12 @@ impl SenderTask {
 
     pub fn handle(&mut self, message: Option<JournalMessage>) -> FsResult<()> {
         let entry = match message {
+            Some(JournalMessage::CommitBlocking(tx)) => {
+                self.metrics.journal_commit_fences.inc();
+                let result = self.flush_pending();
+                let _ = tx.send(result.as_ref().map(|_| ()).map_err(ToString::to_string));
+                return result;
+            }
             Some(JournalMessage::Commit(tx)) => {
                 self.metrics.journal_commit_fences.inc();
                 let result = self.flush_pending();
@@ -102,7 +108,7 @@ impl SenderTask {
                 return result;
             }
             Some(JournalMessage::Entry { entry, term }) => {
-                if matches!(entry, JournalEntry::Hsm(_))
+                if entry.committed_ticket().is_some()
                     || (!self.batch.is_empty() && self.batch_term != term)
                 {
                     self.flush_pending()?;
@@ -113,7 +119,7 @@ impl SenderTask {
             None => None,
         };
         let force = if let Some(v) = entry {
-            let force = matches!(v, JournalEntry::Snapshot(_) | JournalEntry::Hsm(_));
+            let force = matches!(v, JournalEntry::Snapshot(_)) || v.committed_ticket().is_some();
             self.batch.push(v);
             self.metrics.journal_queue_len.dec();
             force
@@ -154,10 +160,7 @@ impl SenderTask {
             .batch
             .batch
             .iter()
-            .filter_map(|e| match e {
-                JournalEntry::Hsm(e) => Some(e.ticket.clone()),
-                _ => None,
-            })
+            .filter_map(|entry| entry.committed_ticket().map(str::to_owned))
             .collect();
         let result = if let Some(term) = self.batch_term {
             self.client

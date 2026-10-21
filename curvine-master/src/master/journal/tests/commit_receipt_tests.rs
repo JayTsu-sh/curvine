@@ -1,7 +1,7 @@
 // Copyright 2026 OPPO. Licensed under the Apache License, Version 2.0.
 //! Transport-level tests: inspect the actual serialized proposal and its ACK.
 use super::*;
-use crate::master::journal::DeleteEntry;
+use crate::master::journal::{DeleteEntry, NativeEntry};
 use curvine_net::net::{ConnState, NetUtils};
 use curvine_raft::proto::raft::{ProposeRequest, ProposeResponse};
 use curvine_raft::raft::{RaftCode, RaftError};
@@ -96,6 +96,49 @@ fn receipt_covers_all_native_entries_without_persisting_a_barrier() {
         .iter()
         .all(|entry| matches!(entry, JournalEntry::Delete(_))));
     assert!(sender.batch.is_empty());
+}
+
+#[test]
+fn scheduled_thread_receipt_confirms_original_prefix_without_a_runtime() {
+    let (mut sender, peer) = sender(Some(42));
+    sender.handle(Some(native(1))).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    sender
+        .handle(Some(JournalMessage::CommitBlocking(tx)))
+        .unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), Ok(()));
+    let proposals = peer.proposals.lock().unwrap();
+    assert_eq!(proposals.len(), 1);
+    let batch: JournalBatch = SerdeUtils::deserialize(&proposals[0].data).unwrap();
+    assert_eq!(batch.batch.len(), 1);
+    assert!(matches!(batch.batch[0], JournalEntry::Delete(_)));
+}
+
+#[test]
+fn native_bundle_receives_its_own_applied_ack_after_earlier_legacy_prefix() {
+    let (mut sender, peer) = sender(Some(42));
+    sender.handle(Some(native(1))).unwrap();
+    let (tx, mut rx) = tokio::sync::oneshot::channel();
+    sender.hsm_waiters.insert("native-bundle".into(), tx);
+    sender
+        .handle(Some(JournalMessage::Entry {
+            term: Some(7),
+            entry: JournalEntry::Native(NativeEntry {
+                op_id: 2,
+                ticket: "native-bundle".into(),
+                payload: vec![1, 2, 3],
+            }),
+        }))
+        .unwrap();
+    assert_eq!(rx.try_recv().unwrap(), Ok(()));
+    assert!(sender.hsm_waiters.is_empty());
+    let proposals = peer.proposals.lock().unwrap();
+    assert_eq!(proposals.len(), 2);
+    assert!(proposals
+        .iter()
+        .all(|proposal| proposal.expected_term == Some(7)));
+    let batch: JournalBatch = SerdeUtils::deserialize(&proposals[1].data).unwrap();
+    assert!(matches!(&batch.batch[0], JournalEntry::Native(entry) if entry.payload == [1, 2, 3]));
 }
 
 #[test]

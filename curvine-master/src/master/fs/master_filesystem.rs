@@ -112,6 +112,48 @@ const FULL_BLOCK_RECONCILE_THREADS: usize = 2;
 const FULL_BLOCK_RECONCILE_QUEUE_SIZE: usize = 128;
 
 impl MasterFilesystem {
+    /// Transitional ordering for TTL/quota/heartbeat scheduled OS threads.
+    /// This is not the RPC entry: RPCs already join the async coordinator.
+    pub(crate) fn committed_background<T>(
+        &self,
+        action: impl FnOnce() -> FsResult<T>,
+    ) -> FsResult<T> {
+        let (enabled, gate, writer) = {
+            let dir = self.fs_dir.read();
+            (
+                dir.hsm_enabled,
+                dir.hsm_mutation_gate.clone(),
+                dir.journal_writer.clone(),
+            )
+        };
+        if !enabled {
+            return action();
+        }
+        let _serial = gate.blocking_lock();
+        let term = self
+            .master_monitor
+            .journal_term
+            .load(std::sync::atomic::Ordering::Acquire);
+        if !self.master_monitor.is_active() || term == 0 {
+            return Err(FsError::not_leader(
+                "background mutation has no active leader",
+            ));
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            writer.in_origin_term_at(term, action)
+        }))
+        .unwrap_or_else(|_| {
+            log::error!("background mutation panicked after admission; aborting master");
+            std::process::abort();
+        });
+        // Even an error can follow partial legacy effects. Keep the gate until
+        // that prefix is confirmed or recovery discards its speculative tail.
+        if let Err(error) = writer.commit_pending_blocking() {
+            log::error!("background mutation commit uncertain: {error}; aborting master");
+            std::process::abort();
+        }
+        result
+    }
     // Max block-report location updates applied under a single fs_dir write lock.
     const BLOCK_REPORT_WRITE_CHUNK: usize = 4096;
     // Max lost-worker block ids inspected under a single fs_dir write lock.
@@ -1487,6 +1529,10 @@ impl MasterFilesystem {
     }
 
     pub fn delete_locations(&self, worker_id: u32) -> FsResult<LostWorkerLocationCleanup> {
+        self.committed_background(|| self.delete_locations0(worker_id))
+    }
+
+    fn delete_locations0(&self, worker_id: u32) -> FsResult<LostWorkerLocationCleanup> {
         let removed_block_ids = {
             let fs_dir = self.fs_dir.write();
             fs_dir.delete_locations(worker_id)?

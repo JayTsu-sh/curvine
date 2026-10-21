@@ -7,6 +7,37 @@ option java_outer_classname = "MasterProto";
 
 import "common.proto";
 
+// Stable logical identity for native metadata mutations. Byte headers retain
+// the native protobuf representation; retries keep all business bytes stable.
+message NativeMutationRequest {
+    required uint32 version = 1;
+    required string incarnation = 2;
+    required string session = 3;
+    required uint64 sequence = 4;
+    required uint64 acknowledged = 5;
+    required uint32 code = 6;
+    required bytes header = 7;
+}
+enum NativeMutationStatusProto {
+    COMMITTED = 0;
+    NEEDS_NAMESPACE = 1;
+    UNCERTAIN = 2;
+    FENCED = 3;
+    // Disabled HSM volumes keep the original native confirmation semantics.
+    LEGACY_RESULT = 4;
+}
+message NativeMutationResponse {
+    required uint32 version = 1;
+    required string incarnation = 2;
+    required string session = 3;
+    required uint64 sequence = 4;
+    required NativeMutationStatusProto status = 5;
+    required uint32 code = 6;
+    required bool success = 7;
+    required bytes header = 8;
+    required bytes body = 9;
+}
+
 // Versioned control envelope. Ordinary filesystem operations are not HSM effects.
 message HsmControlRequest {
     required uint32 protocol_version = 1;

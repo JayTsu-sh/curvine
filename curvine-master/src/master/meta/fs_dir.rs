@@ -45,6 +45,13 @@ pub struct FsDir {
     pub(crate) hsm_read_batcher: Arc<crate::master::hsm::read_batch::ReadBatcher>,
     pub(crate) hsm_read_clock: crate::master::hsm::read_clock::ReadClock,
     pub(crate) hsm_mutation_batcher: Arc<HsmMutationBatcher>,
+    pub(crate) native_coordinator: Arc<crate::master::committed::NativeCoordinator>,
+    pub(crate) native_local_apply: Arc<
+        dashmap::DashMap<
+            String,
+            tokio::sync::oneshot::Sender<Vec<curvine_proto::NativeMutationResponse>>,
+        >,
+    >,
     pub(crate) hsm_local_apply:
         Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<Vec<serde_json::Value>>>>,
     pub(crate) hsm_enabled: bool,
@@ -115,7 +122,9 @@ impl FsDir {
         }
         let mut db_conf = conf.db_conf();
         if conf.master.hsm_enabled {
-            db_conf = db_conf.add_cf(RocksInodeStore::CF_HSM_FORMAT);
+            db_conf = db_conf
+                .add_cf(RocksInodeStore::CF_HSM_FORMAT)
+                .add_cf(RocksInodeStore::CF_NATIVE_FORMAT);
         }
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;
@@ -138,6 +147,8 @@ impl FsDir {
             hsm_read_batcher: Default::default(),
             hsm_read_clock: Default::default(),
             hsm_mutation_batcher: Default::default(),
+            native_coordinator: Default::default(),
+            native_local_apply: Default::default(),
             hsm_local_apply: Default::default(),
             hsm_enabled: conf.master.hsm_enabled,
             hsm_distributed: conf.journal.journal_addrs.len() >= 3,

@@ -58,6 +58,52 @@ struct StoredOutcome {
     fingerprint: [u8; 32],
     result: NativeResult,
 }
+
+pub(super) enum Prior {
+    Cached(NativeResult),
+    Rejected,
+    New,
+}
+pub(super) fn prior(
+    fs: &FsDir,
+    identity: &RequestIdentity,
+    fingerprint: [u8; 32],
+    code: i8,
+    time: i64,
+) -> CommonResult<Prior> {
+    let session = Session::prepare(
+        fs.get_rocks_store(),
+        &identity.session,
+        identity.sequence,
+        identity.acknowledged,
+        time,
+    )?;
+    Ok(match session.decision {
+        Decision::Cached(bytes) => {
+            let old: StoredOutcome = SerdeUtils::deserialize(&bytes)?;
+            if old.format != 1 {
+                return err_box!("unsupported native result format");
+            }
+            Prior::Cached(if old.fingerprint == fingerprint {
+                old.result
+            } else {
+                NativeResult {
+                    kind: ResultKind::IdentityMismatch,
+                    reply: NativeReply {
+                        code,
+                        success: false,
+                        header: vec![],
+                        body: FsError::common("native request identity rebound")
+                            .encode()
+                            .to_vec(),
+                    },
+                }
+            })
+        }
+        Decision::Fenced | Decision::Full => Prior::Rejected,
+        Decision::Admit => Prior::New,
+    })
+}
 fn rejected(command: &NativeCommand, kind: ResultKind, message: &str) -> NativeResult {
     NativeResult {
         kind,
@@ -438,11 +484,14 @@ mod tests {
         seed_namespace(&follower)?;
         let mut command = prepare(&fs, "/a/b")?;
         for replica in [&fs, &follower] {
-            let before = replica.fs_dir.read().get_file_counts().0;
             let result = apply_creation(&mut replica.fs_dir.write(), &command)?;
             assert!(result.kind == ResultKind::Applied && result.reply == command.reply);
             assert_eq!(replica.file_status("/a/b")?.mtime, 1000);
-            assert_eq!(replica.fs_dir.read().get_file_counts().0, before + 2);
+            // MasterMetrics is process-global, including other concurrently
+            // running test stores. Inspect this replica's actual namespace.
+            assert_eq!(replica.fs_dir.read().root_dir.child_len(), 1);
+            assert_eq!(replica.file_status("/a")?.children_num, 1);
+            assert_eq!(replica.file_status("/a/b")?.children_num, 0);
         }
         fs.rename("/a", "/later", RenameFlags::new(0))?;
         let result = apply_creation(&mut fs.fs_dir.write(), &command)?;

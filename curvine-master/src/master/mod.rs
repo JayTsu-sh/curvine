@@ -59,6 +59,24 @@ pub use mount::MountManager;
 
 pub mod hsm;
 
-// Preparation is exercised before activating the new committed transport.
-#[cfg(test)]
-mod committed;
+pub(crate) mod committed;
+
+/// Detached authority coordinators own their admission/commit lifetime. A
+/// panic must trigger recovery, not leave a healthy-looking leader with its
+/// queue marked running and no task left to drain it.
+pub(crate) fn spawn_authority(
+    owner: &'static str,
+    future: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    use futures::FutureExt;
+    tokio::spawn(async move {
+        if std::panic::AssertUnwindSafe(future)
+            .catch_unwind()
+            .await
+            .is_err()
+        {
+            log::error!("{} authority coordinator panicked; aborting master", owner);
+            std::process::abort();
+        }
+    });
+}

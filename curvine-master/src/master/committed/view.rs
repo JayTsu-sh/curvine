@@ -235,6 +235,7 @@ impl CommandView<'_, '_> {
         self.edits.inodes.insert(id, Some(inode.clone_metadata()));
         Ok(())
     }
+    #[cfg(test)]
     pub(super) fn delete_inode(&mut self, id: i64) -> CommonResult<()> {
         self.inode(id)?;
         self.charge(32)?;

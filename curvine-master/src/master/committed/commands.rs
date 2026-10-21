@@ -2,11 +2,17 @@
 //! Deterministic native preparation: time is captured by admission; publication
 //! consumes the returned owned effects and exact encoded response.
 use super::view::{BatchView, CommandView, PreparedEdits};
-use crate::master::meta::inode::{InodeDir, InodeFile, InodeView};
+#[cfg(test)]
+use crate::master::meta::inode::InodeFile;
+use crate::master::meta::inode::{InodeDir, InodeView};
 use curvine_core_error::err_box;
 use curvine_error::{FsError, FsResult};
-use curvine_model::{CreateFileOpts, MkdirOpts, ProtoUtils};
-use curvine_proto::{CreateFileResponse, MkdirResponse};
+#[cfg(test)]
+use curvine_model::CreateFileOpts;
+use curvine_model::{MkdirOpts, ProtoUtils};
+#[cfg(test)]
+use curvine_proto::CreateFileResponse;
+use curvine_proto::MkdirResponse;
 use prost::Message;
 
 pub(super) struct PreparedCommand {
@@ -97,6 +103,7 @@ pub(super) fn mkdir(
 
 /// New file creation only. Overwrite requires a generation check and durable
 /// Worker cleanup; it must not be silently translated to this operation.
+#[cfg(test)]
 pub(super) fn create(
     batch: &mut BatchView<'_>,
     path: &str,

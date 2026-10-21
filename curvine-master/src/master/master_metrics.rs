@@ -208,6 +208,8 @@ impl MasterMetrics {
             "outcome_bytes": self.hsm_record_write_bytes.with_label_values(&["outcome"]).get(),
             "read_apply_commits": self.hsm_batch_size.with_label_values(&["read_apply"]).get_sample_count(),
             "read_apply_commands": self.hsm_batch_size.with_label_values(&["read_apply"]).get_sample_sum(),
+            "native_bundles": self.hsm_batch_size.with_label_values(&["native_committed"]).get_sample_count(),
+            "native_commands": self.hsm_batch_size.with_label_values(&["native_committed"]).get_sample_sum(),
         })
     }
 

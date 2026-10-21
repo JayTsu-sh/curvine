@@ -1,6 +1,6 @@
 # HSM 优化方案的 HA 约束与设计
 
-状态：分阶段实施，尚未完成端到端 HA 验收。P1 已增加普通日志自身回执、本节点提交及 originating term 校验，见 [提交回执改造](commit-receipts.md)；P2 的[普通请求过渡微批](mutation-microbatch.md)在同一 gate 下合批并在未知提交时故障退出。持久普通请求去重、统一 committed 状态机及其他目标仍按本文逐项实施。它是 [性能优化方案](optimization-plan.md) 的前置约束，从 P0/P1 起执行。
+状态：分阶段实施，尚未完成端到端 HA 验收。P1 已增加普通日志自身回执、本节点提交及 originating term 校验，见 [提交回执改造](commit-receipts.md)；P2 已为 `mkdir` 接通持久身份/结果、Native journal 与双角色 apply，其余普通操作继续采用[过渡微批](mutation-microbatch.md)。完整混合状态机及其他目标仍逐项实施。它是 [性能优化方案](optimization-plan.md) 的前置约束，从 P0/P1 起执行。
 
 ## 1. 当前基础、缺口和目标范围
 
@@ -53,6 +53,10 @@
 | 批内命令有条件失败 | 各命令拥有独立已提交结果；后续命令按顺序观察前一命令结果 |
 
 去重结果的保留期不随选举任期结束而清空。过期清理前需持久保存可拒绝旧请求的 session/sequence 下限或等价 tombstone，不能将“结果已清理”解释为可再次执行。
+
+`mkdir` 当前已实现该规则：时间会话 + 序号 + incarnation + 请求指纹；原始业务成功/失败结果与 inode/edge 同批保存；ack 下界退休后即使旧结果尚未清理也拒绝重执行。过期会话先推进精确毫秒时间下界，再用范围 tombstone 回收，跨重启和时钟回退仍拒绝旧身份。SDK 不越过并发完成空洞，也不对未知的同一逻辑操作更换身份。Native variant 追加在 journal enum 尾部；`hsm_native_v3` CF 阻止只支持访问增量格式的旧进程打开 checkpoint。
+
+过渡期间，TTL、配额回收及失联 Worker 清理中的 namespace 修改也取得同一 gate、固定 originating term 并等待自身前缀确认。调度器在独立 OS 线程等待，不嵌套 Tokio runtime；纯延期判断不取得提交 gate。失去 leader 资格的 TTL 重新入桶，避免等锁期间换主后遗漏任务。这里仍有旧式副作用路径，尚未把 Worker 删除的持久 outbox 和所有后台修改迁移完成。
 
 去重绑定/结果与业务状态在同一权威提交序列中确定，确认条件为请求匹配、已提交、相关状态已在服务节点应用。只把普通 journal 的入队回执改名为 committed receipt 不满足要求。
 

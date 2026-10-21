@@ -59,7 +59,7 @@ impl ReadBatcher {
         };
         if spawn {
             let batcher = self.clone();
-            tokio::spawn(async move { batcher.run(fs).await });
+            crate::master::spawn_authority("read", async move { batcher.run(fs).await });
         }
         result.await.map_err(io)
     }

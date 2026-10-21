@@ -30,10 +30,14 @@ use prost::Message as PMessage;
 use std::collections::LinkedList;
 use std::sync::Arc;
 
+#[path = "native_commit.rs"]
+mod native_commit;
+
 #[derive(Clone)]
 pub struct FsClient {
     context: Arc<FsContext>,
     connector: Arc<ClusterConnector>,
+    native_commits: Arc<native_commit::ClientState>,
 }
 
 struct CompleteFileOptions {
@@ -69,7 +73,11 @@ impl Drop for HandshakeReportGuard<'_> {
 impl FsClient {
     pub fn new(context: Arc<FsContext>) -> Self {
         let connector = context.connector.clone();
-        Self { context, connector }
+        Self {
+            context,
+            connector,
+            native_commits: Default::default(),
+        }
     }
 
     pub fn context(&self) -> &Arc<FsContext> {
@@ -887,7 +895,11 @@ impl FsClient {
         if code != RpcCode::GetFilesystemInfo {
             self.ensure_handshake().await;
         }
-        self.raw_rpc(code, header).await
+        if code == RpcCode::Mkdir {
+            self.native_rpc(code, header).await
+        } else {
+            self.raw_rpc(code, header).await
+        }
     }
 
     pub async fn rpc_bytes(&self, code: RpcCode, header: impl PMessage) -> FsResult<BytesMut> {

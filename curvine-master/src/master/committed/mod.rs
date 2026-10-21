@@ -3,8 +3,21 @@
 //! all native mutation families have deterministic preparation/publication.
 mod authority;
 mod commands;
+mod coordinator;
 mod session;
+mod transport;
 mod view;
+pub(crate) use coordinator::NativeCoordinator;
+
+pub(crate) fn legacy_fenced(
+    request: &curvine_proto::NativeMutationRequest,
+) -> curvine_proto::NativeMutationResponse {
+    transport::basic(
+        request,
+        curvine_proto::NativeMutationStatusProto::Fenced,
+        "namespace-bound native request cannot execute on a disabled volume",
+    )
+}
 
 #[cfg(test)]
 mod tests {
