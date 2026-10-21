@@ -895,8 +895,21 @@ impl FsClient {
         if code != RpcCode::GetFilesystemInfo {
             self.ensure_handshake().await;
         }
-        if code == RpcCode::Mkdir || code == RpcCode::CompleteFile {
+        if matches!(
+            code,
+            RpcCode::Mkdir | RpcCode::CompleteFile | RpcCode::AddBlock
+        ) {
             self.native_rpc(code, header).await
+        } else if code == RpcCode::OpenFile {
+            let encoded = header.encode_to_vec();
+            let request = OpenFileRequest::decode(encoded.as_slice())
+                .map_err(|error| FsError::common(error.to_string()))?;
+            let flags = OpenFlags::new(request.flags);
+            if !flags.read_only() && !flags.truncate() {
+                self.native_rpc_encoded(code, encoded).await
+            } else {
+                self.raw_rpc(code, header).await
+            }
         } else if code == RpcCode::CreateFile {
             let encoded = header.encode_to_vec();
             let request = CreateFileRequest::decode(encoded.as_slice())

@@ -482,6 +482,204 @@ mod tests {
     }
 
     #[test]
+    fn native_blocks_share_pending_allocation_and_failed_preparation_releases_pressure(
+    ) -> CommonResult<()> {
+        use curvine_model::{ProtoUtils, WorkerAddress, WorkerInfo};
+        use prost::Message;
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = configuration(root.path());
+        conf.master.worker_policy = "robin".into();
+        let fs = JournalSystem::fs_only_for_test(&conf)?;
+        seed_namespace(&fs)?;
+        fs.worker_manager.write().add_test_worker(WorkerInfo {
+            address: WorkerAddress {
+                worker_id: 1,
+                ..Default::default()
+            },
+            available: 1 << 30,
+            capacity: 1 << 30,
+            ..Default::default()
+        });
+        let status = fs.create("/payload", false)?;
+        let request = || curvine_proto::AddBlockRequest {
+            path: "/payload".into(),
+            inode_id: Some(status.id),
+            ..Default::default()
+        };
+        {
+            let dir = fs.fs_dir.read();
+            let mut budget = BatchView::new(&dir, 128);
+            assert!(commands::add_block(&mut budget, &fs, request(), 1000).is_err());
+        }
+        assert_eq!(
+            fs.worker_manager
+                .read()
+                .get_worker(1)
+                .unwrap()
+                .scheduled_bytes,
+            0
+        );
+        let (first, duplicate) = {
+            let dir = fs.fs_dir.read();
+            let mut batch = BatchView::new(&dir, 1024 * 1024);
+            let first = commands::add_block(&mut batch, &fs, request(), 1000)?;
+            let duplicate = commands::add_block(&mut batch, &fs, request(), 1001)?;
+            assert_eq!(first.response, duplicate.response);
+            assert!(first.allocation.is_some() && duplicate.allocation.is_none());
+            assert!(dir
+                .store
+                .get_inode(status.id, None)?
+                .unwrap()
+                .as_file_ref()?
+                .blocks
+                .is_empty());
+            (first, duplicate)
+        };
+        assert_eq!(
+            fs.worker_manager
+                .read()
+                .get_worker(1)
+                .unwrap()
+                .scheduled_bytes,
+            status.block_size
+        );
+        let original = curvine_proto::LocatedBlockProto::decode(first.response.as_slice())?;
+        let block = ProtoUtils::located_block_from_pb(original).block;
+        let to_command = |prepared: commands::PreparedCommand, sequence| {
+            let command = NativeCommand {
+                identity: RequestIdentity {
+                    incarnation: "incarnation".into(),
+                    session: format!("{:016x}{}", 1000, "b".repeat(32)),
+                    sequence,
+                    acknowledged: 0,
+                },
+                fingerprint: [sequence as u8; 32],
+                time: 1000,
+                edits: prepared.edits,
+                reply: NativeReply {
+                    code: RpcCode::AddBlock.into(),
+                    success: true,
+                    header: prepared.response,
+                    body: vec![],
+                },
+            };
+            (command, prepared.allocation)
+        };
+        let (first, allocation) = to_command(first, 1);
+        assert!(apply_creation(&mut fs.fs_dir.write(), &first)?.kind == ResultKind::Applied);
+        allocation.unwrap().retain();
+        let (duplicate, _) = to_command(duplicate, 2);
+        assert!(apply_creation(&mut fs.fs_dir.write(), &duplicate)?.reply == first.reply);
+        assert!(apply_creation(&mut fs.fs_dir.write(), &first)?.reply == first.reply);
+        let dir = fs.fs_dir.read();
+        let inode = dir.store.get_inode(status.id, None)?.unwrap();
+        assert_eq!(inode.as_file_ref()?.blocks.len(), 1);
+        assert_eq!(inode.as_file_ref()?.blocks[0].id, block.id);
+        assert!(
+            dir.hsm_record(status.id)?.is_none(),
+            "block scheduling does not rewrite stable HSM state"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reopen_invalidates_generation_once_and_multiwriter_fingerprints_are_canonical(
+    ) -> CommonResult<()> {
+        use curvine_model::{CreateFileOpts, OpenFlags, ProtoUtils};
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let fs = JournalSystem::fs_only_for_test(&configuration(root.path()))?;
+        seed_namespace(&fs)?;
+        let file = fs.create("/payload", false)?;
+        let mut close = prepare(&fs, "/unused")?;
+        {
+            let dir = fs.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            let prepared = commands::complete(
+                &mut view,
+                &fs,
+                curvine_proto::CompleteFileRequest {
+                    path: "/payload".into(),
+                    inode_id: Some(file.id),
+                    ..Default::default()
+                },
+                1000,
+            )?;
+            close.edits = prepared.edits;
+            close.reply.code = RpcCode::CompleteFile.into();
+            close.reply.header = prepared.response;
+        }
+        assert!(apply_creation(&mut fs.fs_dir.write(), &close)?.kind == ResultKind::Applied);
+        let old = fs.fs_dir.read().hsm_record(file.id)?.unwrap();
+        let mut commands = vec![];
+        {
+            let dir = fs.fs_dir.read();
+            let mut view = BatchView::new(&dir, 1024 * 1024);
+            for (index, name) in ["writer-z", "writer-a", "writer-q"].into_iter().enumerate() {
+                let prepared = commands::reopen(
+                    &mut view,
+                    &fs,
+                    curvine_proto::OpenFileRequest {
+                        path: "/payload".into(),
+                        opts: ProtoUtils::create_opts_to_pb(
+                            CreateFileOpts::with_create(false),
+                            name,
+                        ),
+                        flags: OpenFlags::new_write_only().value(),
+                    },
+                )?;
+                commands.push(NativeCommand {
+                    identity: RequestIdentity {
+                        incarnation: "incarnation".into(),
+                        session: format!("{:016x}{}", 1000, "d".repeat(32)),
+                        sequence: index as u64 + 1,
+                        acknowledged: 0,
+                    },
+                    fingerprint: [index as u8; 32],
+                    time: 1000,
+                    edits: prepared.edits,
+                    reply: NativeReply {
+                        code: RpcCode::OpenFile.into(),
+                        success: true,
+                        header: prepared.response,
+                        body: vec![],
+                    },
+                });
+            }
+        }
+        for command in &commands {
+            assert!(apply_creation(&mut fs.fs_dir.write(), command)?.kind == ResultKind::Applied);
+        }
+        let dir = fs.fs_dir.read();
+        let record = dir.hsm_record(file.id)?.unwrap();
+        assert!(record.writing);
+        assert_eq!(record.state.data.generation, old.state.data.generation + 1);
+        let inode = dir.store.get_inode(file.id, None)?.unwrap();
+        let fingerprint = inode_fingerprint(&inode)?;
+        for _ in 0..50 {
+            let serialized = SerdeUtils::serialize(&inode)?;
+            let fresh = SerdeUtils::deserialize::<InodeView>(&serialized)?;
+            assert_eq!(inode_fingerprint(&fresh)?, fingerprint);
+        }
+        drop(dir);
+        for command in &commands {
+            assert!(apply_creation(&mut fs.fs_dir.write(), command)?.reply == command.reply);
+        }
+        assert_eq!(
+            fs.fs_dir
+                .read()
+                .hsm_record(file.id)?
+                .unwrap()
+                .state
+                .data
+                .generation,
+            record.state.data.generation
+        );
+        Ok(())
+    }
+
+    #[test]
     fn complete_keeps_hsm_and_native_atomic_across_replicas_retries_and_conflicts(
     ) -> CommonResult<()> {
         crate::master::Master::init_test_metrics();

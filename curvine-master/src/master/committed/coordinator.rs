@@ -162,6 +162,7 @@ impl NativeCoordinator {
             };
             let prepare_at = std::time::Instant::now();
             let mut commands = vec![];
+            let mut allocations = vec![];
             let mut replies = vec![];
             {
                 let dir = fs.fs_dir.read();
@@ -226,15 +227,20 @@ impl NativeCoordinator {
                             .prepare(&fs, &mount_manager, &mut view, time)
                     };
                     let (edits, reply) = match prepared {
-                        Ok(prepared) => (
-                            prepared.edits,
-                            NativeReply {
-                                code: request.code as i8,
-                                success: true,
-                                header: prepared.response,
-                                body: vec![],
-                            },
-                        ),
+                        Ok(prepared) => {
+                            if let Some(allocation) = prepared.allocation {
+                                allocations.push((commands.len(), allocation));
+                            }
+                            (
+                                prepared.edits,
+                                NativeReply {
+                                    code: request.code as i8,
+                                    success: true,
+                                    header: prepared.response,
+                                    body: vec![],
+                                },
+                            )
+                        }
                         Err(error) => (
                             PreparedEdits::default(),
                             NativeReply {
@@ -286,6 +292,17 @@ impl NativeCoordinator {
                 }
                 result
             };
+            for (index, allocation) in allocations {
+                let retain = match &committed {
+                    Ok(results) => {
+                        results[index].success || results[index].status == Status::Uncertain as i32
+                    }
+                    Err(_) => true,
+                };
+                if retain {
+                    allocation.retain();
+                }
+            }
             for (item, reply) in replies {
                 let result = match reply {
                     Ok(value) => Ok(value),

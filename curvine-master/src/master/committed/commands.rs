@@ -15,6 +15,7 @@ use prost::Message;
 pub(super) struct PreparedCommand {
     pub(super) edits: PreparedEdits,
     pub(super) response: Vec<u8>,
+    pub(super) allocation: Option<Allocation>,
 }
 
 fn directory(
@@ -95,6 +96,7 @@ pub(super) fn mkdir(
     Ok(PreparedCommand {
         edits: view.finish()?,
         response,
+        allocation: None,
     })
 }
 
@@ -151,6 +153,7 @@ pub(super) fn create(
     Ok(PreparedCommand {
         edits: view.finish()?,
         response,
+        allocation: None,
     })
 }
 
@@ -192,21 +195,7 @@ pub(super) fn complete(
             if index + 1 < file.blocks.len() && meta.len() != file.block_size as i64 {
                 return err_box!("block status abnormal, block id {}", meta.id);
             }
-            let replicas = match &meta.locs {
-                Some(locs) => locs.clone(),
-                None => view.locations(meta.id)?,
-            };
-            locations.push(fs.create_locate_block(
-                &request.path,
-                curvine_model::ExtendedBlock {
-                    id: meta.id,
-                    len: meta.len(),
-                    storage_type: file.storage_policy.storage_type,
-                    file_type: file.file_type,
-                    alloc_opts: meta.alloc_opts.clone(),
-                },
-                &replicas,
-            )?);
+            locations.push(block_response(&view, fs, &request.path, file, meta)?);
         }
         Some(ProtoUtils::file_blocks_to_pb(
             curvine_model::FileBlocks::new(inode.to_file_status(&request.path)?, locations),
@@ -222,5 +211,155 @@ pub(super) fn complete(
     Ok(PreparedCommand {
         edits: view.finish()?,
         response,
+        allocation: None,
+    })
+}
+
+/// Scheduling pressure is local and soft. Undo failed preparation or a known
+/// rejected commit; on an unknown outcome keep the conservative reservation
+/// until the worker's ordinary scheduling timeout/report reconciles it.
+pub(super) struct Allocation {
+    manager: crate::master::SyncWorkerManager,
+    workers: Vec<curvine_model::WorkerAddress>,
+    block_size: i64,
+    release: bool,
+}
+impl Allocation {
+    pub(super) fn retain(mut self) {
+        self.release = false;
+    }
+}
+impl Drop for Allocation {
+    fn drop(&mut self) {
+        if self.release {
+            self.manager
+                .write()
+                .unschedule_chosen_workers(&self.workers, self.block_size);
+        }
+    }
+}
+
+fn block_response(
+    view: &CommandView<'_, '_>,
+    fs: &crate::master::fs::MasterFilesystem,
+    path: &str,
+    file: &InodeFile,
+    meta: &crate::master::meta::BlockMeta,
+) -> FsResult<curvine_model::LocatedBlock> {
+    let replicas = match &meta.locs {
+        Some(locs) => locs.clone(),
+        None => view.locations(meta.id)?,
+    };
+    if replicas.is_empty() {
+        return err_box!("File {}, block {} Lost (no worker can read)", path, meta.id);
+    }
+    fs.create_locate_block(
+        path,
+        curvine_model::ExtendedBlock {
+            id: meta.id,
+            len: meta.len(),
+            storage_type: file.storage_policy.storage_type,
+            file_type: file.file_type,
+            alloc_opts: meta.alloc_opts.clone(),
+        },
+        &replicas,
+    )
+}
+
+pub(super) fn add_block(
+    batch: &mut BatchView<'_>,
+    fs: &crate::master::fs::MasterFilesystem,
+    request: curvine_proto::AddBlockRequest,
+    time: i64,
+) -> FsResult<PreparedCommand> {
+    let mut view = batch.command();
+    let mut inode = view.file(&request.path, request.inode_id)?;
+    view.guard_write(inode.id())?;
+    let file = inode.as_file_ref()?;
+    if let Some(next) = file.search_next_block(request.last_block.as_ref().map(|b| b.id)) {
+        let response =
+            ProtoUtils::located_block_to_pb(block_response(&view, fs, &request.path, file, next)?)
+                .encode_to_vec();
+        return Ok(PreparedCommand {
+            edits: view.finish()?,
+            response,
+            allocation: None,
+        });
+    }
+    let commits: Vec<_> = request
+        .commit_blocks
+        .into_iter()
+        .map(ProtoUtils::commit_block_from_pb)
+        .collect();
+    let file = inode.as_file_mut()?;
+    let block_id = file.next_block_id()?;
+    file.complete_at(request.file_len, &commits, "", true, time)?;
+    let workers = fs.choose_worker_for_file(
+        file,
+        ProtoUtils::client_address_from_pb(request.client_address),
+        request.exclude_workers,
+    )?;
+    let allocation = Allocation {
+        manager: fs.worker_manager.clone(),
+        block_size: file.block_size as i64,
+        workers: workers.clone(),
+        release: true,
+    };
+    let has_spdk = fs.worker_manager.read().workers_have_spdk(&workers);
+    file.add_block(crate::master::meta::BlockMeta::with_pre(block_id, &workers));
+    let block = curvine_model::LocatedBlock {
+        block: curvine_model::ExtendedBlock {
+            id: block_id,
+            len: 0,
+            storage_type: file.storage_policy.storage_type,
+            file_type: file.file_type,
+            alloc_opts: None,
+        },
+        locs: workers,
+        has_spdk,
+    };
+    view.commit_locations(&commits)?;
+    view.put_inode(inode.clone_metadata())?;
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response: ProtoUtils::located_block_to_pb(block).encode_to_vec(),
+        allocation: Some(allocation),
+    })
+}
+
+pub(super) fn reopen(
+    batch: &mut BatchView<'_>,
+    fs: &crate::master::fs::MasterFilesystem,
+    request: curvine_proto::OpenFileRequest,
+) -> FsResult<PreparedCommand> {
+    let flags = curvine_model::OpenFlags::new(request.flags);
+    if flags.read_only() || flags.truncate() {
+        return err_box!("native reopen requires writable non-truncating flags");
+    }
+    let mut view = batch.command();
+    let mut inode = view.file(&request.path, None)?;
+    view.guard_write(inode.id())?;
+    inode.as_file_mut()?.reopen(request.opts.client_name);
+    view.put_inode(inode.clone_metadata())?;
+    view.enroll(&inode)?;
+    let file = inode.as_file_ref()?;
+    let mut blocks = Vec::with_capacity(file.blocks.len());
+    for (index, meta) in file.blocks.iter().enumerate() {
+        if index + 1 < file.blocks.len() && meta.len() != file.block_size as i64 {
+            return err_box!("block status abnormal, block id {}", meta.id);
+        }
+        blocks.push(block_response(&view, fs, &request.path, file, meta)?);
+    }
+    let response = curvine_proto::OpenFileResponse {
+        file_blocks: ProtoUtils::file_blocks_to_pb(curvine_model::FileBlocks::new(
+            inode.to_file_status(&request.path)?,
+            blocks,
+        )),
+    }
+    .encode_to_vec();
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response,
+        allocation: None,
     })
 }

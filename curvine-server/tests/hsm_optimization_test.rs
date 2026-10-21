@@ -330,6 +330,30 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert_eq!(reader.read(&mut bytes).await?, 11);
         assert_eq!(bytes, b"replacement");
         reader.complete().await?;
+        let before_append = metrics.hsm_test_commit_stats();
+        let mut append = fs.append(&path).await?;
+        append.write(b"++").await?;
+        append.complete().await?;
+        let after_append = metrics.hsm_test_commit_stats();
+        assert!(
+            after_append["native_commands"].as_f64().unwrap()
+                - before_append["native_commands"].as_f64().unwrap()
+                >= 2.0
+        );
+        let mut reader = fs.open(&path).await?;
+        let mut appended = vec![0; 13];
+        assert_eq!(reader.read(&mut appended).await?, 13);
+        assert_eq!(appended, b"replacement++");
+        reader.complete().await?;
+        let via_open = Path::from_str("/created-through-open")?;
+        let mut writer = fs.open_for_write(&via_open, false).await?;
+        writer.write(b"native open create").await?;
+        writer.complete().await?;
+        let mut reader = fs.open(&via_open).await?;
+        let mut bytes = vec![0; 18];
+        assert_eq!(reader.read(&mut bytes).await?, 18);
+        assert_eq!(bytes, b"native open create");
+        reader.complete().await?;
         let reader = uuid::Uuid::new_v4().simple().to_string();
         let original =
             json!({"op":"open_path","path":"/hot","reader":reader,"request_id":request_id()});

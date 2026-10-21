@@ -19,6 +19,8 @@ pub(crate) enum NativeInput {
     Mkdir(MkdirRequest),
     Create(CreateFileRequest),
     Complete(CompleteFileRequest),
+    AddBlock(curvine_proto::AddBlockRequest),
+    Reopen(curvine_proto::OpenFileRequest),
 }
 impl NativeInput {
     pub(crate) fn parse(request: &NativeMutationRequest) -> FsResult<Self> {
@@ -41,6 +43,16 @@ impl NativeInput {
                     .map(Self::Complete)
                     .map_err(|error| FsError::common(error.to_string()))
             }
+            value if value == RpcCode::AddBlock as u32 => {
+                curvine_proto::AddBlockRequest::decode(request.header.as_slice())
+                    .map(Self::AddBlock)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
+            value if value == RpcCode::OpenFile as u32 => {
+                curvine_proto::OpenFileRequest::decode(request.header.as_slice())
+                    .map(Self::Reopen)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
             _ => err_box!("unsupported native mutation operation"),
         }
     }
@@ -49,10 +61,39 @@ impl NativeInput {
             Self::Mkdir(request) => &request.path,
             Self::Create(request) => &request.path,
             Self::Complete(request) => &request.path,
+            Self::AddBlock(request) => &request.path,
+            Self::Reopen(request) => &request.path,
         }
     }
     pub(crate) fn legacy(self, fs: &MasterFilesystem) -> FsResult<Vec<u8>> {
         match self {
+            Self::AddBlock(request) => {
+                let block = fs.add_block(
+                    request.path,
+                    request.inode_id,
+                    ProtoUtils::client_address_from_pb(request.client_address),
+                    request
+                        .commit_blocks
+                        .into_iter()
+                        .map(ProtoUtils::commit_block_from_pb)
+                        .collect(),
+                    request.exclude_workers,
+                    request.file_len,
+                    request.last_block.map(ProtoUtils::extend_block_from_pb),
+                )?;
+                Ok(ProtoUtils::located_block_to_pb(block).encode_to_vec())
+            }
+            Self::Reopen(request) => {
+                let blocks = fs.open_file(
+                    request.path,
+                    ProtoUtils::create_opts_from_pb(request.opts),
+                    OpenFlags::new(request.flags),
+                )?;
+                Ok(curvine_proto::OpenFileResponse {
+                    file_blocks: ProtoUtils::file_blocks_to_pb(blocks),
+                }
+                .encode_to_vec())
+            }
             Self::Complete(request) => {
                 let commits = request
                     .commit_blocks
@@ -122,6 +163,41 @@ impl NativeInput {
         }
         match self {
             Self::Complete(request) => commands::complete(view, fs, request, time),
+            Self::AddBlock(request) => commands::add_block(view, fs, request, time),
+            Self::Reopen(request) => {
+                let flags = OpenFlags::new(request.flags);
+                if flags.read_only() || flags.truncate() {
+                    return err_box!("native reopen requires writable non-truncating flags");
+                }
+                // Inspect the private batch view: a preceding command may have
+                // created this path without publishing it yet.
+                let exists = {
+                    let mut command = view.command();
+                    command.resolve(&request.path)?.len()
+                        == crate::master::meta::inode::InodeView::path_components(&request.path)?
+                            .len()
+                };
+                if exists {
+                    commands::reopen(view, fs, request)
+                } else if flags.create() {
+                    let opts = ProtoUtils::create_opts_from_pb(request.opts);
+                    fs.validate_create_opts(&request.path, &opts, &flags)?;
+                    let mut prepared = commands::create(view, &request.path, opts, time)?;
+                    let status = CreateFileResponse::decode(prepared.response.as_slice())
+                        .map_err(|e| FsError::common(e.to_string()))?
+                        .file_status;
+                    prepared.response = curvine_proto::OpenFileResponse {
+                        file_blocks: curvine_proto::FileBlocksProto {
+                            status,
+                            block_locs: vec![],
+                        },
+                    }
+                    .encode_to_vec();
+                    Ok(prepared)
+                } else {
+                    Err(FsError::file_not_found(&request.path))
+                }
+            }
             Self::Mkdir(request) => {
                 fs.check_path_length(&request.path)?;
                 commands::mkdir(
