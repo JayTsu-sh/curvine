@@ -1,0 +1,53 @@
+{
+  "started_utc": "2026-10-21T08:43:17.629897+00:00",
+  "platform": "Linux-6.8.0-142-generic-x86_64-with-glibc2.39",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "clock_ticks_per_second": 100,
+  "memory_total_kib": 32860356,
+  "original_rev": "826a2ae9be052b2bf86d1a1647551e396adfcc5f",
+  "hsm_rev": "ad7fdaa2667cf1ce1c7fd614989c56e82d6560ec",
+  "binaries": {
+    "before": {
+      "sha256": "d20f95e2d923128a953602856e99cd6d4c64d8e7ad0bf186a38a703bdea48d49",
+      "bytes": 35268040
+    },
+    "after": {
+      "sha256": "ea96f4fa2ffd6804d8caa3d8980d6e6453cff84738f466f3f12451d62cdc6881",
+      "bytes": 35343752
+    }
+  },
+  "rounds": 3,
+  "hsm_pair": true,
+  "smoke": false,
+  "io_only": true,
+  "large_files": 64,
+  "master_connections": 16,
+  "profile": "release (both builds; see build commands)",
+  "cache": "fresh process and DB per invocation; no OS page cache purge",
+  "execution": "sequential clusters; rotated order; shared VM; loopback RPC; no physical node fault isolation"
+}

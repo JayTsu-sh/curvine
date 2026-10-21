@@ -1,6 +1,6 @@
 # 普通日志提交回执：改造前后性能验收
 
-日期：2026-10-21。这里比较的是 **HSM 开启前后的两个 HSM 实现**：旧版在普通修改提交后追加一个空 HSM barrier；新版等待本次普通日志的 commit/apply 回执，并校验 originating term。两组都自动纳管普通文件，使用相同的应用工作负载、journal WAL 同步和返回确认要求。原版 Curvine 与 HSM 的差异另见 [基线报告](performance-comparison.md)，不能与这组百分比混算。
+日期：2026-10-21。这里比较的是 **HSM 开启前后的两个 HSM 实现**：旧版在普通修改提交后追加一个空 HSM barrier；新版等待本次普通日志的 commit/apply 回执，并校验 originating term。两组都自动纳管普通文件，使用相同的应用工作负载、journal WAL 同步和返回确认要求。本报告测量的是 P2 [过渡微批](mutation-microbatch.md)之前的 P1 效果。原版 Curvine 与 HSM 的差异另见 [基线报告](performance-comparison.md)，不能与这组百分比混算。
 
 ## 测量边界
 

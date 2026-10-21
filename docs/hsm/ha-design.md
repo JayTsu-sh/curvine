@@ -1,6 +1,6 @@
 # HSM 优化方案的 HA 约束与设计
 
-状态：分阶段实施，尚未完成端到端 HA 验收。P1 已增加普通日志自身回执、本节点提交及 originating term 校验，见 [提交回执改造](commit-receipts.md)；其余目标按本文逐项实施。它是 [性能优化方案](optimization-plan.md) 的前置约束，从 P0/P1 起执行。
+状态：分阶段实施，尚未完成端到端 HA 验收。P1 已增加普通日志自身回执、本节点提交及 originating term 校验，见 [提交回执改造](commit-receipts.md)；P2 的[普通请求过渡微批](mutation-microbatch.md)在同一 gate 下合批并在未知提交时故障退出。持久普通请求去重、统一 committed 状态机及其他目标仍按本文逐项实施。它是 [性能优化方案](optimization-plan.md) 的前置约束，从 P0/P1 起执行。
 
 ## 1. 当前基础、缺口和目标范围
 

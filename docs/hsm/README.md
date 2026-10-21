@@ -45,6 +45,6 @@
 
 原版 Curvine、HSM 关闭、HSM 开启的前台性能差异、策略扫描影响与复现方法，另见 [引入 HSM 的性能对比](performance-comparison.md)。这与前文“已有 HSM 的优化前后”属于不同对比。
 
-按实测瓶颈排序的 [性能优化方案](optimization-plan.md) 描述自身日志回执、统一提交微批、读取保护和策略扫描改造。[普通日志回执](commit-receipts.md) 已完成 P1 改造及功能验收；[同语义前后性能对照](commit-receipt-results.md)记录单独基准，后续阶段仍为目标设计。
+按实测瓶颈排序的 [性能优化方案](optimization-plan.md) 描述自身日志回执、统一提交微批、读取保护和策略扫描改造。[普通日志回执](commit-receipts.md) 已完成 P1 改造及功能验收；[同语义前后性能对照](commit-receipt-results.md)记录单独基准。P2 的[普通请求过渡微批](mutation-microbatch.md)已落地，[P1/P2 性能与闭环验收](mutation-microbatch-results.md)记录连接池条件、实际 Raft flush 及仍未解决的读侧成本；统一 committed 状态机及后续阶段仍为目标设计。
 
 [HA 设计与验收矩阵](ha-design.md) 将换主、微批幂等、读租约、控制器/执行器接管、归档冗余及 Recall 布局故障恢复作为性能优化前置约束；P1 已覆盖普通日志 originating term 约束，其余仍分阶段实现。
