@@ -115,22 +115,23 @@ impl SingleExecutor {
 
         let poll_time = Duration::from_millis(300);
         let res = builder.spawn(move || {
-            ctl.store(Self::ST_RUNNING, Ordering::SeqCst);
-
-            while ctl.load(Ordering::SeqCst) <= Self::ST_SHUTDOWN {
-                loop {
-                    match receiver.recv_timeout(poll_time) {
-                        Ok(task) => task(),
-                        Err(RecvTimeoutError::Timeout) => break,
-                        Err(RecvTimeoutError::Disconnected) => {
-                            // The channel has been closed
-                            error!("thread {} abnormal shutdown", name);
-                            ctl.store(Self::ST_STOP, Ordering::SeqCst);
+            // The constructor publishes RUNNING before spawning. Never write
+            // it here: Drop may already have published STOP before this thread
+            // gets its first timeslice. Drain accepted work even in that case.
+            loop {
+                match receiver.recv_timeout(poll_time) {
+                    Ok(task) => task(),
+                    Err(RecvTimeoutError::Timeout) => {
+                        if ctl.load(Ordering::SeqCst) >= Self::ST_STOP {
                             break;
                         }
                     }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        break;
+                    }
                 }
             }
+            ctl.store(Self::ST_STOP, Ordering::SeqCst);
         });
 
         res.unwrap()
@@ -147,10 +148,10 @@ impl Drop for SingleExecutor {
             return;
         }
 
-        self.ctl.store(Self::ST_SHUTDOWN, Ordering::SeqCst);
-        while self.sender.try_send(Box::new(|| {})).is_ok() {}
-
         self.ctl.store(Self::ST_STOP, Ordering::SeqCst);
+        // A single wakeup is sufficient. Filling the queue manufactures work
+        // during shutdown and can race a consumer indefinitely.
+        let _ = self.sender.try_send(Box::new(|| {}));
         match self.handler.take() {
             None => {
                 error!("Thread {} does not appear to exist", self.name)
@@ -164,5 +165,58 @@ impl Drop for SingleExecutor {
                 ),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stopped_before_start_still_drains_accepted_work() {
+        let (sender, receiver) = mpsc::sync_channel::<Task>(2);
+        let ran = Arc::new(AtomicU8::new(0));
+        let completed = ran.clone();
+        sender
+            .send(Box::new(move || {
+                completed.store(1, Ordering::SeqCst);
+            }))
+            .unwrap();
+        let ctl = Arc::new(AtomicU8::new(SingleExecutor::ST_STOP));
+        let worker = SingleExecutor::create_thread("drain-before-start".into(), receiver, ctl);
+        let (done, result) = mpsc::channel();
+        let joiner = thread::spawn(move || {
+            worker.join().unwrap();
+            let _ = done.send(());
+        });
+        result
+            .recv_timeout(Duration::from_secs(3))
+            .expect("stopped executor did not drain and exit");
+        joiner.join().unwrap();
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        drop(sender);
+    }
+
+    #[test]
+    fn startup_cannot_resurrect_an_executor_already_stopped_by_drop() {
+        // Drop may mark STOP before the OS schedules the newly created worker.
+        // Keep a sender alive, exactly as Drop does while joining that worker.
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let ctl = Arc::new(AtomicU8::new(SingleExecutor::ST_STOP));
+        let worker =
+            SingleExecutor::create_thread("stopped-before-start".into(), receiver, ctl.clone());
+        let (done, result) = mpsc::channel();
+        let joiner = thread::spawn(move || {
+            worker.join().unwrap();
+            let _ = done.send(());
+        });
+        let exited = result.recv_timeout(Duration::from_millis(900)).is_ok();
+        // Also clean up on the red version; do not leave a hung test process.
+        ctl.store(SingleExecutor::ST_STOP, Ordering::SeqCst);
+        joiner.join().unwrap();
+        assert!(
+            exited,
+            "worker startup overwrote STOP; Drop would join forever"
+        );
     }
 }
