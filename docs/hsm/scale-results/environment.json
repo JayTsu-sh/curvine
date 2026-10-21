@@ -1,0 +1,16 @@
+{
+  "base_commit": "039631f4ea8aa5a06250aa8928e2328edc003475",
+  "files": {
+    "curvine-master/src/master/hsm.rs": "7f2ec3b70461eb8cf3672e632f136af10c58f5f8bdea15af8049b6ef83b35d54",
+    "curvine-master/src/master/hsm/ordinary.rs": "6f31e6430f8a9233c9647f69dfbcd5eaf5c5112cbb8c2f6b79619a9f739b7c32",
+    "curvine-master/src/master/hsm/lifecycle.rs": "48789626664707d9d18d34975fc167e662e069e14adb19054f2fdf27018830d8",
+    "curvine-master/src/master/meta/store/rocks_inode_store.rs": "914788c78353438c611b66f0cb766d13ed252663f937b479c28a11f3771d1341",
+    "curvine-master/src/master/hsm/scale_tests.rs": "03a9a7c9b1e05503aa012a372b3f96efe66bdd1df0b78ee7c7a34f73017df78f"
+  },
+  "host": "Linux-6.8.0-142-generic-x86_64-with-glibc2.39",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "performance_commit": "4b82d0898241f095a319588faf4e233bcc6a538d",
+  "cpus_affinity": 24,
+  "metadata_benchmark_executable_sha256": "11869239454214957424f4b9dc97f91446996e7affb053640932746999c57721",
+  "method": "identical optimized seed, fresh DB per variant; scans after seed/update; debug test profile; no OS cache purge; shared development host"
+}

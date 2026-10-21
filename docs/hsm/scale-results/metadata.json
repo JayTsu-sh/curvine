@@ -1,0 +1,767 @@
+[
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 10000,
+    "reset": {
+      "batches": 1,
+      "keys": 20000,
+      "max_batch_keys": 20000,
+      "ms": 142.580171,
+      "rss_before_kib": 73688,
+      "sampled_peak_rss_kib": 74336
+    },
+    "results": [
+      {
+        "kv_mutations": 250000,
+        "ms": 7882.579874,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 667648,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 250000,
+        "ms": 7637.844779,
+        "operation": "atime_update",
+        "process_write_bytes": 1433600,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 10000,
+        "ms": 758.169542,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 10000
+      },
+      {
+        "case": "size_zero",
+        "examined": 10000,
+        "ms": 723.265733,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 10000,
+        "ms": 706.080111,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 10
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 10000,
+        "ms": 704.147454,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 100
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 10000,
+        "ms": 701.090542,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 1000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 997.4232360000001,
+    "variant": "baseline"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 10000,
+    "reset": {
+      "batches": 20,
+      "keys": 20000,
+      "max_batch_bytes": 46092,
+      "max_batch_keys": 1024,
+      "ms": 145.380463,
+      "rss_before_kib": 63520,
+      "sampled_peak_rss_kib": 63532
+    },
+    "results": [
+      {
+        "kv_mutations": 50000,
+        "ms": 5658.100147,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 614400,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 150000,
+        "ms": 6568.461486,
+        "operation": "atime_update",
+        "process_write_bytes": 1404928,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 10000,
+        "ms": 734.148486,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 10000
+      },
+      {
+        "case": "size_zero",
+        "examined": 10000,
+        "ms": 702.769948,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 0,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 10000,
+        "ms": 703.385559,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10,
+        "selected": 10
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 10000,
+        "ms": 704.580659,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100,
+        "selected": 100
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 10000,
+        "ms": 709.78594,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 1000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 972.452623,
+    "variant": "optimized"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 100000,
+    "reset": {
+      "batches": 1,
+      "keys": 200000,
+      "max_batch_keys": 200000,
+      "ms": 1111.3427179999999,
+      "rss_before_kib": 99296,
+      "sampled_peak_rss_kib": 123408
+    },
+    "results": [
+      {
+        "kv_mutations": 250000,
+        "ms": 7168.757075,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 667648,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 250000,
+        "ms": 7261.712962,
+        "operation": "atime_update",
+        "process_write_bytes": 1425408,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 100000,
+        "ms": 6369.463946,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100000,
+        "selected": 100000
+      },
+      {
+        "case": "size_zero",
+        "examined": 100000,
+        "ms": 5187.163684,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100000,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 100000,
+        "ms": 5230.461065,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100000,
+        "selected": 100
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 100000,
+        "ms": 5211.453957,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100000,
+        "selected": 1000
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 100000,
+        "ms": 5239.864395,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100000,
+        "selected": 10000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 9362.245939999999,
+    "variant": "baseline"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 100000,
+    "reset": {
+      "batches": 196,
+      "keys": 200000,
+      "max_batch_bytes": 47116,
+      "max_batch_keys": 1024,
+      "ms": 1185.342536,
+      "rss_before_kib": 99344,
+      "sampled_peak_rss_kib": 110920
+    },
+    "results": [
+      {
+        "kv_mutations": 50000,
+        "ms": 5409.64738,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 614400,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 150000,
+        "ms": 6364.390002,
+        "operation": "atime_update",
+        "process_write_bytes": 1396736,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 100000,
+        "ms": 6237.001576,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100000,
+        "selected": 100000
+      },
+      {
+        "case": "size_zero",
+        "examined": 100000,
+        "ms": 5329.778226,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 0,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 100000,
+        "ms": 5286.2688069999995,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100,
+        "selected": 100
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 100000,
+        "ms": 5274.480426,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000,
+        "selected": 1000
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 100000,
+        "ms": 5606.784727,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 100000,
+        "selected": 10000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 9737.064995,
+    "variant": "optimized"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 1000000,
+    "reset": {
+      "batches": 1,
+      "keys": 2000000,
+      "max_batch_keys": 2000000,
+      "ms": 14140.628028,
+      "rss_before_kib": 119428,
+      "sampled_peak_rss_kib": 357976
+    },
+    "results": [
+      {
+        "kv_mutations": 250000,
+        "ms": 7150.542636,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 667648,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 250000,
+        "ms": 7271.019626,
+        "operation": "atime_update",
+        "process_write_bytes": 150900736,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 1000000,
+        "ms": 80628.90978100001,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000000
+      },
+      {
+        "case": "size_zero",
+        "examined": 1000000,
+        "ms": 78247.066131,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 1000000,
+        "ms": 78236.742697,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 1000000,
+        "ms": 79202.23359,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 10000
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 1000000,
+        "ms": 79453.24647,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 100000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 89192.929795,
+    "variant": "baseline"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 1000000,
+    "reset": {
+      "batches": 1954,
+      "keys": 2000000,
+      "max_batch_bytes": 48140,
+      "max_batch_keys": 1024,
+      "ms": 14916.837489000001,
+      "rss_before_kib": 119280,
+      "sampled_peak_rss_kib": 198928
+    },
+    "results": [
+      {
+        "kv_mutations": 50000,
+        "ms": 5531.331292,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 614400,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 150000,
+        "ms": 6601.474786,
+        "operation": "atime_update",
+        "process_write_bytes": 150827008,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 1000000,
+        "ms": 81243.54399800001,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000000
+      },
+      {
+        "case": "size_zero",
+        "examined": 1000000,
+        "ms": 82149.252167,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 0,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 1000000,
+        "ms": 81719.714534,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000,
+        "selected": 1000
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 1000000,
+        "ms": 81635.908149,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 10000
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 1000000,
+        "ms": 82211.424472,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 100000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 90177.478413,
+    "variant": "optimized"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 1000000,
+    "reset": {
+      "batches": 1954,
+      "keys": 2000000,
+      "max_batch_bytes": 48140,
+      "max_batch_keys": 1024,
+      "ms": 15436.056081,
+      "rss_before_kib": 107784,
+      "sampled_peak_rss_kib": 190364
+    },
+    "results": [
+      {
+        "kv_mutations": 50000,
+        "ms": 5587.718293,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 614400,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 150000,
+        "ms": 6516.625959,
+        "operation": "atime_update",
+        "process_write_bytes": 150827008,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 1000000,
+        "ms": 92370.164626,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000000
+      },
+      {
+        "case": "size_zero",
+        "examined": 1000000,
+        "ms": 83399.991327,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 0,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 1000000,
+        "ms": 81614.428973,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000,
+        "selected": 1000
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 1000000,
+        "ms": 89986.707003,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 10000
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 1000000,
+        "ms": 84507.022683,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 100000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 89194.70160999999,
+    "variant": "optimized"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 1000000,
+    "reset": {
+      "batches": 1,
+      "keys": 2000000,
+      "max_batch_keys": 2000000,
+      "ms": 14461.407377,
+      "rss_before_kib": 117620,
+      "sampled_peak_rss_kib": 360444
+    },
+    "results": [
+      {
+        "kv_mutations": 250000,
+        "ms": 7421.758821,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 667648,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 250000,
+        "ms": 7432.002149999999,
+        "operation": "atime_update",
+        "process_write_bytes": 150900736,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 1000000,
+        "ms": 80275.960813,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000000
+      },
+      {
+        "case": "size_zero",
+        "examined": 1000000,
+        "ms": 79962.66788699999,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 1000000,
+        "ms": 83087.947827,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 1000000,
+        "ms": 82292.334446,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 10000
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 1000000,
+        "ms": 84645.326362,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 100000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 90327.06710799999,
+    "variant": "baseline"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 1000000,
+    "reset": {
+      "batches": 1,
+      "keys": 2000000,
+      "max_batch_keys": 2000000,
+      "ms": 14510.945932,
+      "rss_before_kib": 117792,
+      "sampled_peak_rss_kib": 355368
+    },
+    "results": [
+      {
+        "kv_mutations": 250000,
+        "ms": 7476.824506,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 667648,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 250000,
+        "ms": 7537.745194,
+        "operation": "atime_update",
+        "process_write_bytes": 150900736,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 1000000,
+        "ms": 81272.398626,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000000
+      },
+      {
+        "case": "size_zero",
+        "examined": 1000000,
+        "ms": 79704.702809,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 1000000,
+        "ms": 80505.315757,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 1000000,
+        "ms": 83380.298477,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 10000
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 1000000,
+        "ms": 82836.270544,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 100000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 92149.940917,
+    "variant": "baseline"
+  },
+  {
+    "kind": "real-rocksdb-metadata-only",
+    "records": 1000000,
+    "reset": {
+      "batches": 1954,
+      "keys": 2000000,
+      "max_batch_bytes": 48140,
+      "max_batch_keys": 1024,
+      "ms": 14795.924072,
+      "rss_before_kib": 117820,
+      "sampled_peak_rss_kib": 198560
+    },
+    "results": [
+      {
+        "kv_mutations": 50000,
+        "ms": 6024.481552,
+        "operation": "same_sort_key_update",
+        "process_write_bytes": 614400,
+        "updates": 50000
+      },
+      {
+        "kv_mutations": 150000,
+        "ms": 6946.488943,
+        "operation": "atime_update",
+        "process_write_bytes": 150183936,
+        "updates": 50000
+      },
+      {
+        "case": "all",
+        "examined": 1000000,
+        "ms": 95504.789018,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 1000000
+      },
+      {
+        "case": "size_zero",
+        "examined": 1000000,
+        "ms": 80266.168003,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 0,
+        "selected": 0
+      },
+      {
+        "case": "size_0.1_percent",
+        "examined": 1000000,
+        "ms": 79391.2583,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000,
+        "selected": 1000
+      },
+      {
+        "case": "owner_1_percent",
+        "examined": 1000000,
+        "ms": 79048.665591,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 10000,
+        "selected": 10000
+      },
+      {
+        "case": "path_10_percent",
+        "examined": 1000000,
+        "ms": 80400.870899,
+        "note": "callback counts only; no native namespace traversal or Raft admission",
+        "operation": "scan",
+        "path_callbacks": 1000000,
+        "selected": 100000
+      }
+    ],
+    "scan_page": 256,
+    "seed_ms": 90018.60901300001,
+    "variant": "optimized"
+  }
+]

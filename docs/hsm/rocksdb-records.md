@@ -114,20 +114,21 @@ Record 当前没有独立的 schema_version 字段。新增字段的读取兼容
 `ordinary::write_record(batch, old, new)` 的实际顺序：
 
 ```text
-若 old 存在：Delete(common, candidate_key(old))
 Put(common, record_key(new.inode), JSON(new))
-Put(common, candidate_key(new), JSON(new.inode_as_string))
+若 old 不存在或旧、新候选键不同：
+    若 old 存在：Delete(common, candidate_key(old))
+    Put(common, candidate_key(new), JSON(new.inode_as_string))
 
-若 seal_token 非空且 sealed=false：Put(common, seal:<inode>, JSON(DataKey))
-否则：Delete(common, seal:<inode>)
+seal 的旧、新派生值 = (seal_token 非空且 sealed=false) 时的 DataKey，否则为空
+仅在派生值变化时 Put 或 Delete seal:<inode>
 
-若 garbage 或 native_garbage 非空：Put(common, gc:<inode>, JSON(EntityKey))
-否则：Delete(common, gc:<inode>)
+gc 的旧、新派生值 = (garbage 或 native_garbage 非空) 时的 EntityKey，否则为空
+仅在派生值变化时 Put 或 Delete gc:<inode>
 
 由调用方 Commit 一次 WriteBatch
 ```
 
-所以同一提交批次不会只留下“新 Record + 旧候选键”。状态和 atime 不变时，删除后重新写回的是同一个候选键。Record、候选项及 seal/GC 派生键在稳定投影中对应；派生键可以由 Record 重建，但 Record 中的 pin、回执和 pending 等事实必须来自提交历史，不能丢弃后靠扫描业务目录推测。
+所以同一提交批次不会只留下“新 Record + 旧候选键”。状态和 atime 不变时，保留原候选项，不再删除或重写。Record、候选项及 seal/GC 派生键在稳定投影中对应；派生键可以由 Record 重建，但 Record 中的 pin、回执和 pending 等事实必须来自提交历史，不能丢弃后靠扫描业务目录推测。
 
 这里的原子范围是这些 HSM KV，以及 HSM apply 明确放进同一个 batch 的原生 inode 修改。**不能推广为所有普通写入的 inode 与 HSM 更新都在一个 RocksDB batch**：普通修改调用自己的原生更新和纳管钩子，再写普通 journal；HSM 修改使用 committed HSM transaction。两条路径共享提交串行边界，普通修改返回前等待本节点提交屏障，日志重放执行对应普通钩子。
 
@@ -143,7 +144,7 @@ Put(common, candidate_key(new), JSON(new.inode_as_string))
 | Release commit | 撤销在线块列表，Dual → Offline，保存 native_garbage | `d:<t>:<id>` → `f:<t>:<id>`，同时建立 GC outbox |
 | Recall commit | Seal 后原 inode 发布，Offline → Dual | `f:<t>:<id>` → `d:<t>:<id>`；随后的读更新 atime |
 | 原生布局覆盖/截断 | generation 推进，撤销旧 anchors/digest，重置摘要确认 | 更新对应 Online 候选；writing=true 时仍须后过滤 |
-| 原生布局 rename/属性更新 | 更新 path/策略属性与版本 | 调用通用记录维护；排序字段未变可写回同一索引键 |
+| 原生布局 rename/属性更新 | 更新 path/策略属性与版本 | 调用通用记录维护；排序字段未变则保留索引项 |
 | 允许的文件删除 | 删除对应 HSM Record | 同批删除对应候选键；有未清理垃圾时先拒绝删除 |
 
 索引不保存文件数据块，也不直接删除 Worker 内容。Release 的原生块撤销、Offline 和持久 GC 事实先提交；物理空间随后由 Worker 删除任务回收。
@@ -153,7 +154,7 @@ Put(common, candidate_key(new), JSON(new.inode_as_string))
 1. 从 `policy:<id>` 和 `scan:<id>:<revision>` 读取规则与进度，先判断周期、水位及在途预算。
 2. 根据动作选择状态前缀，Release 先 d 再 o。
 3. `hsm_scan(prefix, after, limit+1)` 对 common CF 做有界 range_scan。每页**处理最多 256 项**，额外预读 1 项判断是否还有下一页；不是最多发生 256 次物理读取的保证。
-4. 从索引 value 解析 inode，再 Get `record:<inode>`，按 inode 解析当前原生路径；之后判断 writing、大小、路径、owner/group、访问/修改/驻留年龄和保护条件。满足访问时间提前结束条件时，转到下一状态范围。
+4. 从索引 value 解析 inode，再 Get `record:<inode>`。先判断访问时间范围与 writing、大小、owner/group、修改/驻留年龄、保护和动作状态；满足这些条件后才按 inode 解析当前原生路径，检查路径前缀与排除条件。满足访问时间提前结束条件时，转到下一状态范围。
 5. 未 sealed 的普通候选返回 to_seal；外部执行器完成受保护摘要后再选择。索引项不是直接发送给 data-mover 的数据计划。
 6. 入队 transaction 同时核对 policy 原值、record version、intent 键和实体 active 键；成立才写 Ready、active、工作索引、回收预算与扫描进度。
 
@@ -188,15 +189,77 @@ completed intent 不参与每轮 Ready/Running 工作索引扫描。当前容量
 
 普通 FUSE 完成路径调用 `hsm_track_file`；正常 CompleteFile 日志在重放时也调用相同钩子。ordinary_format=2 用于新增普通钩子的版本激活，旧日志按旧格式语义解释，不能因为新增回调改变历史 Record.version。
 
-非 testing 启动时，现有实现先清理 common 中的 `P` 投影，再由正常 journal/snapshot 恢复流程重建；普通文件钩子与 HSM apply 共同恢复相同的 Record/索引/任务结果。不能保留未同步的旧 outcome 让它跳过原生 inode 的重放。清理和重建依赖完整提交历史或受支持的 checkpoint，不是从 Worker 块文件猜出归档锚点。
+非 testing 启动时，现有实现先按最多 1024 键、256 KiB 编码预算的批次清理 common 中的 `P` 投影，每批释放 iterator 后提交，并从上一批最后的键后继续，避免反复扫描已删除键的 tombstone；再由正常 journal/snapshot 恢复流程重建；普通文件钩子与 HSM apply 共同恢复相同的 Record/索引/任务结果。不能保留未同步的旧 outcome 让它跳过原生 inode 的重放。清理和重建依赖完整提交历史或受支持的 checkpoint，不是从 Worker 块文件猜出归档锚点。
 
 ## 9. 当前成本与实施边界
 
-- 每个 Record 对应一个当前状态候选项；每次 atime 保护更新都可能重写整个 JSON Record，并删除/插入候选键，存在写放大。
-- 时间索引可减少热记录扫描；路径、owner、大小等仍后过滤，密集不匹配前缀可能跨多轮消耗预算。没有 path×atime 复合索引或按规则物化候选表。
+- 每个 Record 对应一个当前状态候选项；真实 atime 变化仍更新 JSON Record 并迁移候选键。排序键不变时只写 Record；seal/GC 派生值不变时也不写索引。公开访问修订与 Release 的版本失效语义保持。
+- 时间索引可减少热记录扫描；大小、owner 等仍需 Record 回查，但会在解析路径前拒绝；路径条件仍后过滤，密集不匹配前缀可能跨多轮消耗预算。没有 path×atime 复合索引或按规则物化候选表。
 - 当前 Record 将视图、租约、锚点及垃圾集合编码在一个 JSON value，没有拆分为独立关系表；大集合与高频访问尚需压测。
-- 当前启动清理会先收集全部 HSM 键到 Vec，再用一个 WriteBatch 删除；其内存和批次大小随 HSM 键数量增长，尚未实现有界分批重建。元数据提交串行边界、日志重放、共享在途预算的扫描成本均需后续性能验证；没有百万文件或生产 HA 承诺。
+- 启动清理已消除全部键的 Vec 和单个无界 WriteBatch，额外应用侧批次内存受固定上限约束；单键超过预算时拒绝启动。RocksDB cache/memtable 与 namespace 自身仍有内存成本。总清理仍是 O(K)，日志重放及共享在途预算仍随相应工作量增长。实际规模验证范围见 [规模测试记录](scale-validation.md)，不据此承诺生产 HA。
 - 同批更新与日志恢复已经实现；自动对账/修复损坏候选索引的在线运维工具、独立 schema 迁移框架、终态历史自动保留清理并未在此声明完成。
+
+### 9.1 三项成本分别影响什么
+
+下表保留固定源码 `039631f4` 的优化前成本分析；当前代码已实现下节第一步及元数据条件前置。量化结果见 [规模测试记录](scale-validation.md)。需要区分三个数量：`N` 是受管文件数，`K` 是全部 HSM KV 数，`E` 是恢复点之后需要重放的日志数。任务、outcome 和保护事实也占键，因此 `K` 不等于 `N`；高频访问和历史动作会增加 `E`。
+
+| 成本 | 当前实际工作 | 主要影响 |
+|---|---|---|
+| 访问更新 | 受保护读取的打开、续租及有效关闭会更新 Record 和访问观察；atime 改变时删除旧候选键、插入新候选键 | Raft/journal、JSON 编码、RocksDB 写入与 compaction 放大；实际访问更新率比单独的文件数更关键 |
+| 条件后过滤 | 每页先读取最多 256 个索引项及一个 lookahead，再回查 Record 和原生路径，然后检查条件 | 入选比例低时，多轮扫描消耗预算并延迟策略发现；分页限制单次工作量，不保证发现一个合格文件的总成本 |
+| 启动清理与恢复 | 清理先把全部 HSM 键收集到 Vec，再形成一次删除批次；之后从支持的提交历史恢复 | 清理时间、应用侧键集合及批次内存随 K 增长；恢复还受 checkpoint 大小与后续 E 影响，不能只用 N 预测 |
+
+此外，容量策略的 `outstanding_bytes()` 会分页累加所有 `reserved:online:` 项。该扫描的内存有界，但每次计算的总工作量随在途任务数增长；规模测试也必须覆盖，不能只测候选索引。
+
+### 9.2 优化顺序与安全约束
+
+**第一步（已实现）：消除无界清理和不必要的索引写入。**
+
+- 将启动清理改为按键数与累计字节数限制的批次；每批读取后释放 iterator，再提交删除。清理结束前保持恢复阶段，不提供 HSM 服务。中途退出后，下次启动重复清理仍应安全。原生 inode、挂载和锁记录必须保留。
+- 另一种可评估方案是在同一写选项下对 HSM 精确前缀执行范围删除。范围 tombstone 仅使逻辑删除的提交很小，物理清理仍由 compaction 承担；必须测量随后的读取、重放和磁盘回收成本后再选用。
+- `write_record` 比较旧、新候选键：相同就保留索引项；发生状态或 atime 变化才迁移。seal/GC 派生项也按内容变化更新，避免每次修改都删除不存在的 outbox。Record 的权威修订和 CAS 语义保持。
+- 这一步减少冗余写，**不会消除真实 atime 变化所需的索引迁移**。不能仅为了少写索引就跳过访问观察更新，否则旧 Release 可能继续执行。
+
+**第二步（条件前置已实现，新增索引待评估）：降低后过滤的无效工作。**
+
+先把与路径无关的条件放在原生路径解析之前，包括写入状态、大小、owner/group、时间和保护事实；符合这些条件后再解析当前路径。路径必须来自当前 namespace，不能因缓存路径减少查询而漏掉祖先目录重命名。
+
+增加每次扫描的计数与耗时：索引项、Record 回查、路径解析、各类拒绝原因、待 seal 数、实际入队数及提交等待。计数用于识别瓶颈，不直接等同于底层物理 I/O 次数。
+
+只有当低选择率确实成为主要成本，才引入按目录范围或 owner 等维度组织的第二访问路径。新增索引需要一起解决普通写入、属性修改、文件及祖先目录 rename、删除、日志重放和在线重建。索引未就绪时应继续走现有有界扫描，候选进入任务仍由权威 Record/CAS 检查。不能为每个条件组合都建立索引，避免把扫描成本全部转成写入成本。
+
+按分钟合并访问时间、按时间桶排序等属于后续设计选项。必须明确允许的时间精度、桶内排序、跨页扫描及提前结束规则，同时保留每次访问使旧 Release 失效的权威观察。当前精确 atime 语义下，不把时间桶当成已经可直接替换的优化。
+
+**第三步：用完整 checkpoint 与有限日志尾部控制恢复时间。**
+
+有界清理解决应用侧无界内存，不保证总恢复耗时不再随数据量增长。后续需核对 checkpoint 是否同时覆盖原生 namespace、HSM Record、索引、任务/outcome 及其对应的 applied index，再重放该点之后的日志。本轮已验证批量预置百万 namespace 后从 follower checkpoint 恢复、排除原 leader 并核对完整内容，见规模报告；完整故障矩阵和恢复 SLO 仍需按部署环境验收。
+
+当前不能直接保留未校验的旧 HSM 投影：旧 outcome 可能让操作跳过与 namespace 对应的重放。对投影保留或增量恢复的改造，需要证明它与同一个提交恢复点一致，并覆盖 checkpoint 传输、崩溃中断、旧控制者及重试窗口。
+
+终态 intent、outcome 和 binding 的历史保留也要单独设计。删除幂等结果可能让旧操作重新执行，需要重试保留窗口或持久拒绝旧操作的机制；不能为缩小数据库而直接定期删除。
+
+### 9.3 百万规模测试应如何进行
+
+分两层执行。**真实 RocksDB 的百万条合成 Record/索引基准**用于定位元数据算法成本；**真实 Curvine 集群的百万文件测试**用于验收完整链路。前者通过不能写成后者通过。
+
+| 测试维度 | 数据与操作 | 必须记录的结果 |
+|---|---|---|
+| 数据规模 | 1 万、10 万、100 万受管记录；分别记录文件数、总 KV 数和数据库大小 | 主机 CPU/内存、存储类型、进程数、版本、配置、初始 compaction 状态 |
+| 访问更新 | 单热文件重复读、固定热点集合、均匀访问；分别测打开、续租、关闭及未改变排序键的更新 | RPC P50/P95/P99、吞吐、Raft 提交/等待、JSON 字节数、实际写入与 compaction 字节、峰值 RSS |
+| 策略扫描 | 高选择率、1%/0.1% 选择率及零匹配；路径、owner、大小分别拒绝；加入新变冷文件 | 每页延迟、完整一轮耗时、首个及全部合格项的发现延迟、检查/入选比例、Record/路径查询数 |
+| 持续并发 | 普通写入和读访问持续进行，同时运行 Archive/Release 与自动 Recall | 前台 P99、扫描对前台的影响、重复任务、旧 Release 被拒绝、自动 Recall 合并情况 |
+| 历史规模 | 文件数相同，在途任务数、终态历史数和 checkpoint 后日志量不同 | 容量预算计算耗时、恢复日志数与耗时；避免把历史规模误算成文件规模 |
+| 启动与恢复 | 正常停机、强制退出、清理中断、恢复中断；有/无可用 checkpoint；不同日志尾部 | 清理/恢复分段耗时、总可服务时间、峰值 RSS、最大批次键数/字节数、恢复状态与任务结果一致性 |
+
+规模基准使用独立测试目录或测试集群。分开报告新进程、预热后的运行，以及明确控制的冷缓存条件；只重启进程不能声称操作系统缓存也已清空。每组重复测量并保存原始数据，比较同一环境下的优化前后结果。
+
+在真实集群层，用普通 FUSE/SDK 创建和访问文件，让数据经过真实写入纳管、策略筛选、归档、Release、GC、访问自动 Recall。若为控制运行时间只选择其中一部分文件搬运，应明确区分“百万文件 namespace”和“实际完成完整 HSM 流程的文件数”，不能合并为一个验收数字。
+
+### 9.4 何时可以改写当前限制
+
+验收至少满足：清理应用侧峰值内存由固定批次限制；零匹配策略能够持续分页并最终完成一轮；测试中的合格项没有永久漏选；访问与 Release 竞争仍安全；重启前后文件身份、驻留、归档锚点、保护和任务结果一致；同时给出吞吐、前台延迟和恢复耗时。
+
+绝对吞吐、P99 与恢复时间需要按目标硬件及业务 SLO 确定。只有元数据基准或少量闭环通过时，应保留“尚未做百万文件完整集群性能验收”的限定。本节区分已实现的差量索引、有界清理和条件前置，与后续复合索引、历史保留等工作。**百万记录基准、批量预置的百万 namespace、百万普通客户端写入是不同验收范围**，结果按 [规模测试记录](scale-validation.md) 分别报告。
 
 ## 10. 源码落点
 

@@ -1,0 +1,60 @@
+{
+  "status": "pass",
+  "write_node": "10.131.9.80",
+  "read_node": "10.131.9.83",
+  "ufs_mounts": 0,
+  "ordinary_files_auto_managed": 5,
+  "original_replicas": 2,
+  "release_policy": "scale-pve-release",
+  "capacity_guard_verified": true,
+  "access_age_and_size_exclusions_verified": true,
+  "released_logical_bytes": 14680112,
+  "application_reads": 4,
+  "access_recall_tasks": 2,
+  "explicit_recall_calls": 0,
+  "enabled_recall_policies": 0,
+  "content_and_inode_preserved": true,
+  "reads": [
+    {
+      "name": "a",
+      "copy": 1,
+      "bytes": 8388625,
+      "sha256": "29592f2248a6fea5e4a1223eda9b514534625f38ca92207226ddd91576291580",
+      "inode": 3786,
+      "elapsed_seconds": 11.439665735000744
+    },
+    {
+      "name": "a",
+      "copy": 2,
+      "bytes": 8388625,
+      "sha256": "29592f2248a6fea5e4a1223eda9b514534625f38ca92207226ddd91576291580",
+      "inode": 3786,
+      "elapsed_seconds": 11.439539733008132
+    },
+    {
+      "name": "a",
+      "copy": 3,
+      "bytes": 8388625,
+      "sha256": "29592f2248a6fea5e4a1223eda9b514534625f38ca92207226ddd91576291580",
+      "inode": 3786,
+      "elapsed_seconds": 11.438393746007932
+    },
+    {
+      "name": "b",
+      "copy": 1,
+      "bytes": 6291487,
+      "sha256": "e6d88b825aeedbc9fbbafc1c11761d79821c2ae6d4c0f859e87cc75a93bf4160",
+      "inode": 3787,
+      "elapsed_seconds": 6.76918613500311
+    }
+  ],
+  "fast_test_policy_enabled": false,
+  "native_copies_after_release": {
+    "a": 0,
+    "b": 0,
+    "small": 2,
+    "hot": 2,
+    "excluded": 2
+  },
+  "reclaimed_native_replica_bytes": 29360224
+}

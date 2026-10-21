@@ -18,7 +18,7 @@
 
 非 UFS、单硬链接常规文件通过正常完成日志自动纳管，无需 import。writing 文件不选；策略候选才在保护下计算摘要。原生布局重写/覆盖/截断推进 generation 并清除旧 anchor，重命名更新路径。不可变 `/.hsm/<name>` import 继续作为诊断原语入口。
 
-策略支持容量高/低水位滞回、正访问年龄权重、路径/排除前缀、大小、owner/group、访问/修改/驻留年龄。外部 worker 周期发起，Master 按状态/atime/inode 索引筛选；不递归 readdir。单次最多 256 索引项，scan_budget 与 max_candidates 限制每轮读取和选择，持久游标及 next_due 支持恢复。路径等条件仍后过滤，未做大规模吞吐基准。
+策略支持容量高/低水位滞回、正访问年龄权重、路径/排除前缀、大小、owner/group、访问/修改/驻留年龄。外部 worker 周期发起，Master 按状态/atime/inode 索引筛选；不递归 readdir。单次最多 256 索引项，scan_budget 与 max_candidates 限制每轮读取和选择，持久游标及 next_due 支持恢复。元数据条件先于路径解析，路径仍后过滤。已有百万 Record 基准与隔离 namespace 验证，普通客户端百万写入吞吐仍未验收，见 [规模测试记录](scale-validation.md)。
 
 Ready/Running 独立工作索引，Recall 优先。任务 ID 绑定规则版本、内容身份、动作阶段及源观察；领取和效果提交重查。读取更新 atime 和公开状态版本，旧 Release 被 Superseded，后续可按新观察重新选择。待回收预算跨规则共享，但不是硬容量预留。
 

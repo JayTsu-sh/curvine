@@ -32,6 +32,6 @@ namespace 的 ordinary_format=2 版本化新增普通文件钩子；历史记录
 
 ## 当前边界与验证
 
-支持非 UFS、单硬链接常规文件。恢复布局支持普通读取和全量覆盖，其追加及完整可变语义尚未覆盖；活动保护可能使修改需要重试。初始普通块遵循 replicas，私有 Recall 布局仍为单副本，不参与普通块修复及完整统计。当前没有硬容量预留、磁带后端、生产 HA 或百万文件吞吐验收。
+支持非 UFS、单硬链接常规文件。恢复布局支持普通读取和全量覆盖，其追加及完整可变语义尚未覆盖；活动保护可能使修改需要重试。初始普通块遵循 replicas，私有 Recall 布局仍为单副本，不参与普通块修复及完整统计。当前没有硬容量预留、磁带后端或生产 HA 承诺；百万 Record 基准与批量预置 namespace 验证见 [规模测试记录](scale-validation.md)，普通客户端百万文件写入吞吐未验收。
 
 完整设计、策略示例与运行验证在配套 [hsm-rs main](https://github.com/JayTsu-sh/hsm-rs) 的 docs/DESIGN.md、docs/VALIDATION.md、examples/policies/cold-local.json。发布版本使用固定 Git 依赖；联合开发可用 hsm-rs/tools/curvine-workspace-config.py 生成 Cargo path patch。

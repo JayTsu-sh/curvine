@@ -38,3 +38,7 @@
 8. 对接优先：本地 managed source + 本地 archive + 真实 data-mover → Curvine Adapter → 自动生命周期与完整故障验收 → 带库。
 
 第一版限制及未来路线见 [设计范围](design.md#2-第一版范围与明确限制)。
+
+## 规模优化与验收
+
+2026-10-21 增加有界启动清理、差量派生索引维护和元数据条件前置。百万 Record 三轮对比、隔离 MiniCluster 的百万 namespace/策略/召回/checkpoint 恢复，以及 PVE FUSE 复测的范围与原始数据见 [规模测试记录](scale-validation.md)。百万 namespace 通过内部正常钩子批量预置，不代表百万普通客户端写入吞吐验收。
