@@ -79,6 +79,8 @@ message ConfChangeResponse {
 // User-defined log request.
 message ProposeRequest {
     required bytes data = 1;
+    // Speculative application journals must stay in their originating term.
+    optional uint64 expected_term = 2;
 }
 
 message ProposeResponse {

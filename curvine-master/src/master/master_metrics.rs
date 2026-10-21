@@ -130,6 +130,8 @@ pub struct MasterMetrics {
     pub(crate) journal_queue_len: Gauge,
     pub(crate) journal_flush_count: Counter,
     pub(crate) journal_flush_time: Counter,
+    pub(crate) journal_commit_fences: Counter,
+    pub(crate) journal_hsm_barriers: Counter,
     pub(crate) journal_committed: Gauge,
     pub(crate) journal_term: Gauge,
     pub(crate) journal_applied: Gauge,
@@ -191,6 +193,16 @@ pub struct MasterMetrics {
 }
 
 impl MasterMetrics {
+    /// Structural counters for the opt-in HSM performance/acceptance harness.
+    #[cfg(feature = "hsm-scale-test")]
+    pub fn hsm_test_commit_stats(&self) -> serde_json::Value {
+        serde_json::json!({
+            "flushes": self.journal_flush_count.get(),
+            "commit_fences": self.journal_commit_fences.get(),
+            "hsm_barriers": self.journal_hsm_barriers.get(),
+        })
+    }
+
     pub fn new() -> CommonResult<Self> {
         let buckets = vec![
             10.0,
@@ -248,6 +260,8 @@ impl MasterMetrics {
                 "Number of flushes of log entries",
             )?,
             journal_flush_time: m::new_counter("journal_flush_time", "Log entry flush time")?,
+            journal_commit_fences: m::new_counter("journal_commit_fences", "Runtime queue-prefix commit fences")?,
+            journal_hsm_barriers: m::new_counter("journal_hsm_barriers", "Empty HSM entries submitted to Raft")?,
             journal_committed: m::new_gauge(
                 "journal_committed",
                 "Raft commit index of the journal",

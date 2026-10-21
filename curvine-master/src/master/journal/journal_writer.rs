@@ -29,8 +29,34 @@ use curvine_runtime::sync::channel::{BlockingChannel, BlockingReceiver, Blocking
 use curvine_runtime::sync::AtomicCounter;
 use log::{debug, info, warn};
 use std::sync::{Arc, Mutex};
+use std::{
+    cell::Cell,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 pub type HsmWaiters =
     Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<Result<(), String>>>>;
+
+/// Runtime-only queue messages. Commit fences never enter the persisted journal.
+#[derive(Debug)]
+pub enum JournalMessage {
+    Entry {
+        entry: JournalEntry,
+        term: Option<u64>,
+    },
+    Commit(tokio::sync::oneshot::Sender<Result<(), String>>),
+}
+
+thread_local! {
+    static ORIGIN_TERM: Cell<Option<(usize, u64)>> = const { Cell::new(None) };
+}
+
+struct OriginTermGuard(Option<(usize, u64)>);
+impl Drop for OriginTermGuard {
+    fn drop(&mut self) {
+        ORIGIN_TERM.with(|value| value.set(self.0));
+    }
+}
 
 // Write metadata operation logs.
 pub struct JournalWriter {
@@ -38,9 +64,10 @@ pub struct JournalWriter {
     pub(crate) hsm_ready: bool,
     pub(crate) hsm_waiters: HsmWaiters,
     node_id: u64,
-    sender: BlockingSender<JournalEntry>,
+    sender: BlockingSender<JournalMessage>,
+    journal_term: Option<Arc<AtomicU64>>,
     metrics: &'static MasterMetrics,
-    receiver: Option<Mutex<BlockingReceiver<JournalEntry>>>,
+    receiver: Option<Mutex<BlockingReceiver<JournalMessage>>>,
 
     leader_create_snapshot: bool,
     snapshot_entries: u64,
@@ -51,6 +78,15 @@ pub struct JournalWriter {
 
 impl JournalWriter {
     pub fn new(testing: bool, client: RaftClient, conf: &JournalConf) -> FsResult<Self> {
+        Self::new_with_term(testing, client, conf, None)
+    }
+
+    pub(crate) fn new_with_term(
+        testing: bool,
+        client: RaftClient,
+        conf: &JournalConf,
+        journal_term: Option<Arc<AtomicU64>>,
+    ) -> FsResult<Self> {
         let node_id = conf.node_id()?;
         let metrics = Master::get_metrics()?;
         let (sender, receiver) = BlockingChannel::new(conf.writer_channel_size).split();
@@ -75,6 +111,7 @@ impl JournalWriter {
             hsm_waiters,
             node_id,
             sender,
+            journal_term,
             metrics,
             receiver,
             leader_create_snapshot: conf.leader_creates_snapshot(),
@@ -104,9 +141,47 @@ impl JournalWriter {
 
     fn send_inner(&self, entry: JournalEntry) -> FsResult<()> {
         debug!("send_entry {:?}", entry);
-        self.sender.send(entry)?;
+        let term = self.journal_term.as_ref().map(|current| {
+            ORIGIN_TERM.with(|value| match value.get() {
+                Some((writer, term)) if writer == self as *const Self as usize => term,
+                _ => current.load(Ordering::Acquire),
+            })
+        });
+        self.sender.send(JournalMessage::Entry { entry, term })?;
         self.metrics.journal_queue_len.inc();
         Ok(())
+    }
+
+    /// Bind every journal produced by one synchronous RPC to its entry term,
+    /// even if Raft changes term while that RPC is computing its mutations.
+    pub(crate) fn in_origin_term<T>(&self, action: impl FnOnce() -> T) -> T {
+        let Some(term) = &self.journal_term else {
+            return action();
+        };
+        let previous = ORIGIN_TERM.with(|value| {
+            value.replace(Some((
+                self as *const Self as usize,
+                term.load(Ordering::Acquire),
+            )))
+        });
+        let _restore = OriginTermGuard(previous);
+        action()
+    }
+
+    /// Wait for the entire queue prefix preceding this fence to have a real
+    /// committed/apply receipt. No empty HSM or Raft entry is generated.
+    pub(crate) async fn commit_pending(&self) -> FsResult<()> {
+        if !self.hsm_ready {
+            return err_box!("commit receipt requires the committed HSM journal");
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.sender.send(JournalMessage::Commit(tx))?;
+        match tokio::time::timeout(Duration::from_secs(60), rx).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(e))) => err_box!("journal commit outcome unknown: {}", e),
+            Ok(Err(_)) => err_box!("journal commit receipt dropped; outcome unknown"),
+            Err(_) => err_box!("journal commit receipt timed out; outcome unknown"),
+        }
     }
 
     fn send(&self, fs_dir: &FsDir, entry: JournalEntry) -> FsResult<()> {
@@ -399,10 +474,7 @@ impl JournalWriter {
             term,
             index,
         };
-        self.metrics.journal_queue_len.inc();
-        self.sender.send(JournalEntry::UfsApplied(entry))?;
-
-        Ok(())
+        self.send_inner(JournalEntry::UfsApplied(entry))
     }
 
     pub fn log_set_locks(&self, fs_dir: &FsDir, ino: i64, locks: Vec<FileLock>) -> FsResult<()> {
@@ -429,7 +501,9 @@ impl JournalWriter {
             }
         };
         while let Ok(v) = receiver.try_recv() {
-            entries.push(v);
+            if let JournalMessage::Entry { entry, .. } = v {
+                entries.push(entry);
+            }
         }
         entries
     }
@@ -499,6 +573,37 @@ mod tests {
     }
 
     #[test]
+    fn one_rpc_keeps_its_origin_term_when_raft_changes_term_mid_mutation() -> FsResult<()> {
+        let mut conf = test_conf("journal_origin_term");
+        conf.journal.writer_channel_size = 0;
+        let mut writer = build_writer(&conf)?;
+        let term = Arc::new(AtomicU64::new(7));
+        writer.journal_term = Some(term.clone());
+        let entry = || {
+            JournalEntry::Delete(DeleteEntry {
+                op_id: 1,
+                rpc_id: 0,
+                path: "/test".into(),
+                mtime: 0,
+            })
+        };
+        writer.in_origin_term(|| -> FsResult<()> {
+            writer.send_inner(entry())?;
+            term.store(8, Ordering::Release);
+            writer.send_inner(entry())
+        })?;
+        writer.send_inner(entry())?;
+        let receiver = writer.receiver.as_ref().unwrap().lock().unwrap();
+        for expected in [7, 7, 8] {
+            let JournalMessage::Entry { term, .. } = receiver.try_recv().unwrap() else {
+                panic!("expected journal entry");
+            };
+            assert_eq!(term, Some(expected));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn removes_checkpoint_when_snapshot_enqueue_fails() -> FsResult<()> {
         let conf = test_conf("snapshot_enqueue_failure");
         let mut writer = build_writer(&conf)?;
@@ -555,7 +660,10 @@ mod tests {
             .expect("snapshot entry should be enqueued");
 
         match entry {
-            JournalEntry::Snapshot(entry) => {
+            JournalMessage::Entry {
+                entry: JournalEntry::Snapshot(entry),
+                ..
+            } => {
                 assert!(
                     Path::new(&entry.dir).exists(),
                     "checkpoint should remain after successful handoff: {}",

@@ -16,6 +16,10 @@ use curvine_core_error::CommonResult;
 use curvine_runtime::sync::{StateCtl, StateListener, StateMonitor};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use raft::{SoftState, StateRole};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 // raft node status.
 #[repr(i8)]
@@ -30,11 +34,22 @@ pub enum RoleState {
 }
 
 // Asynchronous Task Status Monitor.
-pub struct RoleMonitor(StateMonitor);
+pub struct RoleMonitor(StateMonitor, Arc<AtomicU64>);
 
 impl RoleMonitor {
     pub fn new() -> Self {
-        Self(StateMonitor::new(RoleState::Init.into()))
+        Self(
+            StateMonitor::new(RoleState::Init.into()),
+            Arc::new(AtomicU64::new(0)),
+        )
+    }
+
+    pub fn term_ctl(&self) -> Arc<AtomicU64> {
+        self.1.clone()
+    }
+
+    pub(crate) fn publish_term(&self, term: u64) {
+        self.1.store(term, Ordering::Release);
     }
 
     // Node role conversion.

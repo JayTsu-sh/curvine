@@ -32,6 +32,7 @@ def main():
     parser.add_argument('--hsm-rev', required=True)
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--smoke', action='store_true')
+    parser.add_argument('--hsm-pair', action='store_true', help='Compare both binaries with HSM enabled (before/after); original-binary is the before build')
     parser.add_argument('--io-only', action='store_true', help='Only measure large-file I/O after warmup')
     parser.add_argument('--large-files', type=int, default=None, help='Large files per concurrency level (default 8, smoke 2)')
     args = parser.parse_args()
@@ -42,7 +43,8 @@ def main():
     if args.output.exists() and any(args.output.iterdir()):
         parser.error('--output must be new or empty')
     args.output.mkdir(parents=True, exist_ok=True)
-    binaries = {'original': args.original_binary.resolve(), 'off': args.hsm_binary.resolve(), 'on': args.hsm_binary.resolve()}
+    binaries = ({'before': args.original_binary.resolve(), 'after': args.hsm_binary.resolve()}
+                if args.hsm_pair else {'original': args.original_binary.resolve(), 'off': args.hsm_binary.resolve(), 'on': args.hsm_binary.resolve()})
     for binary in set(binaries.values()):
         if not binary.is_file():
             parser.error(f'binary does not exist: {binary}')
@@ -56,6 +58,7 @@ def main():
         'hsm_rev': args.hsm_rev,
         'binaries': {mode: {'sha256': sha256(binary), 'bytes': binary.stat().st_size} for mode, binary in binaries.items()},
         'rounds': args.rounds,
+        'hsm_pair': args.hsm_pair,
         'smoke': args.smoke,
         'io_only': args.io_only,
         'large_files': args.large_files or (2 if args.smoke else 8),
@@ -65,13 +68,14 @@ def main():
     }
     (args.output / 'environment.json').write_text(json.dumps(manifest, indent=2) + '\n')
     reports = []
-    modes = ['original', 'off', 'on']
+    modes = list(binaries)
     for round_index in range(args.rounds):
-        order = modes[round_index % 3:] + modes[:round_index % 3]
+        order = modes[round_index % len(modes):] + modes[:round_index % len(modes)]
         for mode in order:
             run = args.output / f'r{round_index+1}-{mode}'
             env = os.environ.copy()
-            env.update(BENCH_ROOT=str(run.resolve()), BENCH_MODE=mode)
+            workload_mode = 'on' if args.hsm_pair else mode
+            env.update(BENCH_ROOT=str(run.resolve()), BENCH_MODE=workload_mode)
             env.pop('BENCH_SMOKE', None)
             env.pop('BENCH_IO_ONLY', None)
             env.pop('BENCH_LARGE_FILES', None)
@@ -104,9 +108,9 @@ def main():
                         child.kill()
                         child.wait()
             report = json.loads((run / 'report.json').read_text())
-            assert report['mode'] == mode
+            assert report['mode'] == workload_mode
             assert all(item['errors'] == 0 and item['operations'] > 0 for item in report['results'])
-            report.update(round=round_index+1, sampled_peak_rss_kib=max_rss, driver_elapsed_seconds=time.monotonic()-start)
+            report.update(round=round_index+1, comparison_case=mode, sampled_peak_rss_kib=max_rss, driver_elapsed_seconds=time.monotonic()-start)
             reports.append(report)
             (args.output / 'results.json').write_text(json.dumps(reports, indent=2) + '\n')
             print(f'PASS r{round_index+1} {mode}: {report["driver_elapsed_seconds"]:.2f}s', flush=True)

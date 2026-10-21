@@ -119,6 +119,8 @@ async fn measure(
     name: &str,
 ) -> Result<Value> {
     let before = proc_stats()?;
+    #[cfg(feature = "hsm-scale-test")]
+    let journal_before = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
     let start = Instant::now();
     let mut samples: Vec<(f64, u64)> = stream::iter(0..count)
         .map(|i| async move {
@@ -139,6 +141,14 @@ async fn measure(
     let p = |q: f64| samples[((count as f64 * q).ceil() as usize).saturating_sub(1)].0;
     let report = json!({"name":name,"concurrency":concurrency,"operations":count,"errors":0,"seconds":elapsed,"ops_per_sec":count as f64/elapsed,"bytes":bytes,"mib_per_sec":bytes as f64/1048576./elapsed,"latency_ms":{"mean":samples.iter().map(|s|s.0).sum::<f64>()/count as f64,"p50":p(0.5),"p95":p(0.95),"p99":p(0.99),"max":samples.last().unwrap().0},"process_before":before,"process_after":after});
     eprintln!("RESULT {}", report);
+    #[cfg(feature = "hsm-scale-test")]
+    let report = {
+        let mut report = report;
+        report["journal_before"] = journal_before;
+        report["journal_after"] =
+            curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        report
+    };
     Ok(report)
 }
 async fn metadata(

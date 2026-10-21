@@ -548,6 +548,15 @@ where
             Ok(header) => header,
             Err(e) => return Self::send_malformed_request_error(env, e.into()),
         };
+        if header
+            .expected_term
+            .is_some_and(|term| term != self.raw.raft.term || term == 0)
+        {
+            return Self::send_request_error(
+                env,
+                RaftError::other("journal proposal fenced by originating term".into()),
+            );
+        }
         let context = SerdeUtils::serialize(&env.msg.req_id())?;
         if let Err(e) = self.raw.propose(context, header.data) {
             return Self::send_request_error(env, e.into());
@@ -630,6 +639,7 @@ where
     }
 
     async fn on_ready(&mut self, promise: &mut HashMap<i64, Callback>) -> RaftResult<()> {
+        self.role_monitor.publish_term(self.raw.raft.term);
         if self.pending_ready.is_some() || !self.raw.has_ready() {
             return Ok(());
         }

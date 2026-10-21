@@ -356,3 +356,104 @@ fn follower_snapshot_is_throttled_by_min_interval() {
     assert_eq!(node.last_snapshot_op_id, 4);
     wait_for_snapshot_job(&node);
 }
+
+#[test]
+fn originating_term_fences_stale_journals_after_leader_re_election() {
+    let rt = JournalConf::with_test().create_runtime();
+    let mut node = test_node(rt.clone());
+    node.raw.raft.become_candidate();
+    node.raw.raft.become_leader();
+    let original_term = node.raw.raft.term;
+    // A real member persists its election no-op before it can win again.
+    let ready = node.raw.ready();
+    node.storage.append(ready.entries()).unwrap();
+    node.raw.advance_append(ready);
+    node.raw.raft.become_follower(original_term + 1, 2);
+    node.raw.raft.become_candidate();
+    node.raw.raft.become_leader();
+    let current_term = node.raw.raft.term;
+    let before = node.raw.raft.raft_log.last_index();
+    let mut promise = HashMap::new();
+    for expected_term in [Some(0), Some(original_term), Some(current_term + 1)] {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let message = Builder::new_rpc(RaftCode::Propose)
+            .proto_header(ProposeRequest {
+                data: vec![1],
+                expected_term,
+            })
+            .build();
+        node.handle_propose(Envelope::new(message, tx), &mut promise)
+            .unwrap();
+        let response = rt.block_on(rx).unwrap().unwrap();
+        assert_eq!(response.response_status(), ResponseStatus::Error);
+        assert_eq!(node.raw.raft.raft_log.last_index(), before);
+        assert!(promise.is_empty());
+    }
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let message = Builder::new_rpc(RaftCode::Propose)
+        .proto_header(ProposeRequest {
+            data: vec![2],
+            expected_term: Some(current_term),
+        })
+        .build();
+    node.handle_propose(Envelope::new(message, tx), &mut promise)
+        .unwrap();
+    assert_eq!(node.raw.raft.raft_log.last_index(), before + 1);
+    assert_eq!(promise.len(), 1);
+}
+
+#[test]
+fn journal_receipt_waits_for_majority_commit_and_local_apply() {
+    let rt = JournalConf::with_test().create_runtime();
+    let mut node = test_node(rt.clone()); // Three voting members, memory stores.
+    node.raw.raft.become_candidate();
+    node.raw.raft.become_leader();
+    let term = node.raw.raft.term;
+    let mut promise = HashMap::new();
+    let (tx, mut rx) = tokio::sync::oneshot::channel();
+    let message = Builder::new_rpc(RaftCode::Propose)
+        .proto_header(ProposeRequest {
+            data: SerdeUtils::serialize(&("file".to_string(), "committed".to_string())).unwrap(),
+            expected_term: Some(term),
+        })
+        .build();
+    node.handle_propose(Envelope::new(message, tx), &mut promise)
+        .unwrap();
+    let index = node.raw.raft.raft_log.last_index();
+    rt.block_on(node.on_ready(&mut promise)).unwrap();
+    assert!(node.raw.raft.raft_log.committed < index);
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+    assert!(node
+        .storage
+        .app_store
+        .get(&"file".to_string())
+        .unwrap()
+        .is_none());
+    // Supply a second member's replicated index to the actual Raft core.
+    // This unit test exercises quorum/apply ordering, not peer transport.
+    let mut ack = raft::eraftpb::Message {
+        from: 2,
+        to: node.id(),
+        term,
+        index,
+        ..Default::default()
+    };
+    ack.set_msg_type(MessageType::MsgAppendResponse);
+    node.raw.step(ack).unwrap();
+    rt.block_on(node.on_ready(&mut promise)).unwrap();
+    let response = rt.block_on(rx).unwrap().unwrap();
+    let header: ProposeResponse = response.parse_header().unwrap();
+    assert_eq!(header.applied_index, Some(index));
+    assert_eq!(
+        node.storage
+            .app_store
+            .get(&"file".to_string())
+            .unwrap()
+            .as_deref(),
+        Some("committed")
+    );
+    assert!(promise.is_empty());
+}

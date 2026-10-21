@@ -100,7 +100,14 @@ impl JournalSystem {
     ) -> FsResult<FsInitParts> {
         let worker_manager = SyncWorkerManager::new(WorkerManager::new(conf)?);
         let client = RaftClient::from_conf(rt.clone(), &conf.journal);
-        let journal_writer = Arc::new(JournalWriter::new(conf.testing, client, &conf.journal)?);
+        let journal_writer = Arc::new(JournalWriter::new_with_term(
+            conf.testing,
+            client,
+            &conf.journal,
+            conf.master
+                .hsm_enabled
+                .then(|| master_monitor.journal_term.clone()),
+        )?);
 
         let ttl_bucket_list = Arc::new(TtlBucketList::new(
             conf.master.ttl_bucket_interval_ms() as i64
@@ -297,7 +304,8 @@ impl JournalSystem {
         }
 
         let role_monitor = RoleMonitor::new();
-        let master_monitor = MasterMonitor::new(role_monitor.read_ctl(), StateCtl::new(0));
+        let mut master_monitor = MasterMonitor::new(role_monitor.read_ctl(), StateCtl::new(0));
+        master_monitor.journal_term = role_monitor.term_ctl();
         let parts = Self::build_fs_parts(conf, rt.clone(), master_monitor.clone())?;
 
         let raft_journal = MetaRaftJournal::new(

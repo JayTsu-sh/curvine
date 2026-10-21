@@ -15,6 +15,7 @@
 use curvine_raft::raft::RoleState;
 use curvine_runtime::sync::StateCtl;
 use num_enum::{FromPrimitive, IntoPrimitive};
+use std::sync::{atomic::AtomicU64, Arc};
 
 // master state controller
 #[repr(i8)]
@@ -37,6 +38,7 @@ pub enum MasterState {
 pub struct MasterMonitor {
     pub(crate) journal_ctl: StateCtl,
     pub fs_ctl: StateCtl,
+    pub(crate) journal_term: Arc<AtomicU64>,
 }
 
 impl MasterMonitor {
@@ -44,6 +46,7 @@ impl MasterMonitor {
         Self {
             journal_ctl,
             fs_ctl,
+            journal_term: Arc::new(AtomicU64::new(0)),
         }
     }
 

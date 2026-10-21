@@ -1154,8 +1154,14 @@ impl MessageHandler for MasterHandler {
                 v if self.fs.conf.hsm_enabled && hsm_mutating_rpc(v) => {
                     let gate = self.fs.fs_dir.read().hsm_mutation_gate.clone();
                     let _serial = gate.lock().await;
-                    let response = self.handle(&msg);
-                    self.fs.hsm_read_barrier().await.map_err(|e| {
+                    if !self.fs.master_monitor.is_active() {
+                        return Ok(
+                            msg.error_ext(&FsError::not_leader_master(ctx.code, self.client_ip()))
+                        );
+                    }
+                    let writer = self.fs.fs_dir.read().journal_writer.clone();
+                    let response = writer.in_origin_term(|| self.handle(&msg));
+                    writer.commit_pending().await.map_err(|e| {
                         FsError::common(format!("metadata commit outcome uncertain: {e}"))
                     })?;
                     response

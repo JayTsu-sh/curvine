@@ -77,7 +77,10 @@ impl RaftClient {
 
     // Send application layer messages.
     pub async fn send_propose_response(&self, data: Vec<u8>) -> RaftResult<ProposeResponse> {
-        let req = ProposeRequest { data };
+        let req = ProposeRequest {
+            data,
+            expected_term: None,
+        };
         let response: ProposeResponse = self.leader_rpc(RaftCode::Propose, req).await?;
         Ok(response)
     }
@@ -94,6 +97,24 @@ impl RaftClient {
 
     pub fn block_on_send_propose_response(&self, data: Vec<u8>) -> RaftResult<ProposeResponse> {
         self.rt.block_on(self.send_propose_response(data))
+    }
+
+    /// Submit once to the originating member. Never redirect a speculative
+    /// namespace journal to another leader or retry it in another term.
+    pub fn block_on_send_local_propose(
+        &self,
+        node_id: u64,
+        term: u64,
+        data: Vec<u8>,
+    ) -> RaftResult<ProposeResponse> {
+        let request = Builder::new_rpc(RaftCode::Propose)
+            .proto_header(ProposeRequest {
+                data,
+                expected_term: Some(term),
+            })
+            .build();
+        self.rt
+            .block_on(async { self.timeout_rpc(node_id, request).await.map_err(|(_, e)| e) })
     }
 
     // Join the cluster.
