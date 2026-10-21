@@ -6,6 +6,7 @@
 
 | 项目 | 本轮代码行为 | 仍需完成或验收 |
 |---|---|---|
+| 逻辑元数据查询 | Exists、FileStatus、目录列表、块信息、锁/挂载信息使用有界已提交读取资格；最多 64 个查询共用 ReadIndex，128 个接收名额、512 KiB 请求/批次限制；不生成工作流结果或空日志 | 当前查询完成前仍保护旧式投影；大型目录响应与统一混合队列仍待优化 |
 | 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
 | 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/非递归 SetAttr/Delete 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
 | 非递归属性 | 只检查和修改目标 inode，不遍历/刷新后代；文件属性与稳定 HSM 记录、候选索引、ctime、原始结果同批发布；最多 32 条 Native 命令合批 | 递归属性仍走过渡路径，不能将新入口当作大子树原子操作 |
@@ -290,3 +291,12 @@ Native journal v4 激活删除效果，保留 v3 字段编码并继续读取 v1/
 ### 累计集成验证（代码 a3822c28）
 
 路径 patch 指向当前 Curvine 和本地相同 hsm-core 后，hsm-rs workspace 的 30 项功能测试（含五个 managed 集群场景及一个 native 集群场景）和全部文档测试通过；两个规模/子进程入口保持 ignored。包含普通写入纳管、Native SetAttr 后策略筛选、Release、并发自动 Recall、控制者资格变更与进程重启。Curvine 自身另有 242 项 Master 测试、两个优化集群用例通过。此记录没有执行百万验收、没有产生最终性能差值，也没有升级 PVE 集群。
+
+
+### HA 回归发现并修正元数据查询旧前缀
+
+新增普通文件删除后全进程重启、排除原 Leader 的测试，先复现 Exists 在新 Leader 当前任期提交/应用追齐前返回旧路径。通过 HSM inspect 的 ReadIndex 后查询即正确，确认是读取资格缺口，删除日志与清理事实并未丢失。
+
+逻辑元数据 RPC 现进入 MetadataReads：每批取资格后才授予同步只读 handler；协调 gate 保持到该批查询完成，避免旧式 writer 的未提交投影。客户端取消关闭只读 ticket，不会留下未确认修改；不记录永久结果，不替代文件内容读取的租约。GetFilesystemInfo/心跳等派生容量状态继续原有路径。
+
+验证：Master 242 项、两个真实集群用例及完整 HSM workspace 的 30 项功能/全部文档测试通过。集群用例检查 32 个元数据查询合批、不增加空 barrier 或工作流结果，以及取消后后续元数据操作可完成。增强的进程重启用例要求首次 Exists 自身正确，随后检查 Record 不存在、退休清单仍被处理并最终收到 Worker 删除确认；不借助预先执行 HSM 查询掩盖旧前缀。此场景是保留数据目录的全进程重启，并非单节点在线故障或磁盘丢失验收。

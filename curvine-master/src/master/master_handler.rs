@@ -1028,7 +1028,7 @@ impl MessageHandler for MasterHandler {
 
     fn is_sync(&self, msg: &Message) -> bool {
         let code = RpcCode::from(msg.code());
-        if self.fs.conf.hsm_enabled && hsm_mutating_rpc(code) {
+        if self.fs.conf.hsm_enabled && (hsm_mutating_rpc(code) || hsm_metadata_read_rpc(code)) {
             return false;
         }
         !matches!(
@@ -1199,6 +1199,20 @@ impl MessageHandler for MasterHandler {
                             std::process::abort();
                         });
                     ctx.response(response)
+                }
+                v if self.fs.conf.hsm_enabled && hsm_metadata_read_rpc(v) => {
+                    let reads = self.fs.fs_dir.read().hsm_metadata_reads.clone();
+                    let mut ticket = reads
+                        .enqueue(
+                            self.fs.clone(),
+                            msg.header_len().saturating_add(msg.data_len()),
+                        )
+                        .await?;
+                    ticket.admitted().await?;
+                    // No await between qualification and the pure handler.
+                    let response = self.handle(&msg);
+                    ticket.finish();
+                    response
                 }
                 v if self.fs.conf.hsm_enabled && hsm_mutating_rpc(v) => {
                     async {
@@ -1677,8 +1691,8 @@ mod tests {
     }
 }
 
-/// HSM volume mutations are serialized through committed publication. Heartbeats,
-/// data I/O, file status and ordinary directory reads keep their existing paths.
+/// HSM volume mutations are serialized through committed publication.
+/// Metadata queries separately share bounded ReadIndex qualification.
 fn hsm_mutating_rpc(code: RpcCode) -> bool {
     matches!(
         code,
@@ -1701,5 +1715,23 @@ fn hsm_mutating_rpc(code: RpcCode) -> bool {
             | RpcCode::SetLock
             | RpcCode::Mount
             | RpcCode::UnMount
+    )
+}
+
+/// Logical namespace reads must not observe a leader before its committed
+/// prefix applies, nor a speculative legacy mutation. Capacity/heartbeats keep
+/// their derived-state paths and do not recursively join this coordinator.
+fn hsm_metadata_read_rpc(code: RpcCode) -> bool {
+    matches!(
+        code,
+        RpcCode::FileStatus
+            | RpcCode::Exists
+            | RpcCode::ListStatus
+            | RpcCode::ListOptions
+            | RpcCode::GetBlockLocations
+            | RpcCode::GetFileBlockDetails
+            | RpcCode::GetLock
+            | RpcCode::GetMountInfo
+            | RpcCode::GetMountTable
     )
 }

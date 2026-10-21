@@ -172,3 +172,10 @@ LocalArchive 的数据和 catalog/receipt 都是本地单节点文件。增加�
 存储已接收的控制请求由有界 owned 任务执行，客户端取消不撤销动作。已提交的分配/清理事实授权 Allocate、Seal、Delete，网络等待期间不占用元数据协调 gate。返回后重新执行 ReadIndex 并核对 namespace 资格；旧控制者不能以旧快照发布，也不会将资格丢失记为永久业务拒绝。新控制者使用同一 operation_id/attempt_epoch 和新的 controller_epoch 可继续已封存步骤。Delete 确认合并至最新 Record，不能覆盖期间的新状态。
 
 真实三 Master/一 Worker 回归使用 TCP 代理暂停 Seal 回复，验证独立 mkdir、控制者接管、旧执行者拒绝发布和新执行者接续。它没有强杀 Raft Leader，不代替节点故障矩阵。Worker Delete-before-Allocate 的持久退休记录保证迟到分配不会复活已清理对象。自动控制器租约接管及跨节点归档后端 HA 仍是独立未完成项。
+
+
+### 逻辑元数据查询的读取资格（2026-10-22）
+
+普通 Exists 曾在新 Leader 追齐当前任期前缀前返回删除前路径；HSM inspect 取 ReadIndex 后路径即消失。现将文件属性、存在性、列表、块详情及锁/挂载查询接入有界读取批处理，每批最多 64 个请求共用 ReadIndex，资格确认后才执行同步查询，并排除旧式 speculative 修改。查询取消不撤销或生成权威修改，纯查询不写持久 HSM outcome。
+
+增强的真实进程测试在普通删除已确认后重启 Master/Worker 进程组、排除原 Leader，要求第一次 Exists 正确；随后确认 Record 删除、独立退休事实仍可处理和 Worker 删除最终确认。30 项 HSM 功能及文档回归通过。仍需分别执行单节点在线故障、网络分区及数据副本故障矩阵。

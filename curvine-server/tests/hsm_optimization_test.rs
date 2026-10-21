@@ -158,6 +158,34 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         let commands = after_native["native_commands"].as_f64().unwrap()
             - before_native["native_commands"].as_f64().unwrap();
         assert!(bundles > 0 && bundles < 32 && commands >= 32.0);
+        // Logical metadata queries share a committed read qualification and
+        // never append workflow outcomes or empty journal barriers.
+        let before_queries = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let exists: Vec<_> = stream::iter(0..32).map(|i| {
+            let fs = &fs;
+            async move { fs.exists(&Path::from_str(format!("/native-batch-{i}"))?).await }
+        }).buffer_unordered(32).try_collect().await?;
+        assert!(exists.into_iter().all(|exists| exists));
+        let after_queries = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let batches = after_queries["metadata_read_batches"].as_u64().unwrap()
+            - before_queries["metadata_read_batches"].as_u64().unwrap();
+        let reads = after_queries["metadata_read_queries"].as_f64().unwrap()
+            - before_queries["metadata_read_queries"].as_f64().unwrap();
+        assert!(batches > 0 && batches < 32 && reads >= 32.0,
+            "metadata query qualifications were not batched");
+        assert_eq!(after_queries["hsm_barriers"], before_queries["hsm_barriers"]);
+        assert_eq!(after_queries["outcome_bytes"], before_queries["outcome_bytes"]);
+        // Cancel a query while projection coordination is paused. No handler
+        // runs over speculative metadata and no vanished ticket pins the gate.
+        let gate = cluster.get_active_master_fs().fs_dir().read().hsm_test_mutation_gate();
+        let hold = gate.lock().await;
+        let cancelled_path = Path::from_str("/native-batch-0")?;
+        let mut cancelled = Box::pin(fs.exists(&cancelled_path));
+        assert!(futures::poll!(&mut cancelled).is_pending());
+        drop(cancelled);
+        drop(hold);
+        tokio::time::timeout(std::time::Duration::from_secs(5),
+            fs.mkdir(&Path::from_str("/after-cancelled-metadata-query")?, false)).await??;
         let native = fs.fs_client();
         let make_header = |path: &str, parents| {
             MkdirRequest {
