@@ -259,7 +259,7 @@ Allocate、Seal 和私有布局 Delete 的 RPC 等待现在释放协调 gate。�
 
 GC 在 Delete 确认后重新读取最新 Record，只删除已确认的不可变 layout ID，保留等待期间更新的读者、锚点及其他清理义务。已缓存的 prepare 也只对同一次逻辑尝试、同一目标的 pending 分配发出 Allocate。协调 gate 仍保护旧式 namespace 修改，尚未删除。
 
-验证：Master 235 项通过、2 项 ignored；两个真实集群用例通过。新增 TCP 代理暂停真实 Worker Seal 回复：原实现在此期间阻塞独立 mkdir，新实现允许 mkdir 完成；在同一暂停窗口提交控制者接管，旧控制者返回 Fenced，新控制者重试原逻辑步骤成功发布。此用例验证控制者切换，不等同于真实 Raft Leader 故障切换。针对 `977d179c` 的完整 hsm-rs workspace 回归通过：30 项功能测试、全部文档测试及五个 managed 集群场景和一个 native 集群场景通过；2 项规模/子进程入口保持 ignored。百万验收尚未执行。
+验证：Master 235 项通过、2 项 ignored；两个真实集群用例通过。新增 TCP 代理暂停真实 Worker Seal 回复：原实现在此期间阻塞独立 mkdir，新实现允许 mkdir 完成；在同一暂停窗口提交控制者接管，旧控制者返回 Fenced，新控制者重试原逻辑步骤成功发布。此用例验证控制者切换，不等同于真实 Raft Leader 故障切换。针对 `977d179c` 的完整 hsm-rs workspace 回归通过：30 项功能测试（含五个 managed 集群场景和一个 native 集群场景）及全部文档测试通过；2 项规模/子进程入口保持 ignored。百万验收尚未执行。
 
 
 ### 追加里程碑：非递归属性修改
@@ -285,3 +285,8 @@ Native journal v4 激活删除效果，保留 v3 字段编码并继续读取 v1/
 ### 已成功工作流之后的 GC 不确定结果
 
 工作流的原始成功与后续清理提交分别对待。后续 GC 不确定时保留已提交的清理义务、不撤销 Release，但在释放协调 gate 前必须确认 journal 前缀；确认失败停止当前 Master。不能仅因外层回复已是成功，就忽略内部尚未确定的元数据提交。修正后的 Master 242 项及两个集群用例再次通过；该验证没有模拟丢弃 GC 提交回执，组合故障矩阵仍待完成。
+
+
+### 累计集成验证（代码 a3822c28）
+
+路径 patch 指向当前 Curvine 和本地相同 hsm-core 后，hsm-rs workspace 的 30 项功能测试（含五个 managed 集群场景及一个 native 集群场景）和全部文档测试通过；两个规模/子进程入口保持 ignored。包含普通写入纳管、Native SetAttr 后策略筛选、Release、并发自动 Recall、控制者资格变更与进程重启。Curvine 自身另有 242 项 Master 测试、两个优化集群用例通过。此记录没有执行百万验收、没有产生最终性能差值，也没有升级 PVE 集群。
