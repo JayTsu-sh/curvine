@@ -1,0 +1,1298 @@
+[
+  {
+    "elapsed_seconds": 50.563357054,
+    "mode": "original",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 90616,
+      "rss_kib": 90616,
+      "system_ticks": 4887,
+      "user_ticks": 1819
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 251.832975,
+          "mean": 151.6323756875,
+          "p50": 138.987248,
+          "p95": 217.20737400000002,
+          "p99": 251.832975
+        },
+        "mib_per_sec": 422.0660469538358,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 6.594781983653684,
+        "process_after": {
+          "high_water_rss_kib": 73244,
+          "rss_kib": 73244,
+          "system_ticks": 1020,
+          "user_ticks": 303
+        },
+        "process_before": {
+          "high_water_rss_kib": 71932,
+          "rss_kib": 71932,
+          "system_ticks": 38,
+          "user_ticks": 30
+        },
+        "seconds": 9.70464227
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 154.30272,
+          "mean": 86.71352902083329,
+          "p50": 82.622582,
+          "p95": 115.91609199999999,
+          "p99": 136.616099
+        },
+        "mib_per_sec": 738.0373266259124,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 11.531833228529882,
+        "process_after": {
+          "high_water_rss_kib": 75200,
+          "rss_kib": 75200,
+          "system_ticks": 2617,
+          "user_ticks": 922
+        },
+        "process_before": {
+          "high_water_rss_kib": 73244,
+          "rss_kib": 73244,
+          "system_ticks": 1020,
+          "user_ticks": 303
+        },
+        "seconds": 16.649564401
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 270.148704,
+          "mean": 162.46134671874992,
+          "p50": 157.91448,
+          "p95": 265.50577,
+          "p99": 270.148704
+        },
+        "mib_per_sec": 1564.2697119871457,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 24.44171424979915,
+        "process_after": {
+          "high_water_rss_kib": 84564,
+          "rss_kib": 84564,
+          "system_ticks": 3509,
+          "user_ticks": 1213
+        },
+        "process_before": {
+          "high_water_rss_kib": 75204,
+          "rss_kib": 75204,
+          "system_ticks": 2617,
+          "user_ticks": 922
+        },
+        "seconds": 2.618474275
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 146.310119,
+          "mean": 89.52611895833333,
+          "p50": 87.97840599999999,
+          "p95": 98.97068900000001,
+          "p99": 145.26523699999998
+        },
+        "mib_per_sec": 2857.1458818324963,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 44.642904403632755,
+        "process_after": {
+          "high_water_rss_kib": 90612,
+          "rss_kib": 90612,
+          "system_ticks": 4887,
+          "user_ticks": 1819
+        },
+        "process_before": {
+          "high_water_rss_kib": 84564,
+          "rss_kib": 84564,
+          "system_ticks": 3509,
+          "user_ticks": 1213
+        },
+        "seconds": 4.300795447
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 1,
+    "sampled_peak_rss_kib": 90612,
+    "driver_elapsed_seconds": 50.61404308094643
+  },
+  {
+    "elapsed_seconds": 46.998426134,
+    "mode": "off",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 86632,
+      "rss_kib": 86632,
+      "system_ticks": 5059,
+      "user_ticks": 1908
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 325.497407,
+          "mean": 132.02174296875,
+          "p50": 123.565102,
+          "p95": 205.824775,
+          "p99": 325.497407
+        },
+        "mib_per_sec": 484.75907302286635,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 7.574360515982287,
+        "process_after": {
+          "high_water_rss_kib": 74224,
+          "rss_kib": 74224,
+          "system_ticks": 873,
+          "user_ticks": 306
+        },
+        "process_before": {
+          "high_water_rss_kib": 71728,
+          "rss_kib": 71728,
+          "system_ticks": 34,
+          "user_ticks": 23
+        },
+        "seconds": 8.449558199
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 151.44548699999999,
+          "mean": 82.42100474479169,
+          "p50": 78.900984,
+          "p95": 108.916448,
+          "p99": 147.01566499999998
+        },
+        "mib_per_sec": 776.4728495563531,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 12.132388274318018,
+        "process_after": {
+          "high_water_rss_kib": 76432,
+          "rss_kib": 76432,
+          "system_ticks": 2392,
+          "user_ticks": 946
+        },
+        "process_before": {
+          "high_water_rss_kib": 74224,
+          "rss_kib": 74224,
+          "system_ticks": 873,
+          "user_ticks": 306
+        },
+        "seconds": 15.825408457
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 246.744568,
+          "mean": 202.181120375,
+          "p50": 205.845504,
+          "p95": 242.92557100000002,
+          "p99": 246.744568
+        },
+        "mib_per_sec": 1258.7812213829911,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 19.668456584109236,
+        "process_after": {
+          "high_water_rss_kib": 82688,
+          "rss_kib": 80072,
+          "system_ticks": 3534,
+          "user_ticks": 1262
+        },
+        "process_before": {
+          "high_water_rss_kib": 76436,
+          "rss_kib": 76436,
+          "system_ticks": 2392,
+          "user_ticks": 946
+        },
+        "seconds": 3.253941138
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 123.18498699999999,
+          "mean": 97.8621535260417,
+          "p50": 96.44876199999999,
+          "p95": 112.860157,
+          "p99": 122.348754
+        },
+        "mib_per_sec": 2609.8299209139514,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 40.77859251428049,
+        "process_after": {
+          "high_water_rss_kib": 86628,
+          "rss_kib": 86628,
+          "system_ticks": 5059,
+          "user_ticks": 1908
+        },
+        "process_before": {
+          "high_water_rss_kib": 82688,
+          "rss_kib": 80072,
+          "system_ticks": 3534,
+          "user_ticks": 1262
+        },
+        "seconds": 4.708352794
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 1,
+    "sampled_peak_rss_kib": 86628,
+    "driver_elapsed_seconds": 47.10542351799086
+  },
+  {
+    "elapsed_seconds": 62.569501261,
+    "mode": "on",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 94836,
+      "rss_kib": 94700,
+      "system_ticks": 4902,
+      "user_ticks": 2213
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 540.5871129999999,
+          "mean": 162.87121543749998,
+          "p50": 140.91344999999998,
+          "p95": 352.72125900000003,
+          "p99": 540.5871129999999
+        },
+        "mib_per_sec": 392.9422537799689,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 6.139722715312014,
+        "process_after": {
+          "high_water_rss_kib": 75552,
+          "rss_kib": 75552,
+          "system_ticks": 917,
+          "user_ticks": 384
+        },
+        "process_before": {
+          "high_water_rss_kib": 74284,
+          "rss_kib": 74284,
+          "system_ticks": 63,
+          "user_ticks": 64
+        },
+        "seconds": 10.423923517
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 111.624984,
+          "mean": 93.52287244270826,
+          "p50": 93.51985,
+          "p95": 102.62070299999999,
+          "p99": 110.78626
+        },
+        "mib_per_sec": 684.3069226839267,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 10.692295666936355,
+        "process_after": {
+          "high_water_rss_kib": 81936,
+          "rss_kib": 81936,
+          "system_ticks": 2487,
+          "user_ticks": 1110
+        },
+        "process_before": {
+          "high_water_rss_kib": 75552,
+          "rss_kib": 75552,
+          "system_ticks": 917,
+          "user_ticks": 384
+        },
+        "seconds": 17.956854728
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 784.2495339999999,
+          "mean": 261.17620609374995,
+          "p50": 200.883522,
+          "p95": 783.2858729999999,
+          "p99": 784.2495339999999
+        },
+        "mib_per_sec": 978.2214725229871,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 15.284710508171674,
+        "process_after": {
+          "high_water_rss_kib": 89352,
+          "rss_kib": 82996,
+          "system_ticks": 3353,
+          "user_ticks": 1448
+        },
+        "process_before": {
+          "high_water_rss_kib": 82184,
+          "rss_kib": 82184,
+          "system_ticks": 2487,
+          "user_ticks": 1111
+        },
+        "seconds": 4.187190851
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 181.19605099999998,
+          "mean": 109.54164809375006,
+          "p50": 107.66096399999999,
+          "p95": 121.225209,
+          "p99": 180.811675
+        },
+        "mib_per_sec": 2303.300739632848,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 35.98907405676325,
+        "process_after": {
+          "high_water_rss_kib": 94836,
+          "rss_kib": 94416,
+          "system_ticks": 4902,
+          "user_ticks": 2212
+        },
+        "process_before": {
+          "high_water_rss_kib": 89352,
+          "rss_kib": 82996,
+          "system_ticks": 3353,
+          "user_ticks": 1448
+        },
+        "seconds": 5.334952483
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 1,
+    "sampled_peak_rss_kib": 98324,
+    "driver_elapsed_seconds": 62.670676068169996
+  },
+  {
+    "elapsed_seconds": 48.48871569,
+    "mode": "off",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 89204,
+      "rss_kib": 89204,
+      "system_ticks": 4817,
+      "user_ticks": 1984
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 376.768827,
+          "mean": 118.61076142187497,
+          "p50": 106.32132800000001,
+          "p95": 154.97316899999998,
+          "p99": 376.768827
+        },
+        "mib_per_sec": 539.5703997832627,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 8.43078749661348,
+        "process_after": {
+          "high_water_rss_kib": 74528,
+          "rss_kib": 74528,
+          "system_ticks": 789,
+          "user_ticks": 300
+        },
+        "process_before": {
+          "high_water_rss_kib": 72076,
+          "rss_kib": 72076,
+          "system_ticks": 31,
+          "user_ticks": 23
+        },
+        "seconds": 7.591224429
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 241.593945,
+          "mean": 92.86416936458328,
+          "p50": 86.748901,
+          "p95": 141.992318,
+          "p99": 197.74006
+        },
+        "mib_per_sec": 689.159922226802,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 10.768123784793781,
+        "process_after": {
+          "high_water_rss_kib": 76984,
+          "rss_kib": 76984,
+          "system_ticks": 2459,
+          "user_ticks": 997
+        },
+        "process_before": {
+          "high_water_rss_kib": 74528,
+          "rss_kib": 74528,
+          "system_ticks": 789,
+          "user_ticks": 300
+        },
+        "seconds": 17.830404241
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 204.916351,
+          "mean": 166.29544528125,
+          "p50": 164.975478,
+          "p95": 200.73403100000002,
+          "p99": 204.916351
+        },
+        "mib_per_sec": 1533.100981549114,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 23.954702836704907,
+        "process_after": {
+          "high_water_rss_kib": 84008,
+          "rss_kib": 84008,
+          "system_ticks": 3368,
+          "user_ticks": 1319
+        },
+        "process_before": {
+          "high_water_rss_kib": 76992,
+          "rss_kib": 76992,
+          "system_ticks": 2459,
+          "user_ticks": 997
+        },
+        "seconds": 2.6717092019999997
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 111.36123400000001,
+          "mean": 95.36897083854171,
+          "p50": 95.662867,
+          "p95": 106.188826,
+          "p99": 108.92065500000001
+        },
+        "mib_per_sec": 2656.4504695046076,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 41.50703858600949,
+        "process_after": {
+          "high_water_rss_kib": 89200,
+          "rss_kib": 89200,
+          "system_ticks": 4817,
+          "user_ticks": 1984
+        },
+        "process_before": {
+          "high_water_rss_kib": 84008,
+          "rss_kib": 84008,
+          "system_ticks": 3368,
+          "user_ticks": 1319
+        },
+        "seconds": 4.625721481
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 2,
+    "sampled_peak_rss_kib": 89200,
+    "driver_elapsed_seconds": 48.515703171957284
+  },
+  {
+    "elapsed_seconds": 58.545731048,
+    "mode": "on",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 99148,
+      "rss_kib": 99148,
+      "system_ticks": 4852,
+      "user_ticks": 2217
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 668.196326,
+          "mean": 155.577693859375,
+          "p50": 133.32454299999998,
+          "p95": 295.50146,
+          "p99": 668.196326
+        },
+        "mib_per_sec": 411.3627567114556,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 6.427543073616493,
+        "process_after": {
+          "high_water_rss_kib": 75464,
+          "rss_kib": 75464,
+          "system_ticks": 843,
+          "user_ticks": 376
+        },
+        "process_before": {
+          "high_water_rss_kib": 74200,
+          "rss_kib": 74200,
+          "system_ticks": 63,
+          "user_ticks": 57
+        },
+        "seconds": 9.957148364
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 502.258815,
+          "mean": 96.10329743229171,
+          "p50": 93.60686899999999,
+          "p95": 102.29233599999999,
+          "p99": 111.492183
+        },
+        "mib_per_sec": 665.9323706586586,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 10.40519329154154,
+        "process_after": {
+          "high_water_rss_kib": 82216,
+          "rss_kib": 82216,
+          "system_ticks": 2420,
+          "user_ticks": 1109
+        },
+        "process_before": {
+          "high_water_rss_kib": 75464,
+          "rss_kib": 75464,
+          "system_ticks": 843,
+          "user_ticks": 376
+        },
+        "seconds": 18.452324202
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 525.100635,
+          "mean": 218.55940579687498,
+          "p50": 182.854426,
+          "p95": 452.962198,
+          "p99": 525.100635
+        },
+        "mib_per_sec": 1165.5465629980079,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 18.211665046843873,
+        "process_after": {
+          "high_water_rss_kib": 90208,
+          "rss_kib": 90208,
+          "system_ticks": 3273,
+          "user_ticks": 1433
+        },
+        "process_before": {
+          "high_water_rss_kib": 82456,
+          "rss_kib": 82456,
+          "system_ticks": 2420,
+          "user_ticks": 1111
+        },
+        "seconds": 3.514231117
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 516.174318,
+          "mean": 119.24120353645839,
+          "p50": 111.19245,
+          "p95": 126.73583299999999,
+          "p99": 486.77971199999996
+        },
+        "mib_per_sec": 2120.691488219767,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 33.13580450343386,
+        "process_after": {
+          "high_water_rss_kib": 98956,
+          "rss_kib": 98956,
+          "system_ticks": 4851,
+          "user_ticks": 2216
+        },
+        "process_before": {
+          "high_water_rss_kib": 90208,
+          "rss_kib": 90208,
+          "system_ticks": 3273,
+          "user_ticks": 1433
+        },
+        "seconds": 5.794336455
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 2,
+    "sampled_peak_rss_kib": 98948,
+    "driver_elapsed_seconds": 58.66486581019126
+  },
+  {
+    "elapsed_seconds": 44.4163898,
+    "mode": "original",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 86600,
+      "rss_kib": 86600,
+      "system_ticks": 4340,
+      "user_ticks": 1742
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 135.292567,
+          "mean": 112.26861700000003,
+          "p50": 108.950823,
+          "p95": 132.078712,
+          "p99": 135.292567
+        },
+        "mib_per_sec": 570.0480772202089,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 8.907001206565765,
+        "process_after": {
+          "high_water_rss_kib": 73508,
+          "rss_kib": 73508,
+          "system_ticks": 750,
+          "user_ticks": 282
+        },
+        "process_before": {
+          "high_water_rss_kib": 70760,
+          "rss_kib": 70760,
+          "system_ticks": 33,
+          "user_ticks": 22
+        },
+        "seconds": 7.185358856
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 93.927506,
+          "mean": 81.16000318750002,
+          "p50": 81.14455299999999,
+          "p95": 88.911323,
+          "p99": 91.44886000000001
+        },
+        "mib_per_sec": 788.5418057509977,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 12.320965714859339,
+        "process_after": {
+          "high_water_rss_kib": 75184,
+          "rss_kib": 75184,
+          "system_ticks": 2230,
+          "user_ticks": 899
+        },
+        "process_before": {
+          "high_water_rss_kib": 73508,
+          "rss_kib": 73508,
+          "system_ticks": 750,
+          "user_ticks": 282
+        },
+        "seconds": 15.583194081
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 231.29871799999998,
+          "mean": 148.67164906249997,
+          "p50": 133.232827,
+          "p95": 228.833554,
+          "p99": 231.29871799999998
+        },
+        "mib_per_sec": 1717.6771597639517,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 26.838705621311746,
+        "process_after": {
+          "high_water_rss_kib": 81556,
+          "rss_kib": 78964,
+          "system_ticks": 3046,
+          "user_ticks": 1159
+        },
+        "process_before": {
+          "high_water_rss_kib": 75188,
+          "rss_kib": 75188,
+          "system_ticks": 2230,
+          "user_ticks": 900
+        },
+        "seconds": 2.384615745
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 164.221058,
+          "mean": 82.68541647395837,
+          "p50": 82.00378599999999,
+          "p95": 87.868113,
+          "p99": 157.6824
+        },
+        "mib_per_sec": 3069.89965524075,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 47.967182113136715,
+        "process_after": {
+          "high_water_rss_kib": 86596,
+          "rss_kib": 86596,
+          "system_ticks": 4340,
+          "user_ticks": 1742
+        },
+        "process_before": {
+          "high_water_rss_kib": 81556,
+          "rss_kib": 78964,
+          "system_ticks": 3046,
+          "user_ticks": 1159
+        },
+        "seconds": 4.002736695
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 2,
+    "sampled_peak_rss_kib": 86596,
+    "driver_elapsed_seconds": 44.49223071383312
+  },
+  {
+    "elapsed_seconds": 57.868808027,
+    "mode": "on",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 94780,
+      "rss_kib": 94704,
+      "system_ticks": 4390,
+      "user_ticks": 2036
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 359.95526700000005,
+          "mean": 148.20828367187497,
+          "p50": 129.69575,
+          "p95": 321.456522,
+          "p99": 359.95526700000005
+        },
+        "mib_per_sec": 431.81705383317995,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 6.747141466143437,
+        "process_after": {
+          "high_water_rss_kib": 75348,
+          "rss_kib": 75348,
+          "system_ticks": 838,
+          "user_ticks": 347
+        },
+        "process_before": {
+          "high_water_rss_kib": 74128,
+          "rss_kib": 74128,
+          "system_ticks": 67,
+          "user_ticks": 51
+        },
+        "seconds": 9.485498462
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 407.830232,
+          "mean": 88.23712221354172,
+          "p50": 85.89261400000001,
+          "p95": 96.050482,
+          "p99": 98.318758
+        },
+        "mib_per_sec": 725.298512114416,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 11.33278925178775,
+        "process_after": {
+          "high_water_rss_kib": 81928,
+          "rss_kib": 81928,
+          "system_ticks": 2273,
+          "user_ticks": 1045
+        },
+        "process_before": {
+          "high_water_rss_kib": 75348,
+          "rss_kib": 75348,
+          "system_ticks": 838,
+          "user_ticks": 347
+        },
+        "seconds": 16.941989808
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 378.921159,
+          "mean": 211.56009640624995,
+          "p50": 176.096185,
+          "p95": 367.939548,
+          "p99": 378.921159
+        },
+        "mib_per_sec": 1193.8915554074945,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 18.6545555532421,
+        "process_after": {
+          "high_water_rss_kib": 89112,
+          "rss_kib": 83068,
+          "system_ticks": 3029,
+          "user_ticks": 1335
+        },
+        "process_before": {
+          "high_water_rss_kib": 82192,
+          "rss_kib": 82192,
+          "system_ticks": 2273,
+          "user_ticks": 1046
+        },
+        "seconds": 3.430797363
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 127.26079100000001,
+          "mean": 95.93558358854166,
+          "p50": 95.677821,
+          "p95": 101.87697,
+          "p99": 117.003334
+        },
+        "mib_per_sec": 2648.0888990027725,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 41.37638904691832,
+        "process_after": {
+          "high_water_rss_kib": 94780,
+          "rss_kib": 94568,
+          "system_ticks": 4390,
+          "user_ticks": 2036
+        },
+        "process_before": {
+          "high_water_rss_kib": 89112,
+          "rss_kib": 83068,
+          "system_ticks": 3029,
+          "user_ticks": 1335
+        },
+        "seconds": 4.640327598
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 3,
+    "sampled_peak_rss_kib": 98808,
+    "driver_elapsed_seconds": 57.95061496295966
+  },
+  {
+    "elapsed_seconds": 44.429258209,
+    "mode": "original",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 84376,
+      "rss_kib": 82844,
+      "system_ticks": 4313,
+      "user_ticks": 1724
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 129.867507,
+          "mean": 108.21229625,
+          "p50": 106.436511,
+          "p95": 126.28980000000001,
+          "p99": 129.867507
+        },
+        "mib_per_sec": 591.4161393427607,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 9.240877177230637,
+        "process_after": {
+          "high_water_rss_kib": 73528,
+          "rss_kib": 73528,
+          "system_ticks": 723,
+          "user_ticks": 278
+        },
+        "process_before": {
+          "high_water_rss_kib": 70868,
+          "rss_kib": 70868,
+          "system_ticks": 29,
+          "user_ticks": 21
+        },
+        "seconds": 6.925749447
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 87.793229,
+          "mean": 79.79789751041668,
+          "p50": 79.829951,
+          "p95": 85.094692,
+          "p99": 87.22867
+        },
+        "mib_per_sec": 801.9971226878197,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 12.531205041997183,
+        "process_after": {
+          "high_water_rss_kib": 75460,
+          "rss_kib": 75460,
+          "system_ticks": 2190,
+          "user_ticks": 874
+        },
+        "process_before": {
+          "high_water_rss_kib": 73528,
+          "rss_kib": 73528,
+          "system_ticks": 724,
+          "user_ticks": 278
+        },
+        "seconds": 15.32175073
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 165.578889,
+          "mean": 141.74408410937502,
+          "p50": 139.760122,
+          "p95": 160.064772,
+          "p99": 165.578889
+        },
+        "mib_per_sec": 1796.5643285391768,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 28.071317633424638,
+        "process_after": {
+          "high_water_rss_kib": 82012,
+          "rss_kib": 76732,
+          "system_ticks": 2956,
+          "user_ticks": 1152
+        },
+        "process_before": {
+          "high_water_rss_kib": 75464,
+          "rss_kib": 75464,
+          "system_ticks": 2190,
+          "user_ticks": 874
+        },
+        "seconds": 2.279907229
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 106.98644,
+          "mean": 85.74295971875004,
+          "p50": 84.345429,
+          "p95": 98.437674,
+          "p99": 106.72118
+        },
+        "mib_per_sec": 2957.398788146207,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 46.20935606478449,
+        "process_after": {
+          "high_water_rss_kib": 84376,
+          "rss_kib": 82840,
+          "system_ticks": 4313,
+          "user_ticks": 1724
+        },
+        "process_before": {
+          "high_water_rss_kib": 82012,
+          "rss_kib": 76732,
+          "system_ticks": 2956,
+          "user_ticks": 1152
+        },
+        "seconds": 4.155002717
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 3,
+    "sampled_peak_rss_kib": 87320,
+    "driver_elapsed_seconds": 44.48618694813922
+  },
+  {
+    "elapsed_seconds": 47.743238335,
+    "mode": "off",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 84388,
+      "rss_kib": 82604,
+      "system_ticks": 4543,
+      "user_ticks": 1808
+    },
+    "results": [
+      {
+        "bytes": 4294967296,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 139.44552700000003,
+          "mean": 111.110467078125,
+          "p50": 108.161009,
+          "p95": 133.389597,
+          "p99": 139.44552700000003
+        },
+        "mib_per_sec": 575.9884791234397,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 8.999819986303745,
+        "process_after": {
+          "high_water_rss_kib": 74756,
+          "rss_kib": 74756,
+          "system_ticks": 733,
+          "user_ticks": 294
+        },
+        "process_before": {
+          "high_water_rss_kib": 73108,
+          "rss_kib": 73108,
+          "system_ticks": 34,
+          "user_ticks": 19
+        },
+        "seconds": 7.111253347
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 142.3603,
+          "mean": 93.62809798958335,
+          "p50": 87.006901,
+          "p95": 126.62738000000002,
+          "p99": 140.892472
+        },
+        "mib_per_sec": 683.5386466271148,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 10.680291353548668,
+        "process_after": {
+          "high_water_rss_kib": 76492,
+          "rss_kib": 76492,
+          "system_ticks": 2450,
+          "user_ticks": 947
+        },
+        "process_before": {
+          "high_water_rss_kib": 74756,
+          "rss_kib": 74756,
+          "system_ticks": 733,
+          "user_ticks": 294
+        },
+        "seconds": 17.977037671
+      },
+      {
+        "bytes": 4294967296,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 201.814855,
+          "mean": 146.39509779687504,
+          "p50": 143.565217,
+          "p95": 189.802585,
+          "p99": 201.814855
+        },
+        "mib_per_sec": 1739.1705777814834,
+        "name": "write_64m",
+        "operations": 64,
+        "ops_per_sec": 27.17454027783568,
+        "process_after": {
+          "high_water_rss_kib": 82368,
+          "rss_kib": 78524,
+          "system_ticks": 3241,
+          "user_ticks": 1220
+        },
+        "process_before": {
+          "high_water_rss_kib": 76496,
+          "rss_kib": 76496,
+          "system_ticks": 2450,
+          "user_ticks": 947
+        },
+        "seconds": 2.3551456379999998
+      },
+      {
+        "bytes": 12884901888,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 97.708003,
+          "mean": 83.77210881249997,
+          "p50": 83.67997700000001,
+          "p95": 90.28544400000001,
+          "p99": 94.90156900000001
+        },
+        "mib_per_sec": 3027.415637416962,
+        "name": "read_64m",
+        "operations": 192,
+        "ops_per_sec": 47.30336933464003,
+        "process_after": {
+          "high_water_rss_kib": 84388,
+          "rss_kib": 82600,
+          "system_ticks": 4543,
+          "user_ticks": 1808
+        },
+        "process_before": {
+          "high_water_rss_kib": 82368,
+          "rss_kib": 78524,
+          "system_ticks": 3241,
+          "user_ticks": 1220
+        },
+        "seconds": 4.058907488
+      }
+    ],
+    "topology": {
+      "io_only": true,
+      "large_files": 64,
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 3,
+    "sampled_peak_rss_kib": 87424,
+    "driver_elapsed_seconds": 47.80130518018268
+  }
+]

@@ -1,0 +1,53 @@
+{
+  "started_utc": "2026-10-21T05:07:02.441874+00:00",
+  "platform": "Linux-6.8.0-142-generic-x86_64-with-glibc2.39",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "clock_ticks_per_second": 100,
+  "memory_total_kib": 32860356,
+  "original_rev": "feb3c9e20617d5c3f36c67d44033239b6ac92470",
+  "hsm_rev": "837b5cc4a508fc194de9a3e08dc32f00bc76674c",
+  "binaries": {
+    "original": {
+      "sha256": "fddbccc7fa7cb46e93e6a715cffc01e0fe57b47c08a2162116988690ce1476be",
+      "bytes": 33049856
+    },
+    "off": {
+      "sha256": "584e2fa64b227b8ae045fe2f509c1ac06dac42f09a900855596c3217b9e367b3",
+      "bytes": 35190872
+    },
+    "on": {
+      "sha256": "584e2fa64b227b8ae045fe2f509c1ac06dac42f09a900855596c3217b9e367b3",
+      "bytes": 35190872
+    }
+  },
+  "rounds": 3,
+  "smoke": false,
+  "profile": "release (both builds; see build commands)",
+  "cache": "fresh process and DB per invocation; no OS page cache purge",
+  "execution": "sequential clusters; rotated order; shared VM; loopback RPC; no physical node fault isolation"
+}

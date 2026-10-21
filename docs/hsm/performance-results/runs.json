@@ -1,0 +1,6542 @@
+[
+  {
+    "elapsed_seconds": 20.438985034,
+    "mode": "original",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 98804,
+      "rss_kib": 98396,
+      "system_ticks": 724,
+      "user_ticks": 337
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.5193249999999999,
+          "mean": 0.36961028515625,
+          "p50": 0.361894,
+          "p95": 0.432671,
+          "p99": 0.501255
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 2699.453526213365,
+        "process_after": {
+          "high_water_rss_kib": 72408,
+          "rss_kib": 72408,
+          "system_ticks": 35,
+          "user_ticks": 27
+        },
+        "process_before": {
+          "high_water_rss_kib": 71888,
+          "rss_kib": 71888,
+          "system_ticks": 30,
+          "user_ticks": 20
+        },
+        "seconds": 0.094834009
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.265212,
+          "mean": 0.16298486425781267,
+          "p50": 0.16003799999999999,
+          "p95": 0.18701199999999998,
+          "p99": 0.223931
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 6120.899712244191,
+        "process_after": {
+          "high_water_rss_kib": 72420,
+          "rss_kib": 72420,
+          "system_ticks": 48,
+          "user_ticks": 34
+        },
+        "process_before": {
+          "high_water_rss_kib": 72408,
+          "rss_kib": 72408,
+          "system_ticks": 35,
+          "user_ticks": 27
+        },
+        "seconds": 0.167295667
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.32428999999999997,
+          "mean": 0.17238566406249994,
+          "p50": 0.16627999999999998,
+          "p95": 0.208204,
+          "p99": 0.31016699999999997
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 5784.223169790449,
+        "process_after": {
+          "high_water_rss_kib": 72420,
+          "rss_kib": 72420,
+          "system_ticks": 51,
+          "user_ticks": 36
+        },
+        "process_before": {
+          "high_water_rss_kib": 72420,
+          "rss_kib": 72420,
+          "system_ticks": 48,
+          "user_ticks": 34
+        },
+        "seconds": 0.04425832
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.1642569999999999,
+          "mean": 0.793986703125,
+          "p50": 0.766313,
+          "p95": 1.010003,
+          "p99": 1.1642569999999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1258.7481026339146,
+        "process_after": {
+          "high_water_rss_kib": 72740,
+          "rss_kib": 72740,
+          "system_ticks": 51,
+          "user_ticks": 41
+        },
+        "process_before": {
+          "high_water_rss_kib": 72420,
+          "rss_kib": 72420,
+          "system_ticks": 51,
+          "user_ticks": 36
+        },
+        "seconds": 0.050844168
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.397957,
+          "mean": 0.17992794531250003,
+          "p50": 0.174634,
+          "p95": 0.207369,
+          "p99": 0.26681699999999997
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 5545.320540105557,
+        "process_after": {
+          "high_water_rss_kib": 72900,
+          "rss_kib": 72900,
+          "system_ticks": 54,
+          "user_ticks": 44
+        },
+        "process_before": {
+          "high_water_rss_kib": 72740,
+          "rss_kib": 72740,
+          "system_ticks": 51,
+          "user_ticks": 42
+        },
+        "seconds": 0.04616505
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.355997,
+          "mean": 0.1793795390625001,
+          "p50": 0.178409,
+          "p95": 0.20896399999999998,
+          "p99": 0.248271
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 5562.513405168414,
+        "process_after": {
+          "high_water_rss_kib": 73020,
+          "rss_kib": 73020,
+          "system_ticks": 57,
+          "user_ticks": 47
+        },
+        "process_before": {
+          "high_water_rss_kib": 72900,
+          "rss_kib": 72900,
+          "system_ticks": 54,
+          "user_ticks": 44
+        },
+        "seconds": 0.046022361
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 3.292626,
+          "mean": 2.7667049453124988,
+          "p50": 2.828494,
+          "p95": 3.109623,
+          "p99": 3.288927
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 5690.51903290785,
+        "process_after": {
+          "high_water_rss_kib": 74040,
+          "rss_kib": 74040,
+          "system_ticks": 63,
+          "user_ticks": 52
+        },
+        "process_before": {
+          "high_water_rss_kib": 73020,
+          "rss_kib": 73020,
+          "system_ticks": 57,
+          "user_ticks": 47
+        },
+        "seconds": 0.044987109
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.646552,
+          "mean": 1.1457142792968746,
+          "p50": 1.129699,
+          "p95": 1.295217,
+          "p99": 1.439908
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 13850.00506728945,
+        "process_after": {
+          "high_water_rss_kib": 74040,
+          "rss_kib": 74040,
+          "system_ticks": 74,
+          "user_ticks": 59
+        },
+        "process_before": {
+          "high_water_rss_kib": 74040,
+          "rss_kib": 74040,
+          "system_ticks": 63,
+          "user_ticks": 52
+        },
+        "seconds": 0.073934991
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.410025,
+          "mean": 1.1214106289062498,
+          "p50": 1.1380279999999998,
+          "p95": 1.22842,
+          "p99": 1.2792979999999998
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 13842.378886349255,
+        "process_after": {
+          "high_water_rss_kib": 74040,
+          "rss_kib": 74040,
+          "system_ticks": 77,
+          "user_ticks": 61
+        },
+        "process_before": {
+          "high_water_rss_kib": 74040,
+          "rss_kib": 74040,
+          "system_ticks": 74,
+          "user_ticks": 59
+        },
+        "seconds": 0.018493931
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 10.213099,
+          "mean": 8.423327546874997,
+          "p50": 9.277132,
+          "p95": 9.496099,
+          "p99": 10.213099
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1681.1510526041359,
+        "process_after": {
+          "high_water_rss_kib": 74304,
+          "rss_kib": 74304,
+          "system_ticks": 78,
+          "user_ticks": 65
+        },
+        "process_before": {
+          "high_water_rss_kib": 74040,
+          "rss_kib": 74040,
+          "system_ticks": 77,
+          "user_ticks": 61
+        },
+        "seconds": 0.038069155
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.628022,
+          "mean": 1.2878124687499994,
+          "p50": 1.321987,
+          "p95": 1.383317,
+          "p99": 1.483362
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 12061.804876653676,
+        "process_after": {
+          "high_water_rss_kib": 74456,
+          "rss_kib": 74456,
+          "system_ticks": 82,
+          "user_ticks": 66
+        },
+        "process_before": {
+          "high_water_rss_kib": 74304,
+          "rss_kib": 74304,
+          "system_ticks": 78,
+          "user_ticks": 65
+        },
+        "seconds": 0.021224021
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.587379,
+          "mean": 1.4103992929687508,
+          "p50": 1.437425,
+          "p95": 1.5515100000000002,
+          "p99": 1.563931
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 10967.057102467528,
+        "process_after": {
+          "high_water_rss_kib": 74568,
+          "rss_kib": 74568,
+          "system_ticks": 84,
+          "user_ticks": 69
+        },
+        "process_before": {
+          "high_water_rss_kib": 74456,
+          "rss_kib": 74456,
+          "system_ticks": 82,
+          "user_ticks": 66
+        },
+        "seconds": 0.023342634
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.632171,
+          "mean": 1.1274375703124997,
+          "p50": 1.108162,
+          "p95": 1.317056,
+          "p99": 1.545147
+        },
+        "mib_per_sec": 3.462151856309231,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 886.3108752151632,
+        "process_after": {
+          "high_water_rss_kib": 75028,
+          "rss_kib": 75028,
+          "system_ticks": 94,
+          "user_ticks": 76
+        },
+        "process_before": {
+          "high_water_rss_kib": 74568,
+          "rss_kib": 74568,
+          "system_ticks": 84,
+          "user_ticks": 69
+        },
+        "seconds": 0.144418853
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.35603,
+          "mean": 0.7031713463541672,
+          "p50": 0.6949979999999999,
+          "p95": 0.7804310000000001,
+          "p99": 0.8980159999999999
+        },
+        "mib_per_sec": 5.54837441784375,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 1420.383850968,
+        "process_after": {
+          "high_water_rss_kib": 75648,
+          "rss_kib": 75648,
+          "system_ticks": 113,
+          "user_ticks": 89
+        },
+        "process_before": {
+          "high_water_rss_kib": 75028,
+          "rss_kib": 75028,
+          "system_ticks": 94,
+          "user_ticks": 76
+        },
+        "seconds": 0.270349455
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 7.343403,
+          "mean": 4.392593601562498,
+          "p50": 4.360941,
+          "p95": 5.564979999999999,
+          "p99": 6.759073
+        },
+        "mib_per_sec": 13.807072777964265,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 3534.610631158852,
+        "process_after": {
+          "high_water_rss_kib": 76796,
+          "rss_kib": 76796,
+          "system_ticks": 122,
+          "user_ticks": 96
+        },
+        "process_before": {
+          "high_water_rss_kib": 75684,
+          "rss_kib": 75684,
+          "system_ticks": 113,
+          "user_ticks": 89
+        },
+        "seconds": 0.036213324
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 15.411683,
+          "mean": 3.5672898593749984,
+          "p50": 2.853713,
+          "p95": 7.956177,
+          "p99": 12.518579
+        },
+        "mib_per_sec": 15.482478783249746,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 3963.514568511935,
+        "process_after": {
+          "high_water_rss_kib": 88228,
+          "rss_kib": 77008,
+          "system_ticks": 143,
+          "user_ticks": 111
+        },
+        "process_before": {
+          "high_water_rss_kib": 76796,
+          "rss_kib": 76796,
+          "system_ticks": 122,
+          "user_ticks": 96
+        },
+        "seconds": 0.096883711
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 157.988704,
+          "mean": 131.96332950000001,
+          "p50": 123.299344,
+          "p95": 157.988704,
+          "p99": 157.988704
+        },
+        "mib_per_sec": 484.97188814984224,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 7.577685752341285,
+        "process_after": {
+          "high_water_rss_kib": 88228,
+          "rss_kib": 78136,
+          "system_ticks": 252,
+          "user_ticks": 140
+        },
+        "process_before": {
+          "high_water_rss_kib": 88228,
+          "rss_kib": 77044,
+          "system_ticks": 144,
+          "user_ticks": 111
+        },
+        "seconds": 1.055731296
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 95.88723300000001,
+          "mean": 84.89483362499999,
+          "p50": 85.124225,
+          "p95": 91.416024,
+          "p99": 95.88723300000001
+        },
+        "mib_per_sec": 753.8281066017831,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 11.778564165652861,
+        "process_after": {
+          "high_water_rss_kib": 88228,
+          "rss_kib": 78892,
+          "system_ticks": 443,
+          "user_ticks": 221
+        },
+        "process_before": {
+          "high_water_rss_kib": 88228,
+          "rss_kib": 78136,
+          "system_ticks": 252,
+          "user_ticks": 140
+        },
+        "seconds": 2.037599801
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 164.203871,
+          "mean": 153.94506574999997,
+          "p50": 149.52892300000002,
+          "p95": 164.203871,
+          "p99": 164.203871
+        },
+        "mib_per_sec": 1631.7517317275988,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 25.49612080824373,
+        "process_after": {
+          "high_water_rss_kib": 88228,
+          "rss_kib": 78420,
+          "system_ticks": 549,
+          "user_ticks": 249
+        },
+        "process_before": {
+          "high_water_rss_kib": 88228,
+          "rss_kib": 78896,
+          "system_ticks": 443,
+          "user_ticks": 221
+        },
+        "seconds": 0.313773223
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 97.497445,
+          "mean": 91.94107508333336,
+          "p50": 91.852636,
+          "p95": 97.38142599999999,
+          "p99": 97.497445
+        },
+        "mib_per_sec": 2713.5427310424666,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 42.39910517253854,
+        "process_after": {
+          "high_water_rss_kib": 98804,
+          "rss_kib": 98396,
+          "system_ticks": 724,
+          "user_ticks": 337
+        },
+        "process_before": {
+          "high_water_rss_kib": 88228,
+          "rss_kib": 78420,
+          "system_ticks": 549,
+          "user_ticks": 249
+        },
+        "seconds": 0.566049682
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 1,
+    "sampled_peak_rss_kib": 102364,
+    "driver_elapsed_seconds": 20.492509468924254
+  },
+  {
+    "elapsed_seconds": 20.141672373,
+    "mode": "off",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 85996,
+      "rss_kib": 85444,
+      "system_ticks": 783,
+      "user_ticks": 341
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.634417,
+          "mean": 0.4190916249999998,
+          "p50": 0.410875,
+          "p95": 0.508385,
+          "p99": 0.5548970000000001
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 2382.1185378660634,
+        "process_after": {
+          "high_water_rss_kib": 73720,
+          "rss_kib": 73720,
+          "system_ticks": 37,
+          "user_ticks": 28
+        },
+        "process_before": {
+          "high_water_rss_kib": 73196,
+          "rss_kib": 73196,
+          "system_ticks": 31,
+          "user_ticks": 22
+        },
+        "seconds": 0.107467364
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.277047,
+          "mean": 0.16771453320312507,
+          "p50": 0.165764,
+          "p95": 0.20505299999999999,
+          "p99": 0.250433
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 5946.094196537738,
+        "process_after": {
+          "high_water_rss_kib": 73728,
+          "rss_kib": 73728,
+          "system_ticks": 50,
+          "user_ticks": 36
+        },
+        "process_before": {
+          "high_water_rss_kib": 73720,
+          "rss_kib": 73720,
+          "system_ticks": 37,
+          "user_ticks": 28
+        },
+        "seconds": 0.172213888
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.4256,
+          "mean": 0.2966350859375001,
+          "p50": 0.298938,
+          "p95": 0.340779,
+          "p99": 0.39806400000000003
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 3365.9923562784047,
+        "process_after": {
+          "high_water_rss_kib": 73764,
+          "rss_kib": 73764,
+          "system_ticks": 56,
+          "user_ticks": 39
+        },
+        "process_before": {
+          "high_water_rss_kib": 73728,
+          "rss_kib": 73728,
+          "system_ticks": 50,
+          "user_ticks": 36
+        },
+        "seconds": 0.076054837
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.075227,
+          "mean": 0.758138765625,
+          "p50": 0.750968,
+          "p95": 0.848702,
+          "p99": 1.075227
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1318.18374958315,
+        "process_after": {
+          "high_water_rss_kib": 74120,
+          "rss_kib": 74120,
+          "system_ticks": 57,
+          "user_ticks": 44
+        },
+        "process_before": {
+          "high_water_rss_kib": 73768,
+          "rss_kib": 73768,
+          "system_ticks": 56,
+          "user_ticks": 39
+        },
+        "seconds": 0.048551653
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.289094,
+          "mean": 0.17921544921874996,
+          "p50": 0.17803,
+          "p95": 0.21778,
+          "p99": 0.274048
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 5561.9714972859865,
+        "process_after": {
+          "high_water_rss_kib": 74276,
+          "rss_kib": 74276,
+          "system_ticks": 60,
+          "user_ticks": 46
+        },
+        "process_before": {
+          "high_water_rss_kib": 74120,
+          "rss_kib": 74120,
+          "system_ticks": 57,
+          "user_ticks": 44
+        },
+        "seconds": 0.046026845
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.25393,
+          "mean": 0.17366935156249996,
+          "p50": 0.169526,
+          "p95": 0.215649,
+          "p99": 0.251896
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 5740.341997916166,
+        "process_after": {
+          "high_water_rss_kib": 74392,
+          "rss_kib": 74392,
+          "system_ticks": 64,
+          "user_ticks": 48
+        },
+        "process_before": {
+          "high_water_rss_kib": 74276,
+          "rss_kib": 74276,
+          "system_ticks": 60,
+          "user_ticks": 46
+        },
+        "seconds": 0.044596646
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 3.1772189999999996,
+          "mean": 2.871595515625002,
+          "p50": 2.961116,
+          "p95": 3.1105009999999997,
+          "p99": 3.147079
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 5491.6436918604395,
+        "process_after": {
+          "high_water_rss_kib": 75528,
+          "rss_kib": 75528,
+          "system_ticks": 70,
+          "user_ticks": 52
+        },
+        "process_before": {
+          "high_water_rss_kib": 74392,
+          "rss_kib": 74392,
+          "system_ticks": 64,
+          "user_ticks": 48
+        },
+        "seconds": 0.04661628
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.57964,
+          "mean": 1.3450636972656238,
+          "p50": 1.345785,
+          "p95": 1.460013,
+          "p99": 1.5121939999999998
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 11804.887663870488,
+        "process_after": {
+          "high_water_rss_kib": 75528,
+          "rss_kib": 75528,
+          "system_ticks": 83,
+          "user_ticks": 59
+        },
+        "process_before": {
+          "high_water_rss_kib": 75528,
+          "rss_kib": 75528,
+          "system_ticks": 70,
+          "user_ticks": 52
+        },
+        "seconds": 0.086743731
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.950342,
+          "mean": 1.7880256367187504,
+          "p50": 1.8059930000000002,
+          "p95": 1.902783,
+          "p99": 1.9317010000000001
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 8755.588100198129,
+        "process_after": {
+          "high_water_rss_kib": 75564,
+          "rss_kib": 75564,
+          "system_ticks": 88,
+          "user_ticks": 62
+        },
+        "process_before": {
+          "high_water_rss_kib": 75528,
+          "rss_kib": 75528,
+          "system_ticks": 83,
+          "user_ticks": 59
+        },
+        "seconds": 0.02923847
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 11.984739,
+          "mean": 9.080586484375,
+          "p50": 9.240810999999999,
+          "p95": 11.204189,
+          "p99": 11.984739
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1570.8136925375181,
+        "process_after": {
+          "high_water_rss_kib": 75844,
+          "rss_kib": 75844,
+          "system_ticks": 89,
+          "user_ticks": 67
+        },
+        "process_before": {
+          "high_water_rss_kib": 75564,
+          "rss_kib": 75564,
+          "system_ticks": 88,
+          "user_ticks": 62
+        },
+        "seconds": 0.040743215
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.96278,
+          "mean": 1.5452337343749998,
+          "p50": 1.545612,
+          "p95": 1.777319,
+          "p99": 1.826959
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 10052.530361292262,
+        "process_after": {
+          "high_water_rss_kib": 75996,
+          "rss_kib": 75996,
+          "system_ticks": 93,
+          "user_ticks": 68
+        },
+        "process_before": {
+          "high_water_rss_kib": 75844,
+          "rss_kib": 75844,
+          "system_ticks": 89,
+          "user_ticks": 67
+        },
+        "seconds": 0.025466225
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 2.194139,
+          "mean": 1.5935767968749999,
+          "p50": 1.618701,
+          "p95": 1.944893,
+          "p99": 2.098709
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 9792.059871102067,
+        "process_after": {
+          "high_water_rss_kib": 76108,
+          "rss_kib": 76108,
+          "system_ticks": 95,
+          "user_ticks": 71
+        },
+        "process_before": {
+          "high_water_rss_kib": 75996,
+          "rss_kib": 75996,
+          "system_ticks": 93,
+          "user_ticks": 68
+        },
+        "seconds": 0.026143631
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.519468,
+          "mean": 1.0432976328124999,
+          "p50": 1.0255990000000001,
+          "p95": 1.209031,
+          "p99": 1.332474
+        },
+        "mib_per_sec": 3.7412709134705766,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 957.7653538484676,
+        "process_after": {
+          "high_water_rss_kib": 76572,
+          "rss_kib": 76572,
+          "system_ticks": 105,
+          "user_ticks": 77
+        },
+        "process_before": {
+          "high_water_rss_kib": 76108,
+          "rss_kib": 76108,
+          "system_ticks": 95,
+          "user_ticks": 71
+        },
+        "seconds": 0.133644425
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.2968540000000002,
+          "mean": 0.8173834921875,
+          "p50": 0.8161839999999999,
+          "p95": 0.9609249999999999,
+          "p99": 1.02421
+        },
+        "mib_per_sec": 4.773001535904164,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 1221.888393191466,
+        "process_after": {
+          "high_water_rss_kib": 76944,
+          "rss_kib": 76944,
+          "system_ticks": 126,
+          "user_ticks": 94
+        },
+        "process_before": {
+          "high_water_rss_kib": 76572,
+          "rss_kib": 76572,
+          "system_ticks": 105,
+          "user_ticks": 77
+        },
+        "seconds": 0.314267655
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 8.483018999999999,
+          "mean": 4.706810992187503,
+          "p50": 4.543857,
+          "p95": 6.766704,
+          "p99": 8.069937
+        },
+        "mib_per_sec": 12.776988500608132,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 3270.909056155682,
+        "process_after": {
+          "high_water_rss_kib": 78472,
+          "rss_kib": 78472,
+          "system_ticks": 137,
+          "user_ticks": 100
+        },
+        "process_before": {
+          "high_water_rss_kib": 76976,
+          "rss_kib": 76976,
+          "system_ticks": 126,
+          "user_ticks": 94
+        },
+        "seconds": 0.039132852
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 5.969058,
+          "mean": 3.2922069348958316,
+          "p50": 3.254851,
+          "p95": 4.985468,
+          "p99": 5.482934
+        },
+        "mib_per_sec": 17.182873010274854,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 4398.815490630363,
+        "process_after": {
+          "high_water_rss_kib": 85356,
+          "rss_kib": 78656,
+          "system_ticks": 161,
+          "user_ticks": 114
+        },
+        "process_before": {
+          "high_water_rss_kib": 78472,
+          "rss_kib": 78472,
+          "system_ticks": 137,
+          "user_ticks": 100
+        },
+        "seconds": 0.087296228
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 129.681247,
+          "mean": 119.19055525,
+          "p50": 116.281818,
+          "p95": 129.681247,
+          "p99": 129.681247
+        },
+        "mib_per_sec": 536.9410925503474,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 8.389704571099179,
+        "process_after": {
+          "high_water_rss_kib": 85356,
+          "rss_kib": 79916,
+          "system_ticks": 254,
+          "user_ticks": 144
+        },
+        "process_before": {
+          "high_water_rss_kib": 85356,
+          "rss_kib": 78692,
+          "system_ticks": 161,
+          "user_ticks": 114
+        },
+        "seconds": 0.953549667
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 94.14937800000001,
+          "mean": 83.65844112500002,
+          "p50": 83.836072,
+          "p95": 91.19114400000001,
+          "p99": 94.14937800000001
+        },
+        "mib_per_sec": 764.9766192441508,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 11.952759675689856,
+        "process_after": {
+          "high_water_rss_kib": 85356,
+          "rss_kib": 80652,
+          "system_ticks": 444,
+          "user_ticks": 225
+        },
+        "process_before": {
+          "high_water_rss_kib": 85356,
+          "rss_kib": 79916,
+          "system_ticks": 254,
+          "user_ticks": 144
+        },
+        "seconds": 2.007904505
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 284.15835,
+          "mean": 226.12568724999997,
+          "p50": 176.26662100000001,
+          "p95": 284.15835,
+          "p99": 284.15835
+        },
+        "mib_per_sec": 1116.8137394753883,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 17.450214679302942,
+        "process_after": {
+          "high_water_rss_kib": 85356,
+          "rss_kib": 80196,
+          "system_ticks": 608,
+          "user_ticks": 258
+        },
+        "process_before": {
+          "high_water_rss_kib": 85356,
+          "rss_kib": 80652,
+          "system_ticks": 444,
+          "user_ticks": 225
+        },
+        "seconds": 0.458447082
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 106.14607099999999,
+          "mean": 94.45701454166665,
+          "p50": 93.431849,
+          "p95": 102.618067,
+          "p99": 106.14607099999999
+        },
+        "mib_per_sec": 2628.372250365845,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 41.06831641196633,
+        "process_after": {
+          "high_water_rss_kib": 85996,
+          "rss_kib": 85444,
+          "system_ticks": 782,
+          "user_ticks": 341
+        },
+        "process_before": {
+          "high_water_rss_kib": 85356,
+          "rss_kib": 80196,
+          "system_ticks": 608,
+          "user_ticks": 258
+        },
+        "seconds": 0.584392108
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 1,
+    "sampled_peak_rss_kib": 89412,
+    "driver_elapsed_seconds": 20.191226789960638
+  },
+  {
+    "elapsed_seconds": 99.056964427,
+    "mode": "on",
+    "policy_interference": {
+      "active": [
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 181.889356,
+            "mean": 162.23159181250003,
+            "p50": 166.358012,
+            "p95": 176.645275,
+            "p99": 177.521839
+          },
+          "mib_per_sec": 0.0,
+          "name": "create_close_empty",
+          "operations": 256,
+          "ops_per_sec": 97.2174257142311,
+          "process_after": {
+            "high_water_rss_kib": 162200,
+            "rss_kib": 162200,
+            "system_ticks": 3225,
+            "user_ticks": 2729
+          },
+          "process_before": {
+            "high_water_rss_kib": 159424,
+            "rss_kib": 159424,
+            "system_ticks": 3125,
+            "user_ticks": 2629
+          },
+          "seconds": 2.633272771
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 1.490047,
+            "mean": 1.2152291328125013,
+            "p50": 1.198852,
+            "p95": 1.397104,
+            "p99": 1.450584
+          },
+          "mib_per_sec": 0.0,
+          "name": "get_status",
+          "operations": 1024,
+          "ops_per_sec": 13055.825140069943,
+          "process_after": {
+            "high_water_rss_kib": 162208,
+            "rss_kib": 162208,
+            "system_ticks": 3237,
+            "user_ticks": 2737
+          },
+          "process_before": {
+            "high_water_rss_kib": 162200,
+            "rss_kib": 162200,
+            "system_ticks": 3225,
+            "user_ticks": 2729
+          },
+          "seconds": 0.078432423
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 201.93202499999998,
+            "mean": 171.02929263671874,
+            "p50": 170.28891,
+            "p95": 184.33937699999998,
+            "p99": 194.99171900000002
+          },
+          "mib_per_sec": 0.0,
+          "name": "open_close_empty",
+          "operations": 256,
+          "ops_per_sec": 92.23127005377118,
+          "process_after": {
+            "high_water_rss_kib": 167376,
+            "rss_kib": 167376,
+            "system_ticks": 3344,
+            "user_ticks": 2848
+          },
+          "process_before": {
+            "high_water_rss_kib": 162208,
+            "rss_kib": 162208,
+            "system_ticks": 3237,
+            "user_ticks": 2737
+          },
+          "seconds": 2.7756313
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 18.990284,
+            "mean": 15.879765890625,
+            "p50": 17.176322000000003,
+            "p95": 18.95532,
+            "p99": 18.990284
+          },
+          "mib_per_sec": 0.0,
+          "name": "list_children",
+          "operations": 64,
+          "ops_per_sec": 938.232985357379,
+          "process_after": {
+            "high_water_rss_kib": 167540,
+            "rss_kib": 167540,
+            "system_ticks": 3345,
+            "user_ticks": 2855
+          },
+          "process_before": {
+            "high_water_rss_kib": 167376,
+            "rss_kib": 167376,
+            "system_ticks": 3344,
+            "user_ticks": 2848
+          },
+          "seconds": 0.068213334
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 94.265417,
+            "mean": 80.56480140625001,
+            "p50": 79.458128,
+            "p95": 92.85240399999999,
+            "p99": 93.68398599999999
+          },
+          "mib_per_sec": 0.0,
+          "name": "rename",
+          "operations": 256,
+          "ops_per_sec": 193.38206214823273,
+          "process_after": {
+            "high_water_rss_kib": 169088,
+            "rss_kib": 169088,
+            "system_ticks": 3397,
+            "user_ticks": 2906
+          },
+          "process_before": {
+            "high_water_rss_kib": 167540,
+            "rss_kib": 167540,
+            "system_ticks": 3345,
+            "user_ticks": 2855
+          },
+          "seconds": 1.323804272
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 109.641929,
+            "mean": 80.9953404375,
+            "p50": 84.411692,
+            "p95": 101.582572,
+            "p99": 102.656369
+          },
+          "mib_per_sec": 0.0,
+          "name": "delete",
+          "operations": 256,
+          "ops_per_sec": 192.26118581155376,
+          "process_after": {
+            "high_water_rss_kib": 170128,
+            "rss_kib": 170128,
+            "system_ticks": 3447,
+            "user_ticks": 2954
+          },
+          "process_before": {
+            "high_water_rss_kib": 169088,
+            "rss_kib": 169088,
+            "system_ticks": 3397,
+            "user_ticks": 2906
+          },
+          "seconds": 1.331522007
+        }
+      ],
+      "idle": [
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 190.44846600000002,
+            "mean": 155.3132147929689,
+            "p50": 156.29237500000002,
+            "p95": 187.035867,
+            "p99": 188.230968
+          },
+          "mib_per_sec": 0.0,
+          "name": "create_close_empty",
+          "operations": 256,
+          "ops_per_sec": 101.4974175686939,
+          "process_after": {
+            "high_water_rss_kib": 151800,
+            "rss_kib": 151800,
+            "system_ticks": 2907,
+            "user_ticks": 2420
+          },
+          "process_before": {
+            "high_water_rss_kib": 149396,
+            "rss_kib": 149396,
+            "system_ticks": 2808,
+            "user_ticks": 2330
+          },
+          "seconds": 2.52223166
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 1.472494,
+            "mean": 1.2106974775390629,
+            "p50": 1.222755,
+            "p95": 1.36654,
+            "p99": 1.426366
+          },
+          "mib_per_sec": 0.0,
+          "name": "get_status",
+          "operations": 1024,
+          "ops_per_sec": 13105.241552702364,
+          "process_after": {
+            "high_water_rss_kib": 151800,
+            "rss_kib": 151800,
+            "system_ticks": 2918,
+            "user_ticks": 2427
+          },
+          "process_before": {
+            "high_water_rss_kib": 151800,
+            "rss_kib": 151800,
+            "system_ticks": 2907,
+            "user_ticks": 2420
+          },
+          "seconds": 0.078136675
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 175.825727,
+            "mean": 161.68636653515622,
+            "p50": 163.44915500000002,
+            "p95": 169.634223,
+            "p99": 174.749377
+          },
+          "mib_per_sec": 0.0,
+          "name": "open_close_empty",
+          "operations": 256,
+          "ops_per_sec": 97.52312091769667,
+          "process_after": {
+            "high_water_rss_kib": 157248,
+            "rss_kib": 157248,
+            "system_ticks": 3022,
+            "user_ticks": 2534
+          },
+          "process_before": {
+            "high_water_rss_kib": 151800,
+            "rss_kib": 151800,
+            "system_ticks": 2918,
+            "user_ticks": 2428
+          },
+          "seconds": 2.625018535
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 10.141846,
+            "mean": 8.642029828125,
+            "p50": 9.507629999999999,
+            "p95": 9.910465,
+            "p99": 10.141846
+          },
+          "mib_per_sec": 0.0,
+          "name": "list_children",
+          "operations": 64,
+          "ops_per_sec": 1636.2242458623277,
+          "process_after": {
+            "high_water_rss_kib": 157248,
+            "rss_kib": 157248,
+            "system_ticks": 3023,
+            "user_ticks": 2539
+          },
+          "process_before": {
+            "high_water_rss_kib": 157248,
+            "rss_kib": 157248,
+            "system_ticks": 3022,
+            "user_ticks": 2534
+          },
+          "seconds": 0.039114443
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 107.11026199999999,
+            "mean": 78.04900654296874,
+            "p50": 78.486068,
+            "p95": 105.323483,
+            "p99": 106.69644100000001
+          },
+          "mib_per_sec": 0.0,
+          "name": "rename",
+          "operations": 256,
+          "ops_per_sec": 199.4098192211648,
+          "process_after": {
+            "high_water_rss_kib": 158692,
+            "rss_kib": 158692,
+            "system_ticks": 3074,
+            "user_ticks": 2585
+          },
+          "process_before": {
+            "high_water_rss_kib": 157248,
+            "rss_kib": 157248,
+            "system_ticks": 3023,
+            "user_ticks": 2539
+          },
+          "seconds": 1.283788336
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 84.253308,
+            "mean": 75.9618737148437,
+            "p50": 77.923877,
+            "p95": 82.752317,
+            "p99": 84.02261299999999
+          },
+          "mib_per_sec": 0.0,
+          "name": "delete",
+          "operations": 256,
+          "ops_per_sec": 204.60418364788146,
+          "process_after": {
+            "high_water_rss_kib": 159376,
+            "rss_kib": 159376,
+            "system_ticks": 3125,
+            "user_ticks": 2628
+          },
+          "process_before": {
+            "high_water_rss_kib": 158692,
+            "rss_kib": 158692,
+            "system_ticks": 3074,
+            "user_ticks": 2585
+          },
+          "seconds": 1.251196312
+        }
+      ],
+      "scan": {
+        "complete_cycles": 5,
+        "examined": 11123,
+        "max_page_ms": 96.070615,
+        "pages": 50,
+        "scan_interval_ms": 1000,
+        "seconds": 8.233330761,
+        "seed_files": 2048
+      }
+    },
+    "process_final": {
+      "high_water_rss_kib": 170128,
+      "rss_kib": 170128,
+      "system_ticks": 3448,
+      "user_ticks": 2954
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 16.982905,
+          "mean": 11.163040191406253,
+          "p50": 10.880027,
+          "p95": 13.912002999999999,
+          "p99": 15.705435999999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 89.57008358760324,
+        "process_after": {
+          "high_water_rss_kib": 77044,
+          "rss_kib": 77044,
+          "system_ticks": 169,
+          "user_ticks": 146
+        },
+        "process_before": {
+          "high_water_rss_kib": 74360,
+          "rss_kib": 74360,
+          "system_ticks": 66,
+          "user_ticks": 53
+        },
+        "seconds": 2.858097143
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.30271699999999996,
+          "mean": 0.1781805673828124,
+          "p50": 0.17631100000000002,
+          "p95": 0.215849,
+          "p99": 0.24992999999999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 5598.294763788618,
+        "process_after": {
+          "high_water_rss_kib": 77044,
+          "rss_kib": 77044,
+          "system_ticks": 183,
+          "user_ticks": 154
+        },
+        "process_before": {
+          "high_water_rss_kib": 77044,
+          "rss_kib": 77044,
+          "system_ticks": 170,
+          "user_ticks": 146
+        },
+        "seconds": 0.182912841
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 35.919621,
+          "mean": 11.14002824218749,
+          "p50": 10.745462000000002,
+          "p95": 13.010135,
+          "p99": 16.105632
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 89.75006201843226,
+        "process_after": {
+          "high_water_rss_kib": 82908,
+          "rss_kib": 82908,
+          "system_ticks": 285,
+          "user_ticks": 267
+        },
+        "process_before": {
+          "high_water_rss_kib": 77044,
+          "rss_kib": 77044,
+          "system_ticks": 183,
+          "user_ticks": 154
+        },
+        "seconds": 2.852365717
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.299112,
+          "mean": 0.7844455624999999,
+          "p50": 0.765173,
+          "p95": 0.868487,
+          "p99": 1.299112
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1273.9143328838074,
+        "process_after": {
+          "high_water_rss_kib": 83204,
+          "rss_kib": 83204,
+          "system_ticks": 286,
+          "user_ticks": 272
+        },
+        "process_before": {
+          "high_water_rss_kib": 82908,
+          "rss_kib": 82908,
+          "system_ticks": 285,
+          "user_ticks": 267
+        },
+        "seconds": 0.050238857
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 8.928644,
+          "mean": 5.428384535156249,
+          "p50": 5.383202,
+          "p95": 5.91193,
+          "p99": 6.563471000000001
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 184.17824657894735,
+        "process_after": {
+          "high_water_rss_kib": 84780,
+          "rss_kib": 84780,
+          "system_ticks": 339,
+          "user_ticks": 324
+        },
+        "process_before": {
+          "high_water_rss_kib": 83204,
+          "rss_kib": 83204,
+          "system_ticks": 287,
+          "user_ticks": 272
+        },
+        "seconds": 1.389957852
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 39.275232,
+          "mean": 5.73766132421875,
+          "p50": 5.390025,
+          "p95": 7.194926,
+          "p99": 11.151311
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 174.2486878825362,
+        "process_after": {
+          "high_water_rss_kib": 85620,
+          "rss_kib": 85620,
+          "system_ticks": 394,
+          "user_ticks": 375
+        },
+        "process_before": {
+          "high_water_rss_kib": 84780,
+          "rss_kib": 84780,
+          "system_ticks": 339,
+          "user_ticks": 324
+        },
+        "seconds": 1.469164578
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 197.196021,
+          "mean": 162.92992167187498,
+          "p50": 162.02962200000002,
+          "p95": 193.203444,
+          "p99": 195.81953
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 96.89718942680805,
+        "process_after": {
+          "high_water_rss_kib": 89024,
+          "rss_kib": 89024,
+          "system_ticks": 501,
+          "user_ticks": 464
+        },
+        "process_before": {
+          "high_water_rss_kib": 85624,
+          "rss_kib": 85624,
+          "system_ticks": 394,
+          "user_ticks": 376
+        },
+        "seconds": 2.641975495
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.429842,
+          "mean": 1.1635046171874983,
+          "p50": 1.16459,
+          "p95": 1.284437,
+          "p99": 1.383955
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 13644.282807661355,
+        "process_after": {
+          "high_water_rss_kib": 89028,
+          "rss_kib": 89028,
+          "system_ticks": 512,
+          "user_ticks": 471
+        },
+        "process_before": {
+          "high_water_rss_kib": 89024,
+          "rss_kib": 89024,
+          "system_ticks": 501,
+          "user_ticks": 464
+        },
+        "seconds": 0.075049749
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 184.56886599999999,
+          "mean": 167.49971867968736,
+          "p50": 168.297336,
+          "p95": 182.872467,
+          "p99": 183.89852100000002
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 93.96135136696896,
+        "process_after": {
+          "high_water_rss_kib": 94724,
+          "rss_kib": 94724,
+          "system_ticks": 620,
+          "user_ticks": 578
+        },
+        "process_before": {
+          "high_water_rss_kib": 89028,
+          "rss_kib": 89028,
+          "system_ticks": 512,
+          "user_ticks": 471
+        },
+        "seconds": 2.724524459
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 11.925086,
+          "mean": 8.842536890625,
+          "p50": 9.271461,
+          "p95": 10.690959,
+          "p99": 11.925086
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1614.7938124027921,
+        "process_after": {
+          "high_water_rss_kib": 94752,
+          "rss_kib": 94752,
+          "system_ticks": 621,
+          "user_ticks": 583
+        },
+        "process_before": {
+          "high_water_rss_kib": 94724,
+          "rss_kib": 94724,
+          "system_ticks": 620,
+          "user_ticks": 578
+        },
+        "seconds": 0.039633543
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 109.492742,
+          "mean": 85.96720261718748,
+          "p50": 86.628762,
+          "p95": 101.25177500000001,
+          "p99": 108.72164099999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 180.91722930682354,
+        "process_after": {
+          "high_water_rss_kib": 96488,
+          "rss_kib": 96488,
+          "system_ticks": 673,
+          "user_ticks": 635
+        },
+        "process_before": {
+          "high_water_rss_kib": 94752,
+          "rss_kib": 94752,
+          "system_ticks": 621,
+          "user_ticks": 583
+        },
+        "seconds": 1.415011721
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 89.660007,
+          "mean": 79.88832991406244,
+          "p50": 81.090981,
+          "p95": 88.08487099999999,
+          "p99": 89.615662
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 194.27226828572853,
+        "process_after": {
+          "high_water_rss_kib": 97504,
+          "rss_kib": 97504,
+          "system_ticks": 725,
+          "user_ticks": 684
+        },
+        "process_before": {
+          "high_water_rss_kib": 96488,
+          "rss_kib": 96488,
+          "system_ticks": 674,
+          "user_ticks": 635
+        },
+        "seconds": 1.317738256
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 27.015969000000002,
+          "mean": 17.32742552343751,
+          "p50": 16.925042,
+          "p95": 20.460124,
+          "p99": 21.328246
+        },
+        "mib_per_sec": 0.22541253715444418,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 57.70560951153771,
+        "process_after": {
+          "high_water_rss_kib": 99548,
+          "rss_kib": 99548,
+          "system_ticks": 812,
+          "user_ticks": 764
+        },
+        "process_before": {
+          "high_water_rss_kib": 97508,
+          "rss_kib": 97508,
+          "system_ticks": 725,
+          "user_ticks": 685
+        },
+        "seconds": 2.218155238
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 35.859006,
+          "mean": 13.278953648437513,
+          "p50": 12.983626,
+          "p95": 15.376299,
+          "p99": 17.356757
+        },
+        "mib_per_sec": 0.29411366631685393,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 75.2930985771146,
+        "process_after": {
+          "high_water_rss_kib": 109976,
+          "rss_kib": 109976,
+          "system_ticks": 993,
+          "user_ticks": 983
+        },
+        "process_before": {
+          "high_water_rss_kib": 99548,
+          "rss_kib": 99548,
+          "system_ticks": 812,
+          "user_ticks": 764
+        },
+        "seconds": 5.100069027
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 266.740418,
+          "mean": 240.98732797656245,
+          "p50": 238.29535499999997,
+          "p95": 260.826591,
+          "p99": 261.144839
+        },
+        "mib_per_sec": 0.2545416178350209,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 65.16265416576535,
+        "process_after": {
+          "high_water_rss_kib": 112400,
+          "rss_kib": 112400,
+          "system_ticks": 1076,
+          "user_ticks": 1052
+        },
+        "process_before": {
+          "high_water_rss_kib": 110520,
+          "rss_kib": 110520,
+          "system_ticks": 993,
+          "user_ticks": 984
+        },
+        "seconds": 1.964315322
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 208.557635,
+          "mean": 169.4204425937499,
+          "p50": 169.589616,
+          "p95": 175.805578,
+          "p99": 208.346045
+        },
+        "mib_per_sec": 0.36545313696227477,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 93.55600306234234,
+        "process_after": {
+          "high_water_rss_kib": 121388,
+          "rss_kib": 121388,
+          "system_ticks": 1248,
+          "user_ticks": 1242
+        },
+        "process_before": {
+          "high_water_rss_kib": 112400,
+          "rss_kib": 112400,
+          "system_ticks": 1076,
+          "user_ticks": 1052
+        },
+        "seconds": 4.104493431
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 258.838028,
+          "mean": 165.45918812499997,
+          "p50": 124.372825,
+          "p95": 258.838028,
+          "p99": 258.838028
+        },
+        "mib_per_sec": 386.7921144797384,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 6.043626788745913,
+        "process_after": {
+          "high_water_rss_kib": 122928,
+          "rss_kib": 122928,
+          "system_ticks": 1374,
+          "user_ticks": 1278
+        },
+        "process_before": {
+          "high_water_rss_kib": 121712,
+          "rss_kib": 121712,
+          "system_ticks": 1248,
+          "user_ticks": 1243
+        },
+        "seconds": 1.323708475
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 118.142851,
+          "mean": 99.87789316666668,
+          "p50": 97.201513,
+          "p95": 112.062467,
+          "p99": 118.142851
+        },
+        "mib_per_sec": 640.7581322068646,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 10.01184581573226,
+        "process_after": {
+          "high_water_rss_kib": 124216,
+          "rss_kib": 124216,
+          "system_ticks": 1590,
+          "user_ticks": 1372
+        },
+        "process_before": {
+          "high_water_rss_kib": 122928,
+          "rss_kib": 122928,
+          "system_ticks": 1374,
+          "user_ticks": 1278
+        },
+        "seconds": 2.3971603679999998
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 341.748673,
+          "mean": 270.2841175,
+          "p50": 229.375583,
+          "p95": 341.748673,
+          "p99": 341.748673
+        },
+        "mib_per_sec": 896.4128288098062,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 14.006450450153222,
+        "process_after": {
+          "high_water_rss_kib": 127540,
+          "rss_kib": 124140,
+          "system_ticks": 1763,
+          "user_ticks": 1413
+        },
+        "process_before": {
+          "high_water_rss_kib": 124236,
+          "rss_kib": 124236,
+          "system_ticks": 1590,
+          "user_ticks": 1373
+        },
+        "seconds": 0.571165409
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 146.052109,
+          "mean": 117.73934912500003,
+          "p50": 114.152098,
+          "p95": 140.051218,
+          "p99": 146.052109
+        },
+        "mib_per_sec": 2086.519395925684,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 32.60186556133881,
+        "process_after": {
+          "high_water_rss_kib": 130436,
+          "rss_kib": 129276,
+          "system_ticks": 1958,
+          "user_ticks": 1513
+        },
+        "process_before": {
+          "high_water_rss_kib": 127540,
+          "rss_kib": 124140,
+          "system_ticks": 1764,
+          "user_ticks": 1413
+        },
+        "seconds": 0.736154192
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 1,
+    "sampled_peak_rss_kib": 170120,
+    "driver_elapsed_seconds": 99.13382039917633
+  },
+  {
+    "elapsed_seconds": 19.875687437,
+    "mode": "off",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 84848,
+      "rss_kib": 84708,
+      "system_ticks": 741,
+      "user_ticks": 356
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.6355860000000001,
+          "mean": 0.38544118749999995,
+          "p50": 0.380642,
+          "p95": 0.462067,
+          "p99": 0.531386
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 2589.0346776113793,
+        "process_after": {
+          "high_water_rss_kib": 73684,
+          "rss_kib": 73684,
+          "system_ticks": 35,
+          "user_ticks": 27
+        },
+        "process_before": {
+          "high_water_rss_kib": 73160,
+          "rss_kib": 73160,
+          "system_ticks": 29,
+          "user_ticks": 21
+        },
+        "seconds": 0.098878552
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.71638,
+          "mean": 0.16165826269531236,
+          "p50": 0.158797,
+          "p95": 0.201945,
+          "p99": 0.265503
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 6165.269316002505,
+        "process_after": {
+          "high_water_rss_kib": 73684,
+          "rss_kib": 73684,
+          "system_ticks": 47,
+          "user_ticks": 35
+        },
+        "process_before": {
+          "high_water_rss_kib": 73684,
+          "rss_kib": 73684,
+          "system_ticks": 35,
+          "user_ticks": 27
+        },
+        "seconds": 0.16609169
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 3.111954,
+          "mean": 0.39518548046875,
+          "p50": 0.306499,
+          "p95": 0.802963,
+          "p99": 0.911755
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 2525.630512805203,
+        "process_after": {
+          "high_water_rss_kib": 73724,
+          "rss_kib": 73724,
+          "system_ticks": 55,
+          "user_ticks": 39
+        },
+        "process_before": {
+          "high_water_rss_kib": 73684,
+          "rss_kib": 73684,
+          "system_ticks": 47,
+          "user_ticks": 35
+        },
+        "seconds": 0.101360828
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.159686,
+          "mean": 0.791368515625,
+          "p50": 0.773325,
+          "p95": 0.876807,
+          "p99": 1.159686
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1262.7507739182458,
+        "process_after": {
+          "high_water_rss_kib": 74044,
+          "rss_kib": 74044,
+          "system_ticks": 55,
+          "user_ticks": 44
+        },
+        "process_before": {
+          "high_water_rss_kib": 73724,
+          "rss_kib": 73724,
+          "system_ticks": 55,
+          "user_ticks": 39
+        },
+        "seconds": 0.050683002
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.318429,
+          "mean": 0.17842579296875002,
+          "p50": 0.172546,
+          "p95": 0.236817,
+          "p99": 0.283142
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 5588.5210380747685,
+        "process_after": {
+          "high_water_rss_kib": 74200,
+          "rss_kib": 74200,
+          "system_ticks": 59,
+          "user_ticks": 46
+        },
+        "process_before": {
+          "high_water_rss_kib": 74044,
+          "rss_kib": 74044,
+          "system_ticks": 55,
+          "user_ticks": 44
+        },
+        "seconds": 0.045808184
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.337846,
+          "mean": 0.18415604296874993,
+          "p50": 0.177765,
+          "p95": 0.23577499999999998,
+          "p99": 0.297117
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 5412.439862983239,
+        "process_after": {
+          "high_water_rss_kib": 74332,
+          "rss_kib": 74332,
+          "system_ticks": 62,
+          "user_ticks": 49
+        },
+        "process_before": {
+          "high_water_rss_kib": 74200,
+          "rss_kib": 74200,
+          "system_ticks": 59,
+          "user_ticks": 46
+        },
+        "seconds": 0.047298447
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 3.158666,
+          "mean": 2.73638933984375,
+          "p50": 2.745702,
+          "p95": 3.006099,
+          "p99": 3.110337
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 5753.05100475238,
+        "process_after": {
+          "high_water_rss_kib": 75412,
+          "rss_kib": 75412,
+          "system_ticks": 70,
+          "user_ticks": 53
+        },
+        "process_before": {
+          "high_water_rss_kib": 74332,
+          "rss_kib": 74332,
+          "system_ticks": 62,
+          "user_ticks": 49
+        },
+        "seconds": 0.044498128
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.608852,
+          "mean": 1.2278248505859395,
+          "p50": 1.2320810000000002,
+          "p95": 1.487786,
+          "p99": 1.561452
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 12916.28955263649,
+        "process_after": {
+          "high_water_rss_kib": 75412,
+          "rss_kib": 75412,
+          "system_ticks": 83,
+          "user_ticks": 59
+        },
+        "process_before": {
+          "high_water_rss_kib": 75412,
+          "rss_kib": 75412,
+          "system_ticks": 70,
+          "user_ticks": 53
+        },
+        "seconds": 0.079279734
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 2.375273,
+          "mean": 1.9090251875000008,
+          "p50": 1.9451589999999999,
+          "p95": 2.209253,
+          "p99": 2.347632
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 8229.488546287852,
+        "process_after": {
+          "high_water_rss_kib": 75416,
+          "rss_kib": 75416,
+          "system_ticks": 88,
+          "user_ticks": 62
+        },
+        "process_before": {
+          "high_water_rss_kib": 75412,
+          "rss_kib": 75412,
+          "system_ticks": 83,
+          "user_ticks": 59
+        },
+        "seconds": 0.031107644
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 9.789406,
+          "mean": 8.3324794375,
+          "p50": 9.190370999999999,
+          "p95": 9.453823,
+          "p99": 9.789406
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1701.2661221215076,
+        "process_after": {
+          "high_water_rss_kib": 75680,
+          "rss_kib": 75680,
+          "system_ticks": 89,
+          "user_ticks": 67
+        },
+        "process_before": {
+          "high_water_rss_kib": 75416,
+          "rss_kib": 75416,
+          "system_ticks": 88,
+          "user_ticks": 62
+        },
+        "seconds": 0.037619041
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.9604679999999999,
+          "mean": 1.5264851093750007,
+          "p50": 1.56479,
+          "p95": 1.7710320000000002,
+          "p99": 1.95193
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 10163.301627934628,
+        "process_after": {
+          "high_water_rss_kib": 75832,
+          "rss_kib": 75832,
+          "system_ticks": 92,
+          "user_ticks": 70
+        },
+        "process_before": {
+          "high_water_rss_kib": 75680,
+          "rss_kib": 75680,
+          "system_ticks": 89,
+          "user_ticks": 67
+        },
+        "seconds": 0.025188665
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.600894,
+          "mean": 1.4069378828125,
+          "p50": 1.436812,
+          "p95": 1.537114,
+          "p99": 1.56344
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 11054.762529882404,
+        "process_after": {
+          "high_water_rss_kib": 75956,
+          "rss_kib": 75956,
+          "system_ticks": 95,
+          "user_ticks": 72
+        },
+        "process_before": {
+          "high_water_rss_kib": 75836,
+          "rss_kib": 75836,
+          "system_ticks": 92,
+          "user_ticks": 70
+        },
+        "seconds": 0.02315744
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.650029,
+          "mean": 1.0875512656249997,
+          "p50": 1.054424,
+          "p95": 1.308875,
+          "p99": 1.563863
+        },
+        "mib_per_sec": 3.589132067900119,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 918.8178093824305,
+        "process_after": {
+          "high_water_rss_kib": 76428,
+          "rss_kib": 76428,
+          "system_ticks": 106,
+          "user_ticks": 78
+        },
+        "process_before": {
+          "high_water_rss_kib": 75956,
+          "rss_kib": 75956,
+          "system_ticks": 95,
+          "user_ticks": 72
+        },
+        "seconds": 0.139309446
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.333287,
+          "mean": 0.8377601276041666,
+          "p50": 0.8296100000000001,
+          "p95": 0.970741,
+          "p99": 1.0344799999999998
+        },
+        "mib_per_sec": 4.656737446902715,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 1192.1247864070951,
+        "process_after": {
+          "high_water_rss_kib": 77212,
+          "rss_kib": 77212,
+          "system_ticks": 127,
+          "user_ticks": 96
+        },
+        "process_before": {
+          "high_water_rss_kib": 76428,
+          "rss_kib": 76428,
+          "system_ticks": 106,
+          "user_ticks": 78
+        },
+        "seconds": 0.32211393
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 8.855369999999999,
+          "mean": 4.6395445234374995,
+          "p50": 4.551018,
+          "p95": 6.644393,
+          "p99": 7.959376000000001
+        },
+        "mib_per_sec": 13.076298291390716,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 3347.532362596023,
+        "process_after": {
+          "high_water_rss_kib": 78608,
+          "rss_kib": 78608,
+          "system_ticks": 137,
+          "user_ticks": 104
+        },
+        "process_before": {
+          "high_water_rss_kib": 77248,
+          "rss_kib": 77248,
+          "system_ticks": 127,
+          "user_ticks": 96
+        },
+        "seconds": 0.038237121
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 7.3930430000000005,
+          "mean": 3.2720464296875034,
+          "p50": 3.195,
+          "p95": 4.908558,
+          "p99": 5.772993
+        },
+        "mib_per_sec": 17.466710923430654,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 4471.477996398247,
+        "process_after": {
+          "high_water_rss_kib": 83344,
+          "rss_kib": 77880,
+          "system_ticks": 157,
+          "user_ticks": 121
+        },
+        "process_before": {
+          "high_water_rss_kib": 78608,
+          "rss_kib": 78608,
+          "system_ticks": 137,
+          "user_ticks": 104
+        },
+        "seconds": 0.085877645
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 122.590571,
+          "mean": 111.67444774999998,
+          "p50": 108.666377,
+          "p95": 122.590571,
+          "p99": 122.590571
+        },
+        "mib_per_sec": 573.0778652200331,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 8.954341644063017,
+        "process_after": {
+          "high_water_rss_kib": 83344,
+          "rss_kib": 79184,
+          "system_ticks": 244,
+          "user_ticks": 152
+        },
+        "process_before": {
+          "high_water_rss_kib": 83344,
+          "rss_kib": 77916,
+          "system_ticks": 157,
+          "user_ticks": 121
+        },
+        "seconds": 0.89342135
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 87.14570400000001,
+          "mean": 80.01284370833335,
+          "p50": 79.465952,
+          "p95": 85.80067299999999,
+          "p99": 87.14570400000001
+        },
+        "mib_per_sec": 799.8320340231176,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 12.497375531611212,
+        "process_after": {
+          "high_water_rss_kib": 83344,
+          "rss_kib": 79936,
+          "system_ticks": 424,
+          "user_ticks": 234
+        },
+        "process_before": {
+          "high_water_rss_kib": 83344,
+          "rss_kib": 79184,
+          "system_ticks": 244,
+          "user_ticks": 152
+        },
+        "seconds": 1.920403203
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 222.362041,
+          "mean": 187.04653775,
+          "p50": 155.469,
+          "p95": 222.362041,
+          "p99": 222.362041
+        },
+        "mib_per_sec": 1355.0007085833295,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 21.171886071614523,
+        "process_after": {
+          "high_water_rss_kib": 83648,
+          "rss_kib": 79464,
+          "system_ticks": 550,
+          "user_ticks": 273
+        },
+        "process_before": {
+          "high_water_rss_kib": 83344,
+          "rss_kib": 79936,
+          "system_ticks": 424,
+          "user_ticks": 234
+        },
+        "seconds": 0.377859581
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 121.895192,
+          "mean": 97.40248316666667,
+          "p50": 92.01500899999999,
+          "p95": 119.668169,
+          "p99": 121.895192
+        },
+        "mib_per_sec": 2607.6854884928925,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 40.745085757701446,
+        "process_after": {
+          "high_water_rss_kib": 84848,
+          "rss_kib": 84704,
+          "system_ticks": 741,
+          "user_ticks": 356
+        },
+        "process_before": {
+          "high_water_rss_kib": 83648,
+          "rss_kib": 79464,
+          "system_ticks": 550,
+          "user_ticks": 274
+        },
+        "seconds": 0.589028089
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 2,
+    "sampled_peak_rss_kib": 88672,
+    "driver_elapsed_seconds": 19.985482543939725
+  },
+  {
+    "elapsed_seconds": 97.53491897,
+    "mode": "on",
+    "policy_interference": {
+      "active": [
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 173.86219,
+            "mean": 158.32416064062505,
+            "p50": 158.474609,
+            "p95": 172.178974,
+            "p99": 173.646095
+          },
+          "mib_per_sec": 0.0,
+          "name": "create_close_empty",
+          "operations": 256,
+          "ops_per_sec": 99.61538922364402,
+          "process_after": {
+            "high_water_rss_kib": 162244,
+            "rss_kib": 162244,
+            "system_ticks": 3068,
+            "user_ticks": 2649
+          },
+          "process_before": {
+            "high_water_rss_kib": 159260,
+            "rss_kib": 159260,
+            "system_ticks": 2966,
+            "user_ticks": 2558
+          },
+          "seconds": 2.569884051
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 1.495298,
+            "mean": 1.207317766601563,
+            "p50": 1.2261410000000001,
+            "p95": 1.36711,
+            "p99": 1.422034
+          },
+          "mib_per_sec": 0.0,
+          "name": "get_status",
+          "operations": 1024,
+          "ops_per_sec": 13149.993487285941,
+          "process_after": {
+            "high_water_rss_kib": 162244,
+            "rss_kib": 162244,
+            "system_ticks": 3078,
+            "user_ticks": 2657
+          },
+          "process_before": {
+            "high_water_rss_kib": 162244,
+            "rss_kib": 162244,
+            "system_ticks": 3068,
+            "user_ticks": 2649
+          },
+          "seconds": 0.077870761
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 212.89828599999998,
+            "mean": 168.1986222890625,
+            "p50": 165.139678,
+            "p95": 207.08285800000002,
+            "p99": 211.83775
+          },
+          "mib_per_sec": 0.0,
+          "name": "open_close_empty",
+          "operations": 256,
+          "ops_per_sec": 93.78590400771593,
+          "process_after": {
+            "high_water_rss_kib": 167564,
+            "rss_kib": 167564,
+            "system_ticks": 3177,
+            "user_ticks": 2771
+          },
+          "process_before": {
+            "high_water_rss_kib": 162244,
+            "rss_kib": 162244,
+            "system_ticks": 3078,
+            "user_ticks": 2657
+          },
+          "seconds": 2.729621287
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 9.774801,
+            "mean": 8.338242625,
+            "p50": 9.289062000000001,
+            "p95": 9.388649000000001,
+            "p99": 9.774801
+          },
+          "mib_per_sec": 0.0,
+          "name": "list_children",
+          "operations": 64,
+          "ops_per_sec": 1695.008488681965,
+          "process_after": {
+            "high_water_rss_kib": 167564,
+            "rss_kib": 167564,
+            "system_ticks": 3179,
+            "user_ticks": 2775
+          },
+          "process_before": {
+            "high_water_rss_kib": 167564,
+            "rss_kib": 167564,
+            "system_ticks": 3178,
+            "user_ticks": 2771
+          },
+          "seconds": 0.037757923
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 91.610525,
+            "mean": 82.25972387890627,
+            "p50": 86.614425,
+            "p95": 90.82118799999999,
+            "p99": 91.53045999999999
+          },
+          "mib_per_sec": 0.0,
+          "name": "rename",
+          "operations": 256,
+          "ops_per_sec": 189.31444981843174,
+          "process_after": {
+            "high_water_rss_kib": 169224,
+            "rss_kib": 169224,
+            "system_ticks": 3228,
+            "user_ticks": 2829
+          },
+          "process_before": {
+            "high_water_rss_kib": 167564,
+            "rss_kib": 167564,
+            "system_ticks": 3179,
+            "user_ticks": 2775
+          },
+          "seconds": 1.352247545
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 86.963474,
+            "mean": 77.45500740624993,
+            "p50": 79.32521200000001,
+            "p95": 86.354693,
+            "p99": 86.73246499999999
+          },
+          "mib_per_sec": 0.0,
+          "name": "delete",
+          "operations": 256,
+          "ops_per_sec": 200.75201988958167,
+          "process_after": {
+            "high_water_rss_kib": 170072,
+            "rss_kib": 170072,
+            "system_ticks": 3278,
+            "user_ticks": 2875
+          },
+          "process_before": {
+            "high_water_rss_kib": 169224,
+            "rss_kib": 169224,
+            "system_ticks": 3228,
+            "user_ticks": 2829
+          },
+          "seconds": 1.275205102
+        }
+      ],
+      "idle": [
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 203.507031,
+            "mean": 166.46176060156253,
+            "p50": 168.418283,
+            "p95": 197.946598,
+            "p99": 203.338718
+          },
+          "mib_per_sec": 0.0,
+          "name": "create_close_empty",
+          "operations": 256,
+          "ops_per_sec": 94.8370461990613,
+          "process_after": {
+            "high_water_rss_kib": 151484,
+            "rss_kib": 151484,
+            "system_ticks": 2750,
+            "user_ticks": 2350
+          },
+          "process_before": {
+            "high_water_rss_kib": 149208,
+            "rss_kib": 149208,
+            "system_ticks": 2659,
+            "user_ticks": 2251
+          },
+          "seconds": 2.699367075
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 1.621478,
+            "mean": 1.2406456982421867,
+            "p50": 1.2391130000000001,
+            "p95": 1.358352,
+            "p99": 1.495993
+          },
+          "mib_per_sec": 0.0,
+          "name": "get_status",
+          "operations": 1024,
+          "ops_per_sec": 12792.88923243127,
+          "process_after": {
+            "high_water_rss_kib": 151484,
+            "rss_kib": 151484,
+            "system_ticks": 2762,
+            "user_ticks": 2357
+          },
+          "process_before": {
+            "high_water_rss_kib": 151484,
+            "rss_kib": 151484,
+            "system_ticks": 2750,
+            "user_ticks": 2350
+          },
+          "seconds": 0.080044467
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 181.927705,
+            "mean": 165.0888919570312,
+            "p50": 166.679407,
+            "p95": 175.95504400000002,
+            "p99": 181.647598
+          },
+          "mib_per_sec": 0.0,
+          "name": "open_close_empty",
+          "operations": 256,
+          "ops_per_sec": 95.55194584192151,
+          "process_after": {
+            "high_water_rss_kib": 156880,
+            "rss_kib": 156880,
+            "system_ticks": 2865,
+            "user_ticks": 2464
+          },
+          "process_before": {
+            "high_water_rss_kib": 151484,
+            "rss_kib": 151484,
+            "system_ticks": 2762,
+            "user_ticks": 2357
+          },
+          "seconds": 2.679170976
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 10.075863,
+            "mean": 8.00816634375,
+            "p50": 8.618034,
+            "p95": 9.344246,
+            "p99": 10.075863
+          },
+          "mib_per_sec": 0.0,
+          "name": "list_children",
+          "operations": 64,
+          "ops_per_sec": 1740.3477323540976,
+          "process_after": {
+            "high_water_rss_kib": 156880,
+            "rss_kib": 156880,
+            "system_ticks": 2866,
+            "user_ticks": 2469
+          },
+          "process_before": {
+            "high_water_rss_kib": 156880,
+            "rss_kib": 156880,
+            "system_ticks": 2865,
+            "user_ticks": 2464
+          },
+          "seconds": 0.03677426
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 99.121201,
+            "mean": 74.37578854296876,
+            "p50": 76.136481,
+            "p95": 81.40158100000001,
+            "p99": 81.86466200000001
+          },
+          "mib_per_sec": 0.0,
+          "name": "rename",
+          "operations": 256,
+          "ops_per_sec": 205.40477508685024,
+          "process_after": {
+            "high_water_rss_kib": 158416,
+            "rss_kib": 158416,
+            "system_ticks": 2913,
+            "user_ticks": 2515
+          },
+          "process_before": {
+            "high_water_rss_kib": 156880,
+            "rss_kib": 156880,
+            "system_ticks": 2866,
+            "user_ticks": 2469
+          },
+          "seconds": 1.246319614
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 84.067698,
+            "mean": 74.2856987773438,
+            "p50": 75.63177,
+            "p95": 81.491317,
+            "p99": 83.74703099999999
+          },
+          "mib_per_sec": 0.0,
+          "name": "delete",
+          "operations": 256,
+          "ops_per_sec": 209.21025288650532,
+          "process_after": {
+            "high_water_rss_kib": 159184,
+            "rss_kib": 159184,
+            "system_ticks": 2965,
+            "user_ticks": 2557
+          },
+          "process_before": {
+            "high_water_rss_kib": 158416,
+            "rss_kib": 158416,
+            "system_ticks": 2913,
+            "user_ticks": 2515
+          },
+          "seconds": 1.223649398
+        }
+      ],
+      "scan": {
+        "complete_cycles": 5,
+        "examined": 11059,
+        "max_page_ms": 117.012141,
+        "pages": 49,
+        "scan_interval_ms": 1000,
+        "seconds": 8.072326591,
+        "seed_files": 2048
+      }
+    },
+    "process_final": {
+      "high_water_rss_kib": 170096,
+      "rss_kib": 170096,
+      "system_ticks": 3279,
+      "user_ticks": 2876
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 20.695414,
+          "mean": 11.815961089843745,
+          "p50": 10.868943000000002,
+          "p95": 16.641512000000002,
+          "p99": 19.954748000000002
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 84.62199072466292,
+        "process_after": {
+          "high_water_rss_kib": 76676,
+          "rss_kib": 76676,
+          "system_ticks": 175,
+          "user_ticks": 156
+        },
+        "process_before": {
+          "high_water_rss_kib": 74072,
+          "rss_kib": 74072,
+          "system_ticks": 70,
+          "user_ticks": 64
+        },
+        "seconds": 3.02521836
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.643337,
+          "mean": 0.18506253222656263,
+          "p50": 0.16922199999999998,
+          "p95": 0.284852,
+          "p99": 0.345839
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 5384.591248605784,
+        "process_after": {
+          "high_water_rss_kib": 76676,
+          "rss_kib": 76676,
+          "system_ticks": 186,
+          "user_ticks": 168
+        },
+        "process_before": {
+          "high_water_rss_kib": 76676,
+          "rss_kib": 76676,
+          "system_ticks": 175,
+          "user_ticks": 156
+        },
+        "seconds": 0.190172281
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 17.378438,
+          "mean": 10.863244339843758,
+          "p50": 10.535286,
+          "p95": 12.826276,
+          "p99": 15.559485
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 92.03924557745763,
+        "process_after": {
+          "high_water_rss_kib": 82576,
+          "rss_kib": 82576,
+          "system_ticks": 289,
+          "user_ticks": 269
+        },
+        "process_before": {
+          "high_water_rss_kib": 76676,
+          "rss_kib": 76676,
+          "system_ticks": 186,
+          "user_ticks": 168
+        },
+        "seconds": 2.78142219
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.2034909999999999,
+          "mean": 0.8137203593750002,
+          "p50": 0.778795,
+          "p95": 0.987207,
+          "p99": 1.2034909999999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1228.1484328682072,
+        "process_after": {
+          "high_water_rss_kib": 82920,
+          "rss_kib": 82920,
+          "system_ticks": 290,
+          "user_ticks": 274
+        },
+        "process_before": {
+          "high_water_rss_kib": 82576,
+          "rss_kib": 82576,
+          "system_ticks": 289,
+          "user_ticks": 269
+        },
+        "seconds": 0.052110965
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 14.218472,
+          "mean": 6.70090521875,
+          "p50": 5.837574,
+          "p95": 11.895596,
+          "p99": 13.328051
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 149.20807586425866,
+        "process_after": {
+          "high_water_rss_kib": 84684,
+          "rss_kib": 84684,
+          "system_ticks": 345,
+          "user_ticks": 325
+        },
+        "process_before": {
+          "high_water_rss_kib": 82920,
+          "rss_kib": 82920,
+          "system_ticks": 290,
+          "user_ticks": 274
+        },
+        "seconds": 1.715724826
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 40.02266,
+          "mean": 7.603642863281253,
+          "p50": 5.631115,
+          "p95": 17.143153,
+          "p99": 27.825259000000003
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 131.49227040229303,
+        "process_after": {
+          "high_water_rss_kib": 85704,
+          "rss_kib": 85704,
+          "system_ticks": 402,
+          "user_ticks": 380
+        },
+        "process_before": {
+          "high_water_rss_kib": 84684,
+          "rss_kib": 84684,
+          "system_ticks": 345,
+          "user_ticks": 325
+        },
+        "seconds": 1.946882499
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 264.631372,
+          "mean": 206.04495527734366,
+          "p50": 203.804063,
+          "p95": 253.350431,
+          "p99": 260.170782
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 76.72330111224217,
+        "process_after": {
+          "high_water_rss_kib": 89124,
+          "rss_kib": 89124,
+          "system_ticks": 519,
+          "user_ticks": 479
+        },
+        "process_before": {
+          "high_water_rss_kib": 85708,
+          "rss_kib": 85708,
+          "system_ticks": 403,
+          "user_ticks": 380
+        },
+        "seconds": 3.336665606
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.722998,
+          "mean": 1.2070533603515627,
+          "p50": 1.1982970000000002,
+          "p95": 1.381116,
+          "p99": 1.570616
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 13148.946917662772,
+        "process_after": {
+          "high_water_rss_kib": 89124,
+          "rss_kib": 89124,
+          "system_ticks": 531,
+          "user_ticks": 487
+        },
+        "process_before": {
+          "high_water_rss_kib": 89124,
+          "rss_kib": 89124,
+          "system_ticks": 519,
+          "user_ticks": 479
+        },
+        "seconds": 0.077876959
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 220.159191,
+          "mean": 170.8279425195311,
+          "p50": 168.934412,
+          "p95": 215.200407,
+          "p99": 219.914024
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 92.3783863001176,
+        "process_after": {
+          "high_water_rss_kib": 94348,
+          "rss_kib": 94348,
+          "system_ticks": 634,
+          "user_ticks": 598
+        },
+        "process_before": {
+          "high_water_rss_kib": 89124,
+          "rss_kib": 89124,
+          "system_ticks": 531,
+          "user_ticks": 487
+        },
+        "seconds": 2.771210997
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 10.017313999999999,
+          "mean": 8.235276515625003,
+          "p50": 9.07027,
+          "p95": 9.484799,
+          "p99": 10.017313999999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1720.1294547926057,
+        "process_after": {
+          "high_water_rss_kib": 94388,
+          "rss_kib": 94388,
+          "system_ticks": 635,
+          "user_ticks": 603
+        },
+        "process_before": {
+          "high_water_rss_kib": 94348,
+          "rss_kib": 94348,
+          "system_ticks": 634,
+          "user_ticks": 598
+        },
+        "seconds": 0.037206502
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 82.488584,
+          "mean": 76.27129596484376,
+          "p50": 78.25395400000001,
+          "p95": 81.40214499999999,
+          "p99": 81.950534
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 203.41416371232756,
+        "process_after": {
+          "high_water_rss_kib": 95916,
+          "rss_kib": 95916,
+          "system_ticks": 684,
+          "user_ticks": 650
+        },
+        "process_before": {
+          "high_water_rss_kib": 94388,
+          "rss_kib": 94388,
+          "system_ticks": 635,
+          "user_ticks": 603
+        },
+        "seconds": 1.2585161
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 103.585415,
+          "mean": 78.50080966015626,
+          "p50": 80.422398,
+          "p95": 85.907237,
+          "p99": 87.603239
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 194.68698991580862,
+        "process_after": {
+          "high_water_rss_kib": 96912,
+          "rss_kib": 96912,
+          "system_ticks": 735,
+          "user_ticks": 697
+        },
+        "process_before": {
+          "high_water_rss_kib": 95920,
+          "rss_kib": 95920,
+          "system_ticks": 685,
+          "user_ticks": 650
+        },
+        "seconds": 1.314931214
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 23.784087,
+          "mean": 16.290802570312504,
+          "p50": 15.912836,
+          "p95": 19.769137,
+          "p99": 22.869828
+        },
+        "mib_per_sec": 0.23975789918662252,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 61.378022191775365,
+        "process_after": {
+          "high_water_rss_kib": 98784,
+          "rss_kib": 98784,
+          "system_ticks": 816,
+          "user_ticks": 771
+        },
+        "process_before": {
+          "high_water_rss_kib": 96928,
+          "rss_kib": 96928,
+          "system_ticks": 736,
+          "user_ticks": 698
+        },
+        "seconds": 2.085437025
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 48.068618,
+          "mean": 12.297265210937503,
+          "p50": 11.827207,
+          "p95": 13.590349,
+          "p99": 20.235401
+        },
+        "mib_per_sec": 0.31760659616914394,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 81.30728861930085,
+        "process_after": {
+          "high_water_rss_kib": 109368,
+          "rss_kib": 109368,
+          "system_ticks": 989,
+          "user_ticks": 967
+        },
+        "process_before": {
+          "high_water_rss_kib": 98784,
+          "rss_kib": 98784,
+          "system_ticks": 816,
+          "user_ticks": 771
+        },
+        "seconds": 4.722823827
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 311.75136100000003,
+          "mean": 248.1759359296875,
+          "p50": 243.359552,
+          "p95": 311.002111,
+          "p99": 311.746543
+        },
+        "mib_per_sec": 0.24737058280071958,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 63.32686919698421,
+        "process_after": {
+          "high_water_rss_kib": 112004,
+          "rss_kib": 112004,
+          "system_ticks": 1071,
+          "user_ticks": 1043
+        },
+        "process_before": {
+          "high_water_rss_kib": 109940,
+          "rss_kib": 109940,
+          "system_ticks": 989,
+          "user_ticks": 969
+        },
+        "seconds": 2.021258932
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 266.58982599999996,
+          "mean": 173.27775908072917,
+          "p50": 169.27822600000002,
+          "p95": 212.483413,
+          "p99": 263.457277
+        },
+        "mib_per_sec": 0.35727315415178607,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 91.46192746285723,
+        "process_after": {
+          "high_water_rss_kib": 120568,
+          "rss_kib": 120568,
+          "system_ticks": 1247,
+          "user_ticks": 1222
+        },
+        "process_before": {
+          "high_water_rss_kib": 112004,
+          "rss_kib": 112004,
+          "system_ticks": 1071,
+          "user_ticks": 1043
+        },
+        "seconds": 4.198468266
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 143.21043799999998,
+          "mean": 133.73071762499998,
+          "p50": 129.86039699999998,
+          "p95": 143.21043799999998,
+          "p99": 143.21043799999998
+        },
+        "mib_per_sec": 478.5632986903075,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 7.477551542036054,
+        "process_after": {
+          "high_water_rss_kib": 121636,
+          "rss_kib": 121636,
+          "system_ticks": 1343,
+          "user_ticks": 1264
+        },
+        "process_before": {
+          "high_water_rss_kib": 121088,
+          "rss_kib": 121088,
+          "system_ticks": 1247,
+          "user_ticks": 1223
+        },
+        "seconds": 1.069868921
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 103.455468,
+          "mean": 95.453729125,
+          "p50": 94.368505,
+          "p95": 103.241691,
+          "p99": 103.455468
+        },
+        "mib_per_sec": 670.4549785311215,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 10.475859039548773,
+        "process_after": {
+          "high_water_rss_kib": 123160,
+          "rss_kib": 123160,
+          "system_ticks": 1542,
+          "user_ticks": 1357
+        },
+        "process_before": {
+          "high_water_rss_kib": 121636,
+          "rss_kib": 121636,
+          "system_ticks": 1343,
+          "user_ticks": 1264
+        },
+        "seconds": 2.290981571
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 202.158027,
+          "mean": 178.05580199999997,
+          "p50": 175.491691,
+          "p95": 202.158027,
+          "p99": 202.158027
+        },
+        "mib_per_sec": 1385.5299896978538,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 21.648906089028966,
+        "process_after": {
+          "high_water_rss_kib": 127208,
+          "rss_kib": 123752,
+          "system_ticks": 1642,
+          "user_ticks": 1395
+        },
+        "process_before": {
+          "high_water_rss_kib": 123172,
+          "rss_kib": 123172,
+          "system_ticks": 1543,
+          "user_ticks": 1358
+        },
+        "seconds": 0.369533683
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 132.17615899999998,
+          "mean": 112.03806141666666,
+          "p50": 108.906545,
+          "p95": 126.34537800000001,
+          "p99": 132.17615899999998
+        },
+        "mib_per_sec": 2190.5763206495108,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 34.227755010148606,
+        "process_after": {
+          "high_water_rss_kib": 128308,
+          "rss_kib": 128308,
+          "system_ticks": 1832,
+          "user_ticks": 1491
+        },
+        "process_before": {
+          "high_water_rss_kib": 127208,
+          "rss_kib": 123752,
+          "system_ticks": 1642,
+          "user_ticks": 1395
+        },
+        "seconds": 0.701185339
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 2,
+    "sampled_peak_rss_kib": 170072,
+    "driver_elapsed_seconds": 97.6299325611908
+  },
+  {
+    "elapsed_seconds": 20.101818561,
+    "mode": "original",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 86776,
+      "rss_kib": 81140,
+      "system_ticks": 668,
+      "user_ticks": 335
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.507486,
+          "mean": 0.3845312421875,
+          "p50": 0.377494,
+          "p95": 0.449242,
+          "p99": 0.49273199999999995
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 2595.115020363543,
+        "process_after": {
+          "high_water_rss_kib": 71880,
+          "rss_kib": 71880,
+          "system_ticks": 37,
+          "user_ticks": 26
+        },
+        "process_before": {
+          "high_water_rss_kib": 71356,
+          "rss_kib": 71356,
+          "system_ticks": 31,
+          "user_ticks": 20
+        },
+        "seconds": 0.09864688
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.296878,
+          "mean": 0.17466291406250004,
+          "p50": 0.170408,
+          "p95": 0.214092,
+          "p99": 0.243471
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 5710.803940376642,
+        "process_after": {
+          "high_water_rss_kib": 71888,
+          "rss_kib": 71888,
+          "system_ticks": 49,
+          "user_ticks": 35
+        },
+        "process_before": {
+          "high_water_rss_kib": 71880,
+          "rss_kib": 71880,
+          "system_ticks": 37,
+          "user_ticks": 26
+        },
+        "seconds": 0.179309255
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.22697799999999999,
+          "mean": 0.17262812500000005,
+          "p50": 0.169255,
+          "p95": 0.20219199999999998,
+          "p99": 0.223334
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 5778.040327516479,
+        "process_after": {
+          "high_water_rss_kib": 71888,
+          "rss_kib": 71888,
+          "system_ticks": 52,
+          "user_ticks": 38
+        },
+        "process_before": {
+          "high_water_rss_kib": 71888,
+          "rss_kib": 71888,
+          "system_ticks": 49,
+          "user_ticks": 35
+        },
+        "seconds": 0.044305679
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.310705,
+          "mean": 0.7948080625000004,
+          "p50": 0.762145,
+          "p95": 0.918083,
+          "p99": 1.310705
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1257.4446865309264,
+        "process_after": {
+          "high_water_rss_kib": 72192,
+          "rss_kib": 72192,
+          "system_ticks": 52,
+          "user_ticks": 43
+        },
+        "process_before": {
+          "high_water_rss_kib": 71888,
+          "rss_kib": 71888,
+          "system_ticks": 52,
+          "user_ticks": 38
+        },
+        "seconds": 0.050896871
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.336269,
+          "mean": 0.19706139062499992,
+          "p50": 0.195122,
+          "p95": 0.23125500000000002,
+          "p99": 0.254274
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 5063.748839639976,
+        "process_after": {
+          "high_water_rss_kib": 72352,
+          "rss_kib": 72352,
+          "system_ticks": 56,
+          "user_ticks": 46
+        },
+        "process_before": {
+          "high_water_rss_kib": 72196,
+          "rss_kib": 72196,
+          "system_ticks": 52,
+          "user_ticks": 43
+        },
+        "seconds": 0.05055543
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.36602,
+          "mean": 0.1963517773437501,
+          "p50": 0.19429700000000003,
+          "p95": 0.251443,
+          "p99": 0.308138
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 5079.920746092722,
+        "process_after": {
+          "high_water_rss_kib": 72492,
+          "rss_kib": 72492,
+          "system_ticks": 59,
+          "user_ticks": 49
+        },
+        "process_before": {
+          "high_water_rss_kib": 72356,
+          "rss_kib": 72356,
+          "system_ticks": 56,
+          "user_ticks": 46
+        },
+        "seconds": 0.050394487
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 3.32643,
+          "mean": 2.583712550781249,
+          "p50": 2.559595,
+          "p95": 3.172524,
+          "p99": 3.2416419999999997
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 6089.722546531665,
+        "process_after": {
+          "high_water_rss_kib": 73444,
+          "rss_kib": 73444,
+          "system_ticks": 66,
+          "user_ticks": 53
+        },
+        "process_before": {
+          "high_water_rss_kib": 72492,
+          "rss_kib": 72492,
+          "system_ticks": 59,
+          "user_ticks": 49
+        },
+        "seconds": 0.04203804
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.403702,
+          "mean": 1.2164575302734386,
+          "p50": 1.2459179999999999,
+          "p95": 1.325394,
+          "p99": 1.3591689999999998
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 13042.220610256965,
+        "process_after": {
+          "high_water_rss_kib": 73500,
+          "rss_kib": 73500,
+          "system_ticks": 78,
+          "user_ticks": 59
+        },
+        "process_before": {
+          "high_water_rss_kib": 73444,
+          "rss_kib": 73444,
+          "system_ticks": 66,
+          "user_ticks": 53
+        },
+        "seconds": 0.078514237
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.497121,
+          "mean": 1.2093958359375008,
+          "p50": 1.2175109999999998,
+          "p95": 1.3350490000000002,
+          "p99": 1.3698029999999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 12864.156765830388,
+        "process_after": {
+          "high_water_rss_kib": 73520,
+          "rss_kib": 73520,
+          "system_ticks": 81,
+          "user_ticks": 61
+        },
+        "process_before": {
+          "high_water_rss_kib": 73500,
+          "rss_kib": 73500,
+          "system_ticks": 78,
+          "user_ticks": 59
+        },
+        "seconds": 0.019900255
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 9.8632,
+          "mean": 8.38117065625,
+          "p50": 9.175068,
+          "p95": 9.768222999999999,
+          "p99": 9.8632
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1687.6226328126052,
+        "process_after": {
+          "high_water_rss_kib": 73812,
+          "rss_kib": 73812,
+          "system_ticks": 82,
+          "user_ticks": 65
+        },
+        "process_before": {
+          "high_water_rss_kib": 73520,
+          "rss_kib": 73520,
+          "system_ticks": 81,
+          "user_ticks": 61
+        },
+        "seconds": 0.03792317
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.8686779999999998,
+          "mean": 1.4279062890624998,
+          "p50": 1.427968,
+          "p95": 1.597415,
+          "p99": 1.689982
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 10886.364849288697,
+        "process_after": {
+          "high_water_rss_kib": 73964,
+          "rss_kib": 73964,
+          "system_ticks": 83,
+          "user_ticks": 68
+        },
+        "process_before": {
+          "high_water_rss_kib": 73812,
+          "rss_kib": 73812,
+          "system_ticks": 82,
+          "user_ticks": 65
+        },
+        "seconds": 0.023515655
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.6539300000000001,
+          "mean": 1.4100704218750002,
+          "p50": 1.431019,
+          "p95": 1.557192,
+          "p99": 1.637705
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 10971.683584702749,
+        "process_after": {
+          "high_water_rss_kib": 74076,
+          "rss_kib": 74076,
+          "system_ticks": 87,
+          "user_ticks": 70
+        },
+        "process_before": {
+          "high_water_rss_kib": 73964,
+          "rss_kib": 73964,
+          "system_ticks": 84,
+          "user_ticks": 68
+        },
+        "seconds": 0.023332791
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.687094,
+          "mean": 1.1287270625,
+          "p50": 1.1091659999999999,
+          "p95": 1.273868,
+          "p99": 1.4347290000000001
+        },
+        "mib_per_sec": 3.4579025674262645,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 885.2230572611237,
+        "process_after": {
+          "high_water_rss_kib": 74528,
+          "rss_kib": 74528,
+          "system_ticks": 97,
+          "user_ticks": 76
+        },
+        "process_before": {
+          "high_water_rss_kib": 74076,
+          "rss_kib": 74076,
+          "system_ticks": 87,
+          "user_ticks": 70
+        },
+        "seconds": 0.144596324
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.380391,
+          "mean": 0.6573045494791669,
+          "p50": 0.635847,
+          "p95": 0.766652,
+          "p99": 1.117113
+        },
+        "mib_per_sec": 5.933183431058403,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 1518.8949583509511,
+        "process_after": {
+          "high_water_rss_kib": 75452,
+          "rss_kib": 75452,
+          "system_ticks": 113,
+          "user_ticks": 90
+        },
+        "process_before": {
+          "high_water_rss_kib": 74528,
+          "rss_kib": 74528,
+          "system_ticks": 97,
+          "user_ticks": 76
+        },
+        "seconds": 0.252815376
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 8.297907,
+          "mean": 4.037824781250001,
+          "p50": 3.860925,
+          "p95": 6.4127350000000005,
+          "p99": 7.532009
+        },
+        "mib_per_sec": 14.945337875082023,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 3826.006496020998,
+        "process_after": {
+          "high_water_rss_kib": 76720,
+          "rss_kib": 76720,
+          "system_ticks": 123,
+          "user_ticks": 98
+        },
+        "process_before": {
+          "high_water_rss_kib": 75496,
+          "rss_kib": 75496,
+          "system_ticks": 113,
+          "user_ticks": 90
+        },
+        "seconds": 0.033455249
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 10.288948,
+          "mean": 2.7919528046874995,
+          "p50": 2.44154,
+          "p95": 5.020261,
+          "p99": 9.814114
+        },
+        "mib_per_sec": 19.866402680141952,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 5085.79908611634,
+        "process_after": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 75916,
+          "system_ticks": 141,
+          "user_ticks": 110
+        },
+        "process_before": {
+          "high_water_rss_kib": 76720,
+          "rss_kib": 76720,
+          "system_ticks": 123,
+          "user_ticks": 98
+        },
+        "seconds": 0.075504359
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 113.030993,
+          "mean": 105.558848875,
+          "p50": 102.933572,
+          "p95": 113.030993,
+          "p99": 113.030993
+        },
+        "mib_per_sec": 606.2778089610217,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 9.473090765015964,
+        "process_after": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 77364,
+          "system_ticks": 223,
+          "user_ticks": 143
+        },
+        "process_before": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 75948,
+          "system_ticks": 141,
+          "user_ticks": 110
+        },
+        "seconds": 0.844497345
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 89.704328,
+          "mean": 82.33672162500001,
+          "p50": 82.508343,
+          "p95": 89.589205,
+          "p99": 89.704328
+        },
+        "mib_per_sec": 777.2620618695773,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 12.144719716712146,
+        "process_after": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 78296,
+          "system_ticks": 410,
+          "user_ticks": 224
+        },
+        "process_before": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 77364,
+          "system_ticks": 223,
+          "user_ticks": 143
+        },
+        "seconds": 1.976167467
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 136.404165,
+          "mean": 134.56664225,
+          "p50": 134.96599600000002,
+          "p95": 136.404165,
+          "p99": 136.404165
+        },
+        "mib_per_sec": 1884.9033054360157,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 29.451614147437745,
+        "process_after": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 77816,
+          "system_ticks": 499,
+          "user_ticks": 257
+        },
+        "process_before": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 78296,
+          "system_ticks": 410,
+          "user_ticks": 224
+        },
+        "seconds": 0.271631971
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 93.990814,
+          "mean": 88.85367624999999,
+          "p50": 88.81648,
+          "p95": 93.03461899999999,
+          "p99": 93.990814
+        },
+        "mib_per_sec": 2838.8002996324144,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 44.356254681756475,
+        "process_after": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 81136,
+          "system_ticks": 668,
+          "user_ticks": 335
+        },
+        "process_before": {
+          "high_water_rss_kib": 86776,
+          "rss_kib": 77816,
+          "system_ticks": 499,
+          "user_ticks": 257
+        },
+        "seconds": 0.541073636
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 2,
+    "sampled_peak_rss_kib": 85496,
+    "driver_elapsed_seconds": 20.18823253712617
+  },
+  {
+    "elapsed_seconds": 90.458129435,
+    "mode": "on",
+    "policy_interference": {
+      "active": [
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 180.014889,
+            "mean": 163.90534673046875,
+            "p50": 167.31463,
+            "p95": 179.457377,
+            "p99": 179.92789000000002
+          },
+          "mib_per_sec": 0.0,
+          "name": "create_close_empty",
+          "operations": 256,
+          "ops_per_sec": 96.26913448090322,
+          "process_after": {
+            "high_water_rss_kib": 160632,
+            "rss_kib": 160632,
+            "system_ticks": 2879,
+            "user_ticks": 2435
+          },
+          "process_before": {
+            "high_water_rss_kib": 157780,
+            "rss_kib": 157780,
+            "system_ticks": 2772,
+            "user_ticks": 2342
+          },
+          "seconds": 2.6592116089999998
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 1.576228,
+            "mean": 1.176726924804689,
+            "p50": 1.1558650000000001,
+            "p95": 1.4024050000000001,
+            "p99": 1.5066680000000001
+          },
+          "mib_per_sec": 0.0,
+          "name": "get_status",
+          "operations": 1024,
+          "ops_per_sec": 13480.471450527031,
+          "process_after": {
+            "high_water_rss_kib": 160632,
+            "rss_kib": 160632,
+            "system_ticks": 2889,
+            "user_ticks": 2444
+          },
+          "process_before": {
+            "high_water_rss_kib": 160632,
+            "rss_kib": 160632,
+            "system_ticks": 2879,
+            "user_ticks": 2435
+          },
+          "seconds": 0.075961735
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 202.89173,
+            "mean": 169.75604615234374,
+            "p50": 169.34518300000002,
+            "p95": 194.945746,
+            "p99": 202.63213399999998
+          },
+          "mib_per_sec": 0.0,
+          "name": "open_close_empty",
+          "operations": 256,
+          "ops_per_sec": 92.92037496230051,
+          "process_after": {
+            "high_water_rss_kib": 165848,
+            "rss_kib": 165848,
+            "system_ticks": 2993,
+            "user_ticks": 2558
+          },
+          "process_before": {
+            "high_water_rss_kib": 160632,
+            "rss_kib": 160632,
+            "system_ticks": 2889,
+            "user_ticks": 2444
+          },
+          "seconds": 2.755046997
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 18.148439999999997,
+            "mean": 15.3715446875,
+            "p50": 16.569498,
+            "p95": 18.08596,
+            "p99": 18.148439999999997
+          },
+          "mib_per_sec": 0.0,
+          "name": "list_children",
+          "operations": 64,
+          "ops_per_sec": 972.0906988569641,
+          "process_after": {
+            "high_water_rss_kib": 165976,
+            "rss_kib": 165976,
+            "system_ticks": 2995,
+            "user_ticks": 2564
+          },
+          "process_before": {
+            "high_water_rss_kib": 165848,
+            "rss_kib": 165848,
+            "system_ticks": 2993,
+            "user_ticks": 2558
+          },
+          "seconds": 0.065837478
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 90.180379,
+            "mean": 77.71695758984373,
+            "p50": 78.203949,
+            "p95": 88.515088,
+            "p99": 89.304618
+          },
+          "mib_per_sec": 0.0,
+          "name": "rename",
+          "operations": 256,
+          "ops_per_sec": 200.31562277262086,
+          "process_after": {
+            "high_water_rss_kib": 167648,
+            "rss_kib": 167648,
+            "system_ticks": 3046,
+            "user_ticks": 2610
+          },
+          "process_before": {
+            "high_water_rss_kib": 165976,
+            "rss_kib": 165976,
+            "system_ticks": 2995,
+            "user_ticks": 2564
+          },
+          "seconds": 1.277983197
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 250.344146,
+            "mean": 92.49153134375004,
+            "p50": 83.540849,
+            "p95": 156.147651,
+            "p99": 248.37140499999998
+          },
+          "mib_per_sec": 0.0,
+          "name": "delete",
+          "operations": 256,
+          "ops_per_sec": 161.5741420368404,
+          "process_after": {
+            "high_water_rss_kib": 168660,
+            "rss_kib": 168660,
+            "system_ticks": 3099,
+            "user_ticks": 2663
+          },
+          "process_before": {
+            "high_water_rss_kib": 167648,
+            "rss_kib": 167648,
+            "system_ticks": 3046,
+            "user_ticks": 2610
+          },
+          "seconds": 1.584411941
+        }
+      ],
+      "idle": [
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 163.904458,
+            "mean": 154.04118485156252,
+            "p50": 157.298447,
+            "p95": 162.08049599999998,
+            "p99": 162.946152
+          },
+          "mib_per_sec": 0.0,
+          "name": "create_close_empty",
+          "operations": 256,
+          "ops_per_sec": 102.34497213789264,
+          "process_after": {
+            "high_water_rss_kib": 150336,
+            "rss_kib": 150336,
+            "system_ticks": 2567,
+            "user_ticks": 2135
+          },
+          "process_before": {
+            "high_water_rss_kib": 147836,
+            "rss_kib": 147836,
+            "system_ticks": 2475,
+            "user_ticks": 2045
+          },
+          "seconds": 2.501344176
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 3.723645,
+            "mean": 1.2123870449218745,
+            "p50": 1.13162,
+            "p95": 1.478993,
+            "p99": 3.131858
+          },
+          "mib_per_sec": 0.0,
+          "name": "get_status",
+          "operations": 1024,
+          "ops_per_sec": 13086.006950024297,
+          "process_after": {
+            "high_water_rss_kib": 150336,
+            "rss_kib": 150336,
+            "system_ticks": 2579,
+            "user_ticks": 2143
+          },
+          "process_before": {
+            "high_water_rss_kib": 150336,
+            "rss_kib": 150336,
+            "system_ticks": 2567,
+            "user_ticks": 2135
+          },
+          "seconds": 0.078251525
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 174.235999,
+            "mean": 158.47906878906247,
+            "p50": 159.977295,
+            "p95": 168.22115100000002,
+            "p99": 171.08205900000002
+          },
+          "mib_per_sec": 0.0,
+          "name": "open_close_empty",
+          "operations": 256,
+          "ops_per_sec": 99.50770634069484,
+          "process_after": {
+            "high_water_rss_kib": 155540,
+            "rss_kib": 155540,
+            "system_ticks": 2675,
+            "user_ticks": 2247
+          },
+          "process_before": {
+            "high_water_rss_kib": 150336,
+            "rss_kib": 150336,
+            "system_ticks": 2579,
+            "user_ticks": 2143
+          },
+          "seconds": 2.572665067
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 13.290932999999999,
+            "mean": 9.690977484375,
+            "p50": 9.836648,
+            "p95": 12.535413,
+            "p99": 13.290932999999999
+          },
+          "mib_per_sec": 0.0,
+          "name": "list_children",
+          "operations": 64,
+          "ops_per_sec": 1470.832788282537,
+          "process_after": {
+            "high_water_rss_kib": 155540,
+            "rss_kib": 155540,
+            "system_ticks": 2675,
+            "user_ticks": 2252
+          },
+          "process_before": {
+            "high_water_rss_kib": 155540,
+            "rss_kib": 155540,
+            "system_ticks": 2675,
+            "user_ticks": 2247
+          },
+          "seconds": 0.043512764
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 80.49505599999999,
+            "mean": 75.16170344140619,
+            "p50": 77.082063,
+            "p95": 79.675577,
+            "p99": 80.264382
+          },
+          "mib_per_sec": 0.0,
+          "name": "rename",
+          "operations": 256,
+          "ops_per_sec": 206.41541712751226,
+          "process_after": {
+            "high_water_rss_kib": 156972,
+            "rss_kib": 156972,
+            "system_ticks": 2724,
+            "user_ticks": 2296
+          },
+          "process_before": {
+            "high_water_rss_kib": 155540,
+            "rss_kib": 155540,
+            "system_ticks": 2675,
+            "user_ticks": 2252
+          },
+          "seconds": 1.240217439
+        },
+        {
+          "bytes": 0,
+          "concurrency": 16,
+          "errors": 0,
+          "latency_ms": {
+            "max": 80.433532,
+            "mean": 74.85570462109375,
+            "p50": 77.095191,
+            "p95": 79.95057,
+            "p99": 80.344763
+          },
+          "mib_per_sec": 0.0,
+          "name": "delete",
+          "operations": 256,
+          "ops_per_sec": 207.65999074352348,
+          "process_after": {
+            "high_water_rss_kib": 157712,
+            "rss_kib": 157712,
+            "system_ticks": 2772,
+            "user_ticks": 2340
+          },
+          "process_before": {
+            "high_water_rss_kib": 156972,
+            "rss_kib": 156972,
+            "system_ticks": 2724,
+            "user_ticks": 2296
+          },
+          "seconds": 1.232784414
+        }
+      ],
+      "scan": {
+        "complete_cycles": 5,
+        "examined": 11119,
+        "max_page_ms": 95.382949,
+        "pages": 50,
+        "scan_interval_ms": 1000,
+        "seconds": 8.469479145,
+        "seed_files": 2048
+      }
+    },
+    "process_final": {
+      "high_water_rss_kib": 168660,
+      "rss_kib": 168660,
+      "system_ticks": 3099,
+      "user_ticks": 2663
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 13.427099,
+          "mean": 9.960286390625,
+          "p50": 9.889154000000001,
+          "p95": 10.773933,
+          "p99": 12.219882
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 100.38708050460512,
+        "process_after": {
+          "high_water_rss_kib": 77104,
+          "rss_kib": 77104,
+          "system_ticks": 159,
+          "user_ticks": 138
+        },
+        "process_before": {
+          "high_water_rss_kib": 74448,
+          "rss_kib": 74448,
+          "system_ticks": 65,
+          "user_ticks": 54
+        },
+        "seconds": 2.5501289480000002
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.351534,
+          "mean": 0.15735636230468752,
+          "p50": 0.154262,
+          "p95": 0.194075,
+          "p99": 0.23672100000000001
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 6332.360221480978,
+        "process_after": {
+          "high_water_rss_kib": 77104,
+          "rss_kib": 77104,
+          "system_ticks": 171,
+          "user_ticks": 146
+        },
+        "process_before": {
+          "high_water_rss_kib": 77104,
+          "rss_kib": 77104,
+          "system_ticks": 159,
+          "user_ticks": 138
+        },
+        "seconds": 0.161709057
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 31.009171,
+          "mean": 10.690275421875004,
+          "p50": 10.536810000000001,
+          "p95": 11.586246,
+          "p99": 12.517551
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 93.52717185556087,
+        "process_after": {
+          "high_water_rss_kib": 82824,
+          "rss_kib": 82824,
+          "system_ticks": 277,
+          "user_ticks": 247
+        },
+        "process_before": {
+          "high_water_rss_kib": 77104,
+          "rss_kib": 77104,
+          "system_ticks": 171,
+          "user_ticks": 146
+        },
+        "seconds": 2.73717247
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.368148,
+          "mean": 0.8947049531249998,
+          "p50": 0.843994,
+          "p95": 1.235795,
+          "p99": 1.368148
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1116.9110206203763,
+        "process_after": {
+          "high_water_rss_kib": 83352,
+          "rss_kib": 83352,
+          "system_ticks": 279,
+          "user_ticks": 252
+        },
+        "process_before": {
+          "high_water_rss_kib": 82824,
+          "rss_kib": 82824,
+          "system_ticks": 277,
+          "user_ticks": 247
+        },
+        "seconds": 0.057300894
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 6.109707,
+          "mean": 5.0537335156250025,
+          "p50": 5.012612,
+          "p95": 5.482275,
+          "p99": 5.720663
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 197.8342261919109,
+        "process_after": {
+          "high_water_rss_kib": 85084,
+          "rss_kib": 85084,
+          "system_ticks": 329,
+          "user_ticks": 298
+        },
+        "process_before": {
+          "high_water_rss_kib": 83352,
+          "rss_kib": 83352,
+          "system_ticks": 279,
+          "user_ticks": 252
+        },
+        "seconds": 1.294012694
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 29.091394,
+          "mean": 5.1288827382812565,
+          "p50": 5.000121,
+          "p95": 5.439641,
+          "p99": 5.81336
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 194.93527038805834,
+        "process_after": {
+          "high_water_rss_kib": 86128,
+          "rss_kib": 86128,
+          "system_ticks": 378,
+          "user_ticks": 343
+        },
+        "process_before": {
+          "high_water_rss_kib": 85084,
+          "rss_kib": 85084,
+          "system_ticks": 329,
+          "user_ticks": 298
+        },
+        "seconds": 1.313256444
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 159.33939,
+          "mean": 149.8085367187501,
+          "p50": 151.885158,
+          "p95": 157.907802,
+          "p99": 158.580004
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 105.255620475701,
+        "process_after": {
+          "high_water_rss_kib": 89524,
+          "rss_kib": 89524,
+          "system_ticks": 472,
+          "user_ticks": 430
+        },
+        "process_before": {
+          "high_water_rss_kib": 86132,
+          "rss_kib": 86132,
+          "system_ticks": 378,
+          "user_ticks": 343
+        },
+        "seconds": 2.432174157
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.907164,
+          "mean": 1.3113798749999983,
+          "p50": 1.315313,
+          "p95": 1.42475,
+          "p99": 1.466465
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 12100.084239746626,
+        "process_after": {
+          "high_water_rss_kib": 89524,
+          "rss_kib": 89524,
+          "system_ticks": 484,
+          "user_ticks": 438
+        },
+        "process_before": {
+          "high_water_rss_kib": 89524,
+          "rss_kib": 89524,
+          "system_ticks": 472,
+          "user_ticks": 430
+        },
+        "seconds": 0.08462751
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 183.23762900000003,
+          "mean": 160.3956920078125,
+          "p50": 160.683114,
+          "p95": 182.805923,
+          "p99": 183.155954
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 98.37962017347219,
+        "process_after": {
+          "high_water_rss_kib": 94812,
+          "rss_kib": 94812,
+          "system_ticks": 579,
+          "user_ticks": 547
+        },
+        "process_before": {
+          "high_water_rss_kib": 89524,
+          "rss_kib": 89524,
+          "system_ticks": 484,
+          "user_ticks": 438
+        },
+        "seconds": 2.602164956
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 9.624001999999999,
+          "mean": 7.997665562499999,
+          "p50": 8.763142,
+          "p95": 9.123679000000001,
+          "p99": 9.624001999999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1779.4208257685937,
+        "process_after": {
+          "high_water_rss_kib": 94828,
+          "rss_kib": 94828,
+          "system_ticks": 580,
+          "user_ticks": 551
+        },
+        "process_before": {
+          "high_water_rss_kib": 94816,
+          "rss_kib": 94816,
+          "system_ticks": 579,
+          "user_ticks": 547
+        },
+        "seconds": 0.035966759
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 79.46932,
+          "mean": 74.314773703125,
+          "p50": 76.235885,
+          "p95": 78.965351,
+          "p99": 79.33625099999999
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 208.97726613300472,
+        "process_after": {
+          "high_water_rss_kib": 96320,
+          "rss_kib": 96320,
+          "system_ticks": 629,
+          "user_ticks": 598
+        },
+        "process_before": {
+          "high_water_rss_kib": 94828,
+          "rss_kib": 94828,
+          "system_ticks": 580,
+          "user_ticks": 551
+        },
+        "seconds": 1.225013633
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 79.062639,
+          "mean": 72.90228702343751,
+          "p50": 74.39419699999999,
+          "p95": 77.484156,
+          "p99": 78.806807
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 212.9378743404162,
+        "process_after": {
+          "high_water_rss_kib": 97312,
+          "rss_kib": 97312,
+          "system_ticks": 674,
+          "user_ticks": 643
+        },
+        "process_before": {
+          "high_water_rss_kib": 96324,
+          "rss_kib": 96324,
+          "system_ticks": 629,
+          "user_ticks": 598
+        },
+        "seconds": 1.202228588
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 17.742597999999997,
+          "mean": 16.0057487109375,
+          "p50": 15.987373,
+          "p95": 17.238725,
+          "p99": 17.718776
+        },
+        "mib_per_sec": 0.24403329598685192,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 62.47252377263409,
+        "process_after": {
+          "high_water_rss_kib": 99332,
+          "rss_kib": 99332,
+          "system_ticks": 753,
+          "user_ticks": 715
+        },
+        "process_before": {
+          "high_water_rss_kib": 97316,
+          "rss_kib": 97316,
+          "system_ticks": 675,
+          "user_ticks": 643
+        },
+        "seconds": 2.048900737
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 37.696446,
+          "mean": 11.319226484375001,
+          "p50": 11.191332,
+          "p95": 12.069596,
+          "p99": 13.434792
+        },
+        "mib_per_sec": 0.3450510317363999,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 88.33306412451837,
+        "process_after": {
+          "high_water_rss_kib": 109664,
+          "rss_kib": 109664,
+          "system_ticks": 922,
+          "user_ticks": 893
+        },
+        "process_before": {
+          "high_water_rss_kib": 99332,
+          "rss_kib": 99332,
+          "system_ticks": 753,
+          "user_ticks": 715
+        },
+        "seconds": 4.34718306
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 253.72884899999997,
+          "mean": 227.41164530468754,
+          "p50": 228.869086,
+          "p95": 253.39119399999998,
+          "p99": 253.539195
+        },
+        "mib_per_sec": 0.2693384106166289,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 68.950633117857,
+        "process_after": {
+          "high_water_rss_kib": 112588,
+          "rss_kib": 112588,
+          "system_ticks": 1001,
+          "user_ticks": 959
+        },
+        "process_before": {
+          "high_water_rss_kib": 110228,
+          "rss_kib": 110228,
+          "system_ticks": 922,
+          "user_ticks": 894
+        },
+        "seconds": 1.8564006480000002
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 174.79588700000002,
+          "mean": 161.4563023932291,
+          "p50": 161.918338,
+          "p95": 171.00137900000001,
+          "p99": 174.155553
+        },
+        "mib_per_sec": 0.38353122552929353,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 98.18399373549914,
+        "process_after": {
+          "high_water_rss_kib": 120720,
+          "rss_kib": 120720,
+          "system_ticks": 1169,
+          "user_ticks": 1130
+        },
+        "process_before": {
+          "high_water_rss_kib": 112588,
+          "rss_kib": 112588,
+          "system_ticks": 1001,
+          "user_ticks": 959
+        },
+        "seconds": 3.911024449
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 129.224932,
+          "mean": 118.28150274999999,
+          "p50": 117.713583,
+          "p95": 129.224932,
+          "p99": 129.224932
+        },
+        "mib_per_sec": 541.0608329087503,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 8.454075514199223,
+        "process_after": {
+          "high_water_rss_kib": 122672,
+          "rss_kib": 122672,
+          "system_ticks": 1256,
+          "user_ticks": 1164
+        },
+        "process_before": {
+          "high_water_rss_kib": 121256,
+          "rss_kib": 121256,
+          "system_ticks": 1169,
+          "user_ticks": 1131
+        },
+        "seconds": 0.946289158
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 90.228798,
+          "mean": 84.94755858333336,
+          "p50": 84.45739900000001,
+          "p95": 89.578825,
+          "p99": 90.228798
+        },
+        "mib_per_sec": 753.3829827793185,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 11.771609105926851,
+        "process_after": {
+          "high_water_rss_kib": 123824,
+          "rss_kib": 123824,
+          "system_ticks": 1433,
+          "user_ticks": 1248
+        },
+        "process_before": {
+          "high_water_rss_kib": 122672,
+          "rss_kib": 122672,
+          "system_ticks": 1256,
+          "user_ticks": 1164
+        },
+        "seconds": 2.038803683
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 184.078994,
+          "mean": 165.880441,
+          "p50": 162.087557,
+          "p95": 184.078994,
+          "p99": 184.078994
+        },
+        "mib_per_sec": 1478.919155620929,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 23.108111806577014,
+        "process_after": {
+          "high_water_rss_kib": 126524,
+          "rss_kib": 123488,
+          "system_ticks": 1524,
+          "user_ticks": 1284
+        },
+        "process_before": {
+          "high_water_rss_kib": 123836,
+          "rss_kib": 123836,
+          "system_ticks": 1433,
+          "user_ticks": 1248
+        },
+        "seconds": 0.346198775
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 127.38237299999999,
+          "mean": 104.48064370833333,
+          "p50": 102.703034,
+          "p95": 116.40758,
+          "p99": 127.38237299999999
+        },
+        "mib_per_sec": 2365.8852179111136,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 36.96695652986115,
+        "process_after": {
+          "high_water_rss_kib": 127316,
+          "rss_kib": 127316,
+          "system_ticks": 1705,
+          "user_ticks": 1367
+        },
+        "process_before": {
+          "high_water_rss_kib": 126524,
+          "rss_kib": 123488,
+          "system_ticks": 1524,
+          "user_ticks": 1284
+        },
+        "seconds": 0.649228453
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 3,
+    "sampled_peak_rss_kib": 168632,
+    "driver_elapsed_seconds": 90.56778415315785
+  },
+  {
+    "elapsed_seconds": 21.150575544,
+    "mode": "original",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 89848,
+      "rss_kib": 83192,
+      "system_ticks": 678,
+      "user_ticks": 336
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.555158,
+          "mean": 0.38487792187499986,
+          "p50": 0.377168,
+          "p95": 0.44644,
+          "p99": 0.49296500000000004
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 2593.572945905677,
+        "process_after": {
+          "high_water_rss_kib": 72176,
+          "rss_kib": 72176,
+          "system_ticks": 35,
+          "user_ticks": 28
+        },
+        "process_before": {
+          "high_water_rss_kib": 71676,
+          "rss_kib": 71656,
+          "system_ticks": 29,
+          "user_ticks": 23
+        },
+        "seconds": 0.098705533
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.318499,
+          "mean": 0.1716359472656252,
+          "p50": 0.16715,
+          "p95": 0.20212,
+          "p99": 0.236666
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 5809.0141376881575,
+        "process_after": {
+          "high_water_rss_kib": 72192,
+          "rss_kib": 72192,
+          "system_ticks": 49,
+          "user_ticks": 35
+        },
+        "process_before": {
+          "high_water_rss_kib": 72176,
+          "rss_kib": 72176,
+          "system_ticks": 35,
+          "user_ticks": 28
+        },
+        "seconds": 0.17627776
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.310639,
+          "mean": 0.18454692968750017,
+          "p50": 0.17935600000000002,
+          "p95": 0.216954,
+          "p99": 0.249689
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 5401.782811995528,
+        "process_after": {
+          "high_water_rss_kib": 72196,
+          "rss_kib": 72196,
+          "system_ticks": 53,
+          "user_ticks": 37
+        },
+        "process_before": {
+          "high_water_rss_kib": 72196,
+          "rss_kib": 72196,
+          "system_ticks": 49,
+          "user_ticks": 35
+        },
+        "seconds": 0.047391761
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.906099,
+          "mean": 0.907134640625,
+          "p50": 0.800575,
+          "p95": 1.32165,
+          "p99": 1.906099
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1101.7545372145482,
+        "process_after": {
+          "high_water_rss_kib": 72748,
+          "rss_kib": 72748,
+          "system_ticks": 53,
+          "user_ticks": 42
+        },
+        "process_before": {
+          "high_water_rss_kib": 72196,
+          "rss_kib": 72196,
+          "system_ticks": 53,
+          "user_ticks": 37
+        },
+        "seconds": 0.058089164
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.304493,
+          "mean": 0.204261546875,
+          "p50": 0.19912400000000002,
+          "p95": 0.242671,
+          "p99": 0.276965
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 4885.973404806981,
+        "process_after": {
+          "high_water_rss_kib": 72904,
+          "rss_kib": 72904,
+          "system_ticks": 57,
+          "user_ticks": 45
+        },
+        "process_before": {
+          "high_water_rss_kib": 72748,
+          "rss_kib": 72748,
+          "system_ticks": 54,
+          "user_ticks": 42
+        },
+        "seconds": 0.052394882
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.282588,
+          "mean": 0.19119837890625,
+          "p50": 0.189634,
+          "p95": 0.22123299999999999,
+          "p99": 0.25835199999999997
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 5219.217853313271,
+        "process_after": {
+          "high_water_rss_kib": 72960,
+          "rss_kib": 72960,
+          "system_ticks": 60,
+          "user_ticks": 47
+        },
+        "process_before": {
+          "high_water_rss_kib": 72904,
+          "rss_kib": 72904,
+          "system_ticks": 57,
+          "user_ticks": 45
+        },
+        "seconds": 0.049049495
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 3.244247,
+          "mean": 2.8733003945312485,
+          "p50": 2.8902110000000003,
+          "p95": 3.158911,
+          "p99": 3.2302020000000002
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 5489.558152755104,
+        "process_after": {
+          "high_water_rss_kib": 73712,
+          "rss_kib": 73712,
+          "system_ticks": 66,
+          "user_ticks": 53
+        },
+        "process_before": {
+          "high_water_rss_kib": 72960,
+          "rss_kib": 72960,
+          "system_ticks": 60,
+          "user_ticks": 47
+        },
+        "seconds": 0.04663399
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.443455,
+          "mean": 1.2198762070312497,
+          "p50": 1.233916,
+          "p95": 1.3276430000000001,
+          "p99": 1.365549
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 13010.425747124335,
+        "process_after": {
+          "high_water_rss_kib": 73712,
+          "rss_kib": 73712,
+          "system_ticks": 78,
+          "user_ticks": 60
+        },
+        "process_before": {
+          "high_water_rss_kib": 73712,
+          "rss_kib": 73712,
+          "system_ticks": 66,
+          "user_ticks": 53
+        },
+        "seconds": 0.07870611
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.382451,
+          "mean": 1.164489785156251,
+          "p50": 1.175435,
+          "p95": 1.297531,
+          "p99": 1.357757
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 13292.922157634428,
+        "process_after": {
+          "high_water_rss_kib": 73728,
+          "rss_kib": 73728,
+          "system_ticks": 81,
+          "user_ticks": 62
+        },
+        "process_before": {
+          "high_water_rss_kib": 73712,
+          "rss_kib": 73712,
+          "system_ticks": 78,
+          "user_ticks": 60
+        },
+        "seconds": 0.019258369
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 11.271404,
+          "mean": 8.600516921874998,
+          "p50": 9.113980000000002,
+          "p95": 10.598041,
+          "p99": 11.271404
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1656.7465515338263,
+        "process_after": {
+          "high_water_rss_kib": 74276,
+          "rss_kib": 74276,
+          "system_ticks": 82,
+          "user_ticks": 67
+        },
+        "process_before": {
+          "high_water_rss_kib": 73728,
+          "rss_kib": 73728,
+          "system_ticks": 81,
+          "user_ticks": 62
+        },
+        "seconds": 0.038629928
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 2.042782,
+          "mean": 1.5107476835937488,
+          "p50": 1.5251290000000002,
+          "p95": 1.672253,
+          "p99": 1.8411650000000002
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 10280.63771598927,
+        "process_after": {
+          "high_water_rss_kib": 74428,
+          "rss_kib": 74428,
+          "system_ticks": 85,
+          "user_ticks": 69
+        },
+        "process_before": {
+          "high_water_rss_kib": 74276,
+          "rss_kib": 74276,
+          "system_ticks": 82,
+          "user_ticks": 67
+        },
+        "seconds": 0.024901179
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.836537,
+          "mean": 1.504344617187501,
+          "p50": 1.523259,
+          "p95": 1.7458529999999999,
+          "p99": 1.814068
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 10363.294183560658,
+        "process_after": {
+          "high_water_rss_kib": 74488,
+          "rss_kib": 74488,
+          "system_ticks": 87,
+          "user_ticks": 72
+        },
+        "process_before": {
+          "high_water_rss_kib": 74428,
+          "rss_kib": 74428,
+          "system_ticks": 85,
+          "user_ticks": 69
+        },
+        "seconds": 0.02470257
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 2.597968,
+          "mean": 1.1605047421874997,
+          "p50": 1.117715,
+          "p95": 1.419617,
+          "p99": 1.975325
+        },
+        "mib_per_sec": 3.363293326062341,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 861.0030914719594,
+        "process_after": {
+          "high_water_rss_kib": 74884,
+          "rss_kib": 74884,
+          "system_ticks": 97,
+          "user_ticks": 79
+        },
+        "process_before": {
+          "high_water_rss_kib": 74488,
+          "rss_kib": 74488,
+          "system_ticks": 87,
+          "user_ticks": 72
+        },
+        "seconds": 0.14866381
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.4484890000000001,
+          "mean": 0.7355516406249999,
+          "p50": 0.722284,
+          "p95": 0.859289,
+          "p99": 1.005473
+        },
+        "mib_per_sec": 5.302927731552392,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 1357.5494992774125,
+        "process_after": {
+          "high_water_rss_kib": 75656,
+          "rss_kib": 75656,
+          "system_ticks": 115,
+          "user_ticks": 94
+        },
+        "process_before": {
+          "high_water_rss_kib": 74884,
+          "rss_kib": 74884,
+          "system_ticks": 97,
+          "user_ticks": 79
+        },
+        "seconds": 0.282862614
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 7.271713,
+          "mean": 4.484777460937499,
+          "p50": 4.431769,
+          "p95": 6.1147,
+          "p99": 7.127222
+        },
+        "mib_per_sec": 13.502820009947797,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 3456.721922546636,
+        "process_after": {
+          "high_water_rss_kib": 76796,
+          "rss_kib": 76796,
+          "system_ticks": 126,
+          "user_ticks": 100
+        },
+        "process_before": {
+          "high_water_rss_kib": 75692,
+          "rss_kib": 75692,
+          "system_ticks": 115,
+          "user_ticks": 94
+        },
+        "seconds": 0.037029302
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 11.345348999999999,
+          "mean": 2.9577780572916645,
+          "p50": 2.531913,
+          "p95": 7.234109,
+          "p99": 9.594087
+        },
+        "mib_per_sec": 18.44776881984187,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 4722.6288178795185,
+        "process_after": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 77036,
+          "system_ticks": 147,
+          "user_ticks": 111
+        },
+        "process_before": {
+          "high_water_rss_kib": 76796,
+          "rss_kib": 76796,
+          "system_ticks": 126,
+          "user_ticks": 100
+        },
+        "seconds": 0.081310646
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 105.669936,
+          "mean": 103.137087125,
+          "p50": 102.677512,
+          "p95": 105.669936,
+          "p99": 105.669936
+        },
+        "mib_per_sec": 620.5092656734103,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 9.695457276147035,
+        "process_after": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 78136,
+          "system_ticks": 227,
+          "user_ticks": 145
+        },
+        "process_before": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 77072,
+          "system_ticks": 147,
+          "user_ticks": 111
+        },
+        "seconds": 0.825128694
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 91.407599,
+          "mean": 81.76068500000001,
+          "p50": 81.269893,
+          "p95": 88.471676,
+          "p99": 91.407599
+        },
+        "mib_per_sec": 782.741161565808,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 12.23033064946575,
+        "process_after": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 78808,
+          "system_ticks": 410,
+          "user_ticks": 226
+        },
+        "process_before": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 78136,
+          "system_ticks": 227,
+          "user_ticks": 145
+        },
+        "seconds": 1.962334518
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 170.18085399999998,
+          "mean": 149.443661125,
+          "p50": 135.968906,
+          "p95": 170.18085399999998,
+          "p99": 170.18085399999998
+        },
+        "mib_per_sec": 1690.0896923337618,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 26.40765144271503,
+        "process_after": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 78328,
+          "system_ticks": 510,
+          "user_ticks": 259
+        },
+        "process_before": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 78812,
+          "system_ticks": 410,
+          "user_ticks": 226
+        },
+        "seconds": 0.302942502
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 92.24514,
+          "mean": 89.77465229166667,
+          "p50": 89.752696,
+          "p95": 91.918577,
+          "p99": 92.24514
+        },
+        "mib_per_sec": 2841.6243900883837,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 44.400381095130996,
+        "process_after": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 83192,
+          "system_ticks": 678,
+          "user_ticks": 336
+        },
+        "process_before": {
+          "high_water_rss_kib": 89848,
+          "rss_kib": 78328,
+          "system_ticks": 510,
+          "user_ticks": 259
+        },
+        "seconds": 0.540535901
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 3,
+    "sampled_peak_rss_kib": 87160,
+    "driver_elapsed_seconds": 21.19230137206614
+  },
+  {
+    "elapsed_seconds": 22.498941041,
+    "mode": "off",
+    "policy_interference": null,
+    "process_final": {
+      "high_water_rss_kib": 93836,
+      "rss_kib": 93836,
+      "system_ticks": 739,
+      "user_ticks": 342
+    },
+    "results": [
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.540902,
+          "mean": 0.35656497265625003,
+          "p50": 0.350192,
+          "p95": 0.442853,
+          "p99": 0.489224
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 2800.3100949636564,
+        "process_after": {
+          "high_water_rss_kib": 73500,
+          "rss_kib": 73500,
+          "system_ticks": 40,
+          "user_ticks": 27
+        },
+        "process_before": {
+          "high_water_rss_kib": 72972,
+          "rss_kib": 72972,
+          "system_ticks": 32,
+          "user_ticks": 23
+        },
+        "seconds": 0.091418447
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.267004,
+          "mean": 0.15506318457031243,
+          "p50": 0.149989,
+          "p95": 0.187739,
+          "p99": 0.23437999999999998
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 6431.133761653541,
+        "process_after": {
+          "high_water_rss_kib": 73500,
+          "rss_kib": 73500,
+          "system_ticks": 52,
+          "user_ticks": 34
+        },
+        "process_before": {
+          "high_water_rss_kib": 73500,
+          "rss_kib": 73500,
+          "system_ticks": 40,
+          "user_ticks": 27
+        },
+        "seconds": 0.159225424
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.461835,
+          "mean": 0.2990407187499999,
+          "p50": 0.296556,
+          "p95": 0.333607,
+          "p99": 0.355463
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 3337.764955139461,
+        "process_after": {
+          "high_water_rss_kib": 73524,
+          "rss_kib": 73524,
+          "system_ticks": 58,
+          "user_ticks": 38
+        },
+        "process_before": {
+          "high_water_rss_kib": 73500,
+          "rss_kib": 73500,
+          "system_ticks": 52,
+          "user_ticks": 35
+        },
+        "seconds": 0.076698031
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.1404919999999998,
+          "mean": 0.761879984375,
+          "p50": 0.753451,
+          "p95": 0.828045,
+          "p99": 1.1404919999999998
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1311.8214296197145,
+        "process_after": {
+          "high_water_rss_kib": 73852,
+          "rss_kib": 73852,
+          "system_ticks": 58,
+          "user_ticks": 42
+        },
+        "process_before": {
+          "high_water_rss_kib": 73528,
+          "rss_kib": 73528,
+          "system_ticks": 58,
+          "user_ticks": 38
+        },
+        "seconds": 0.048787128
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.353121,
+          "mean": 0.19449721874999992,
+          "p50": 0.188467,
+          "p95": 0.254483,
+          "p99": 0.31549099999999997
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 5125.9844843658075,
+        "process_after": {
+          "high_water_rss_kib": 74008,
+          "rss_kib": 74008,
+          "system_ticks": 62,
+          "user_ticks": 45
+        },
+        "process_before": {
+          "high_water_rss_kib": 73852,
+          "rss_kib": 73852,
+          "system_ticks": 58,
+          "user_ticks": 42
+        },
+        "seconds": 0.049941626
+      },
+      {
+        "bytes": 0,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 0.583519,
+          "mean": 0.1901175859375,
+          "p50": 0.182863,
+          "p95": 0.232885,
+          "p99": 0.318283
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 5247.210216154316,
+        "process_after": {
+          "high_water_rss_kib": 74124,
+          "rss_kib": 74124,
+          "system_ticks": 65,
+          "user_ticks": 47
+        },
+        "process_before": {
+          "high_water_rss_kib": 74008,
+          "rss_kib": 74008,
+          "system_ticks": 62,
+          "user_ticks": 45
+        },
+        "seconds": 0.04878783
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 2.930228,
+          "mean": 2.63851254296875,
+          "p50": 2.653178,
+          "p95": 2.834789,
+          "p99": 2.9145260000000004
+        },
+        "mib_per_sec": 0.0,
+        "name": "create_close_empty",
+        "operations": 256,
+        "ops_per_sec": 5969.747743645226,
+        "process_after": {
+          "high_water_rss_kib": 74992,
+          "rss_kib": 74992,
+          "system_ticks": 70,
+          "user_ticks": 52
+        },
+        "process_before": {
+          "high_water_rss_kib": 74124,
+          "rss_kib": 74124,
+          "system_ticks": 65,
+          "user_ticks": 47
+        },
+        "seconds": 0.042882884
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.628453,
+          "mean": 1.2505653115234399,
+          "p50": 1.276117,
+          "p95": 1.390283,
+          "p99": 1.535076
+        },
+        "mib_per_sec": 0.0,
+        "name": "get_status",
+        "operations": 1024,
+        "ops_per_sec": 12703.897398163655,
+        "process_after": {
+          "high_water_rss_kib": 74992,
+          "rss_kib": 74992,
+          "system_ticks": 84,
+          "user_ticks": 57
+        },
+        "process_before": {
+          "high_water_rss_kib": 74992,
+          "rss_kib": 74992,
+          "system_ticks": 71,
+          "user_ticks": 52
+        },
+        "seconds": 0.080605185
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 2.21388,
+          "mean": 1.8283114140625008,
+          "p50": 1.828848,
+          "p95": 2.006847,
+          "p99": 2.120358
+        },
+        "mib_per_sec": 0.0,
+        "name": "open_close_empty",
+        "operations": 256,
+        "ops_per_sec": 8567.702672604486,
+        "process_after": {
+          "high_water_rss_kib": 75000,
+          "rss_kib": 75000,
+          "system_ticks": 88,
+          "user_ticks": 61
+        },
+        "process_before": {
+          "high_water_rss_kib": 74992,
+          "rss_kib": 74992,
+          "system_ticks": 84,
+          "user_ticks": 57
+        },
+        "seconds": 0.029879655
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 9.625082,
+          "mean": 8.026560562499998,
+          "p50": 8.74969,
+          "p95": 9.269786,
+          "p99": 9.625082
+        },
+        "mib_per_sec": 0.0,
+        "name": "list_children",
+        "operations": 64,
+        "ops_per_sec": 1760.0870935096045,
+        "process_after": {
+          "high_water_rss_kib": 75284,
+          "rss_kib": 75284,
+          "system_ticks": 89,
+          "user_ticks": 65
+        },
+        "process_before": {
+          "high_water_rss_kib": 75000,
+          "rss_kib": 75000,
+          "system_ticks": 88,
+          "user_ticks": 61
+        },
+        "seconds": 0.036361837
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.558657,
+          "mean": 1.378253433593749,
+          "p50": 1.405595,
+          "p95": 1.4662270000000002,
+          "p99": 1.487681
+        },
+        "mib_per_sec": 0.0,
+        "name": "rename",
+        "operations": 256,
+        "ops_per_sec": 11272.27430022734,
+        "process_after": {
+          "high_water_rss_kib": 75436,
+          "rss_kib": 75436,
+          "system_ticks": 93,
+          "user_ticks": 67
+        },
+        "process_before": {
+          "high_water_rss_kib": 75284,
+          "rss_kib": 75284,
+          "system_ticks": 89,
+          "user_ticks": 66
+        },
+        "seconds": 0.02271059
+      },
+      {
+        "bytes": 0,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.53558,
+          "mean": 1.37573781640625,
+          "p50": 1.407656,
+          "p95": 1.454564,
+          "p99": 1.4614770000000001
+        },
+        "mib_per_sec": 0.0,
+        "name": "delete",
+        "operations": 256,
+        "ops_per_sec": 11298.781219006969,
+        "process_after": {
+          "high_water_rss_kib": 75548,
+          "rss_kib": 75548,
+          "system_ticks": 96,
+          "user_ticks": 68
+        },
+        "process_before": {
+          "high_water_rss_kib": 75436,
+          "rss_kib": 75436,
+          "system_ticks": 93,
+          "user_ticks": 67
+        },
+        "seconds": 0.022657311
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.810946,
+          "mean": 1.1330290078124994,
+          "p50": 1.112323,
+          "p95": 1.296237,
+          "p99": 1.502909
+        },
+        "mib_per_sec": 3.4450948278198794,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 881.9442759218891,
+        "process_after": {
+          "high_water_rss_kib": 76020,
+          "rss_kib": 76020,
+          "system_ticks": 105,
+          "user_ticks": 76
+        },
+        "process_before": {
+          "high_water_rss_kib": 75548,
+          "rss_kib": 75548,
+          "system_ticks": 96,
+          "user_ticks": 69
+        },
+        "seconds": 0.145133886
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 1.8809580000000001,
+          "mean": 0.8680230026041668,
+          "p50": 0.853444,
+          "p95": 0.981748,
+          "p99": 1.1027770000000001
+        },
+        "mib_per_sec": 4.494996560893115,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 1150.7191195886373,
+        "process_after": {
+          "high_water_rss_kib": 76836,
+          "rss_kib": 76836,
+          "system_ticks": 130,
+          "user_ticks": 91
+        },
+        "process_before": {
+          "high_water_rss_kib": 76020,
+          "rss_kib": 76020,
+          "system_ticks": 105,
+          "user_ticks": 76
+        },
+        "seconds": 0.333704371
+      },
+      {
+        "bytes": 524288,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 8.517277,
+          "mean": 4.478244437499999,
+          "p50": 4.32324,
+          "p95": 6.3735479999999995,
+          "p99": 7.621588
+        },
+        "mib_per_sec": 13.613894275150525,
+        "name": "write_4k",
+        "operations": 128,
+        "ops_per_sec": 3485.1569344385343,
+        "process_after": {
+          "high_water_rss_kib": 78240,
+          "rss_kib": 78240,
+          "system_ticks": 141,
+          "user_ticks": 98
+        },
+        "process_before": {
+          "high_water_rss_kib": 76868,
+          "rss_kib": 76868,
+          "system_ticks": 130,
+          "user_ticks": 91
+        },
+        "seconds": 0.036727184
+      },
+      {
+        "bytes": 1572864,
+        "concurrency": 16,
+        "errors": 0,
+        "latency_ms": {
+          "max": 6.820923,
+          "mean": 3.7000219557291665,
+          "p50": 3.731958,
+          "p95": 5.62221,
+          "p99": 6.642763
+        },
+        "mib_per_sec": 15.436092457336594,
+        "name": "read_4k",
+        "operations": 384,
+        "ops_per_sec": 3951.639669078168,
+        "process_after": {
+          "high_water_rss_kib": 83808,
+          "rss_kib": 78456,
+          "system_ticks": 165,
+          "user_ticks": 113
+        },
+        "process_before": {
+          "high_water_rss_kib": 78240,
+          "rss_kib": 78240,
+          "system_ticks": 141,
+          "user_ticks": 98
+        },
+        "seconds": 0.097174852
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 143.802627,
+          "mean": 131.7670925,
+          "p50": 134.105862,
+          "p95": 143.802627,
+          "p99": 143.802627
+        },
+        "mib_per_sec": 485.68987218220104,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 7.588904252846891,
+        "process_after": {
+          "high_water_rss_kib": 83808,
+          "rss_kib": 79652,
+          "system_ticks": 268,
+          "user_ticks": 146
+        },
+        "process_before": {
+          "high_water_rss_kib": 83808,
+          "rss_kib": 78488,
+          "system_ticks": 165,
+          "user_ticks": 113
+        },
+        "seconds": 1.054170633
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 1,
+        "errors": 0,
+        "latency_ms": {
+          "max": 87.789994,
+          "mean": 82.62088458333334,
+          "p50": 82.80916400000001,
+          "p95": 87.407951,
+          "p99": 87.789994
+        },
+        "mib_per_sec": 774.5829609911947,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 12.102858765487417,
+        "process_after": {
+          "high_water_rss_kib": 83808,
+          "rss_kib": 80612,
+          "system_ticks": 455,
+          "user_ticks": 226
+        },
+        "process_before": {
+          "high_water_rss_kib": 83808,
+          "rss_kib": 79652,
+          "system_ticks": 268,
+          "user_ticks": 146
+        },
+        "seconds": 1.983002567
+      },
+      {
+        "bytes": 536870912,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 171.726995,
+          "mean": 157.550400875,
+          "p50": 150.26774600000002,
+          "p95": 171.726995,
+          "p99": 171.726995
+        },
+        "mib_per_sec": 1597.1677623715836,
+        "name": "write_64m",
+        "operations": 8,
+        "ops_per_sec": 24.955746287055995,
+        "process_after": {
+          "high_water_rss_kib": 84524,
+          "rss_kib": 80152,
+          "system_ticks": 565,
+          "user_ticks": 257
+        },
+        "process_before": {
+          "high_water_rss_kib": 83808,
+          "rss_kib": 80612,
+          "system_ticks": 455,
+          "user_ticks": 226
+        },
+        "seconds": 0.320567452
+      },
+      {
+        "bytes": 1610612736,
+        "concurrency": 4,
+        "errors": 0,
+        "latency_ms": {
+          "max": 96.061262,
+          "mean": 92.49066191666667,
+          "p50": 92.29933199999999,
+          "p95": 94.958729,
+          "p99": 96.061262
+        },
+        "mib_per_sec": 2750.832789554343,
+        "name": "read_64m",
+        "operations": 24,
+        "ops_per_sec": 42.98176233678661,
+        "process_after": {
+          "high_water_rss_kib": 93672,
+          "rss_kib": 93672,
+          "system_ticks": 739,
+          "user_ticks": 342
+        },
+        "process_before": {
+          "high_water_rss_kib": 84524,
+          "rss_kib": 80152,
+          "system_ticks": 565,
+          "user_ticks": 257
+        },
+        "seconds": 0.55837636
+      }
+    ],
+    "topology": {
+      "masters": 3,
+      "metadata_files_per_suite": 256,
+      "replicas": 1,
+      "server_and_client_processes": 1,
+      "short_circuit": false,
+      "smoke": false,
+      "ufs": false,
+      "workers": 1
+    },
+    "round": 3,
+    "sampled_peak_rss_kib": 93920,
+    "driver_elapsed_seconds": 22.59905836894177
+  }
+]

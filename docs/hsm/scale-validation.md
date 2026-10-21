@@ -16,6 +16,8 @@
 
 ## 2. 百万 Record 的真实 RocksDB 对比
 
+本节“旧算法”仍包含 HSM，对应此前的实现；原始 Curvine 与 HSM 的前台开销见 [独立性能对比](performance-comparison.md)。
+
 1 万与 10 万各一轮；100 万分别运行优化前/后 **3 轮**，每轮独立临时 RocksDB。大规模每轮有 100 万 Record + 100 万候选键。两组用相同初始化，预置时间不用于表示旧/新写入速度。每种更新执行 5 万次，热集合最多 1024 文件。
 
 构建为 debug test profile，`rustc 1.98.1 (48a229cea 2026-09-01)`，`CXXFLAGS=-g0`，进程可用 CPU affinity 24 个。开发主机有其他服务，无全局清缓存；数字是工程基线，不能当硬件上限或生产 SLO。

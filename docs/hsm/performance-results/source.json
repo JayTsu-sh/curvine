@@ -1,0 +1,11 @@
+{
+  "hsm_base_commit": "837b5cc4a508fc194de9a3e08dc32f00bc76674c",
+  "pre_hsm_commit": "feb3c9e20617d5c3f36c67d44033239b6ac92470",
+  "benchmark_sources": {
+    "curvine-server/examples/hsm_overhead.rs": "cb9785a84dcd49ae14e7dede3733bfe0c70d0541b18a50e715f535abdb35fff2",
+    "tools/hsm-overhead-compare.py": "04ab692cf168f45c39601dc4ea77a17b4efde29ad0dc41cf12063d44729fd4db"
+  },
+  "production_source_changes": false,
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "benchmark_commit": "11e8f3e1ab9ec0a0034e9cad2488c1f16b75ff83"
+}
