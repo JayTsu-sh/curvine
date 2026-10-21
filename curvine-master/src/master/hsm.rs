@@ -1518,3 +1518,6 @@ fn same_attempt(a: &OperationContext, b: &OperationContext) -> bool {
 mod lifecycle;
 
 mod ordinary;
+
+#[cfg(test)]
+mod scale_tests;

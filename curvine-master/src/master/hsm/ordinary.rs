@@ -21,25 +21,40 @@ pub(super) fn write_record(
     old: Option<&Record>,
     record: &Record,
 ) -> CommonResult<()> {
-    if let Some(old) = old {
-        batch.hsm_delete(&index_key(old))?;
-    }
+    let index = index_key(record);
+    let old_index = old.map(index_key);
     batch.hsm_put(
         &record_key(record.state.data.entity.entity.parse()?),
         &pack(record)?,
     )?;
-    batch.hsm_put(&index_key(record), &pack(&record.state.data.entity.entity)?)?;
+    if old_index.as_ref() != Some(&index) {
+        if let Some(old_index) = old_index {
+            batch.hsm_delete(&old_index)?;
+        }
+        batch.hsm_put(&index, &pack(&record.state.data.entity.entity)?)?;
+    }
     let gc = format!("\u{3}hsm:gc:{}", record.state.data.entity.entity).into_bytes();
     let seal = format!("\u{3}hsm:seal:{}", record.state.data.entity.entity).into_bytes();
-    if record.seal_token.is_some() && !record.sealed {
-        batch.hsm_put(&seal, &pack(&record.state.data)?)?;
-    } else {
-        batch.hsm_delete(&seal)?;
+    let old_seal = old
+        .filter(|r| r.seal_token.is_some() && !r.sealed)
+        .map(|r| &r.state.data);
+    let new_seal = (record.seal_token.is_some() && !record.sealed).then_some(&record.state.data);
+    if old_seal != new_seal {
+        match new_seal {
+            Some(data) => batch.hsm_put(&seal, &pack(data)?)?,
+            None => batch.hsm_delete(&seal)?,
+        }
     }
-    if record.garbage.is_empty() && record.native_garbage.is_empty() {
-        batch.hsm_delete(&gc)?;
-    } else {
-        batch.hsm_put(&gc, &pack(&record.state.data.entity)?)?;
+    let old_gc = old
+        .filter(|r| !r.garbage.is_empty() || !r.native_garbage.is_empty())
+        .map(|r| &r.state.data.entity);
+    let new_gc = (!record.garbage.is_empty() || !record.native_garbage.is_empty())
+        .then_some(&record.state.data.entity);
+    if old_gc != new_gc {
+        match new_gc {
+            Some(entity) => batch.hsm_put(&gc, &pack(entity)?)?,
+            None => batch.hsm_delete(&gc)?,
+        }
     }
     Ok(())
 }

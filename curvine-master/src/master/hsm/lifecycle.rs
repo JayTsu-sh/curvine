@@ -43,15 +43,10 @@ fn effect_step(action: &ManagedAction) -> &'static str {
         ManagedAction::Recall(_) => "commit_recall",
     }
 }
-fn selected(policy: &LifecyclePolicy, record: &Record, now: i64) -> bool {
+pub(super) fn selected_metadata(policy: &LifecyclePolicy, record: &Record, now: i64) -> bool {
     if !policy.enabled
         || record.writing
         || record.pending.is_some()
-        || policy
-            .selection
-            .exclude_prefixes
-            .iter()
-            .any(|p| record.path.starts_with(p))
         || policy
             .selection
             .owner
@@ -64,7 +59,6 @@ fn selected(policy: &LifecyclePolicy, record: &Record, now: i64) -> bool {
             .is_some_and(|g| g != &record.group)
         || now.saturating_sub(record.atime_ms) < policy.selection.min_access_age_ms as i64
         || now.saturating_sub(record.mtime_ms) < policy.selection.min_modify_age_ms as i64
-        || !record.path.starts_with(&policy.prefix)
         || record.state.length < policy.min_size
         || policy.max_size.is_some_and(|m| record.state.length > m)
         || policy.min_residency_ms > 0
@@ -100,6 +94,32 @@ fn selected(policy: &LifecyclePolicy, record: &Record, now: i64) -> bool {
                     .any(|a| a.key.backend == policy.backend)
         }
     }
+}
+fn selected_path(policy: &LifecyclePolicy, record: &Record) -> bool {
+    record.path.starts_with(&policy.prefix)
+        && !policy
+            .selection
+            .exclude_prefixes
+            .iter()
+            .any(|p| record.path.starts_with(p))
+}
+fn selected(policy: &LifecyclePolicy, record: &Record, now: i64) -> bool {
+    selected_metadata(policy, record, now) && selected_path(policy, record)
+}
+pub(super) fn selected_current_path(
+    policy: &LifecyclePolicy,
+    record: &mut Record,
+    now: i64,
+    resolve: impl FnOnce() -> Option<String>,
+) -> bool {
+    if !selected_metadata(policy, record, now) {
+        return false;
+    }
+    let Some(path) = resolve() else {
+        return false;
+    };
+    record.path = path;
+    selected_path(policy, record)
 }
 impl MasterFilesystem {
     pub(super) async fn hsm_lifecycle(
@@ -346,11 +366,6 @@ impl MasterFilesystem {
                             continue;
                         };
                         let mut record: Record = decode(&bytes).map_err(io)?;
-                        // Resolve the authoritative inode identity; namespace renames do not need an external mirror.
-                        record.path = match fs.get_inode_path(rid.parse().map_err(io)?) {
-                            Ok(p) => p,
-                            Err(_) => continue,
-                        };
                         if policy.selection.min_access_age_ms > 0
                             && record.atime_ms
                                 > now.saturating_sub(policy.selection.min_access_age_ms as i64)
@@ -362,7 +377,13 @@ impl MasterFilesystem {
                                 .map(|s| format!("\u{3}hsm:candidate:{s}:"));
                             break;
                         }
-                        if !selected(&policy, &record, now) {
+                        // Reject cheap metadata conditions before resolving the
+                        // current namespace path. Never trust the cached path
+                        // for directory renames or membership decisions.
+                        let inode_id = rid.parse().map_err(io)?;
+                        if !selected_current_path(&policy, &mut record, now, || {
+                            fs.get_inode_path(inode_id).ok()
+                        }) {
                             continue;
                         }
                         if !record.sealed {
