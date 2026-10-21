@@ -4,10 +4,12 @@
 mod authority;
 mod commands;
 mod coordinator;
+mod input;
 mod session;
 mod transport;
 mod view;
 pub(crate) use coordinator::NativeCoordinator;
+pub(crate) use input::NativeInput;
 
 pub(crate) fn legacy_fenced(
     request: &curvine_proto::NativeMutationRequest,

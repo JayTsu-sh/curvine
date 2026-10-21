@@ -113,6 +113,13 @@ impl FsClient {
         T: Message + Default,
         R: Message + Default,
     {
+        self.native_rpc_encoded(code, header.encode_to_vec()).await
+    }
+
+    pub(super) async fn native_rpc_encoded<R>(&self, code: RpcCode, header: Vec<u8>) -> FsResult<R>
+    where
+        R: Message + Default,
+    {
         let ticket = self.native_commits.ticket(LocalTime::mills());
         let mut request = NativeMutationRequest {
             version: 1,
@@ -127,7 +134,7 @@ impl FsClient {
             sequence: ticket.sequence,
             acknowledged: ticket.acknowledged,
             code: code as u32,
-            header: header.encode_to_vec(),
+            header,
         };
         let result = async {
             for _ in 0..5 {

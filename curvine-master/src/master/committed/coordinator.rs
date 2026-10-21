@@ -3,20 +3,17 @@
 //! until every legacy native/background writer joins this ordered path.
 use super::{
     authority::*,
-    commands, transport,
+    transport,
     view::{BatchView, PreparedEdits},
+    NativeInput,
 };
 use crate::master::{fs::MasterFilesystem, Master};
 use curvine_core_error::ErrorExt;
 use curvine_error::{FsError, FsResult};
-use curvine_fs_api::RpcCode;
-use curvine_model::ProtoUtils;
 use curvine_proto::{
-    MkdirRequest, NativeMutationRequest, NativeMutationResponse,
-    NativeMutationStatusProto as Status,
+    NativeMutationRequest, NativeMutationResponse, NativeMutationStatusProto as Status,
 };
 use curvine_runtime::common::LocalTime;
-use prost::Message;
 use std::{
     collections::{HashMap, VecDeque},
     sync::{atomic::Ordering, Arc, Mutex},
@@ -25,6 +22,7 @@ use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
 
 struct Pending {
     request: NativeMutationRequest,
+    input: Option<NativeInput>,
     response: oneshot::Sender<FsResult<NativeMutationResponse>>,
     queued: std::time::Instant,
     _slot: OwnedSemaphorePermit,
@@ -52,6 +50,7 @@ impl NativeCoordinator {
         fs: MasterFilesystem,
         mount_manager: Arc<crate::master::MountManager>,
         request: NativeMutationRequest,
+        input: NativeInput,
     ) -> FsResult<NativeMutationResponse> {
         let queued = std::time::Instant::now();
         let slot = self
@@ -65,6 +64,7 @@ impl NativeCoordinator {
             let mut queue = self.queue.lock().unwrap();
             queue.pending.push_back(Pending {
                 request,
+                input: Some(input),
                 response,
                 queued,
                 _slot: slot,
@@ -167,7 +167,7 @@ impl NativeCoordinator {
                 let dir = fs.fs_dir.read();
                 let mut view = BatchView::new(&dir, 2 * 1024 * 1024);
                 let mut submitted: HashMap<(String, u64), ([u8; 32], usize)> = HashMap::new();
-                for item in pending {
+                for mut item in pending {
                     if item.response.is_closed() {
                         continue;
                     }
@@ -220,29 +220,16 @@ impl NativeCoordinator {
                             "native session needs committed retirement/admission",
                         ))
                     } else {
-                        (|| {
-                            let mkdir = MkdirRequest::decode(request.header.as_slice())
-                                .map_err(|error| FsError::common(error.to_string()))?;
-                            fs.check_path_length(&mkdir.path)?;
-                            if mount_manager
-                                .get_mount_info(&curvine_fs_api::Path::from_str(&mkdir.path)?)?
-                                .is_some()
-                            {
-                                return Err(FsError::common("committed HSM native creation requires a path outside UFS mounts"));
-                            }
-                            commands::mkdir(
-                                &mut view,
-                                &mkdir.path,
-                                ProtoUtils::mkdir_opts_from_pb(mkdir.opts),
-                                time,
-                            )
-                        })()
+                        item.input
+                            .take()
+                            .unwrap()
+                            .prepare(&fs, &mount_manager, &mut view, time)
                     };
                     let (edits, reply) = match prepared {
                         Ok(prepared) => (
                             prepared.edits,
                             NativeReply {
-                                code: RpcCode::Mkdir.into(),
+                                code: request.code as i8,
                                 success: true,
                                 header: prepared.response,
                                 body: vec![],
@@ -251,7 +238,7 @@ impl NativeCoordinator {
                         Err(error) => (
                             PreparedEdits::default(),
                             NativeReply {
-                                code: RpcCode::Mkdir.into(),
+                                code: request.code as i8,
                                 success: false,
                                 header: vec![],
                                 body: error.encode().to_vec(),

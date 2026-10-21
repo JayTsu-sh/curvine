@@ -36,7 +36,6 @@ use curvine_rpc::handler::MessageHandler;
 use curvine_rpc::message::Message;
 use curvine_runtime::runtime::{GroupExecutor, Runtime};
 use dashmap::DashMap;
-use prost::Message as _;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -1151,30 +1150,15 @@ impl MessageHandler for MasterHandler {
             match code {
                 RpcCode::NativeMutation => {
                     let request: NativeMutationRequest = ctx.parse_header()?;
-                    if request.version != 1 || request.code != RpcCode::Mkdir as u32 {
-                        return err_box!("unsupported native mutation version or operation");
-                    }
-                    let mkdir = MkdirRequest::decode(request.header.as_slice())
-                        .map_err(|error| FsError::common(error.to_string()))?;
-                    ctx.set_audit(Some(mkdir.path.clone()), None);
+                    let input = crate::master::committed::NativeInput::parse(&request)?;
+                    ctx.set_audit(Some(input.path().to_string()), None);
                     let response = if !self.fs.conf.hsm_enabled {
                         if !request.incarnation.is_empty() {
                             crate::master::committed::legacy_fenced(&request)
                         } else {
-                            let result = self.fs.mkdir_with_opts(
-                                &mkdir.path,
-                                ProtoUtils::mkdir_opts_from_pb(mkdir.opts),
-                            );
+                            let result = input.legacy(&self.fs);
                             let (success, header, body) = match result {
-                                Ok(status) => (
-                                    true,
-                                    MkdirResponse {
-                                        status: ProtoUtils::file_status_to_pb(status),
-                                        ..Default::default()
-                                    }
-                                    .encode_to_vec(),
-                                    vec![],
-                                ),
+                                Ok(header) => (true, header, vec![]),
                                 Err(error) => (false, vec![], error.encode().to_vec()),
                             };
                             NativeMutationResponse {
@@ -1192,14 +1176,14 @@ impl MessageHandler for MasterHandler {
                     } else {
                         let fs = self.fs.clone();
                         let mount_manager = self.mount_manager.clone();
-                        tokio::spawn(async move { fs.native_mutate(request, mount_manager).await })
-                            .await
-                            .unwrap_or_else(|error| {
-                                log::error!(
-                                    "native mutation owner vanished: {error}; aborting master"
-                                );
-                                std::process::abort();
-                            })?
+                        tokio::spawn(async move {
+                            fs.native_mutate(request, mount_manager, input).await
+                        })
+                        .await
+                        .unwrap_or_else(|error| {
+                            log::error!("native mutation owner vanished: {error}; aborting master");
+                            std::process::abort();
+                        })?
                     };
                     ctx.response(response)
                 }

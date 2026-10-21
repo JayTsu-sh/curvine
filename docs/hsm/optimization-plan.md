@@ -24,7 +24,7 @@
 
 统一提交层采用两入口（submit/read）的内部模块和 SDK 私有适配；准备确定的 owned 变更集、稳定请求身份和原始回复，Leader/Follower 同样 apply。未选用“把全部旧 handler 放入双树影子环境”的方案：它还需隔离 TTL、统计、Worker 删除、mount 和后台写入，正确性改造面更大。不能仅删除当前 gate 或把非确定 handler 原样移到 follower apply。
 
-`master/committed/` 已为 `mkdir` 接通生产 RPC、版本化 Native journal、双角色 apply 与本地应用回执；文件创建 helper 已通过准备/双副本发布测试，尚未接入 SDK。准备只复制触及的 inode/edge，不复制全 namespace。会话使用时间身份、序号、ack 退休下界、1024 条重试窗口及 32 MiB 结果预算；每次清理最多 8 条 ack 结果、最多 4 个过期会话范围。退休时间下界精确到毫秒并在同一 WriteBatch 推进，避免时钟回退后复活刚过期身份。
+`master/committed/` 已为 `mkdir` 和不覆盖现有文件的 `CreateFile` 接通生产 RPC、版本化 Native journal、双角色 apply 与本地应用回执。SDK 为这两类调用保存稳定身份；存储只解码一次业务输入，准备阶段复用原有创建参数校验。准备只复制触及的 inode/edge，不复制全 namespace。会话使用时间身份、序号、ack 退休下界、1024 条重试窗口及 32 MiB 结果预算；每次清理最多 8 条 ack 结果、最多 4 个过期会话范围。退休时间下界精确到毫秒并在同一 WriteBatch 推进，避免时钟回退后复活刚过期身份。
 
 SDK 在客户端内部维护会话、序号和连续 ack；并发完成存在空洞时不越过未知请求。只为新的独立调用轮换会话，重试中的请求不改身份。首次正向绑定 namespace 时，服务端先返回 incarnation 而不执行原操作；关闭 HSM 不写负能力缓存。窗口/字节满或提交未知时继续用原身份对账；预算不足最终返回不确定结果。绑定过的客户端不自动切换到另一个 namespace。
 
@@ -37,6 +37,8 @@ SDK 在客户端内部维护会话、序号和连续 ack；并发完成存在空
 Native mkdir 接入后的回归：Master 全量 225 项通过、2 项 ignored；SDK 会话 2 项通过；真实集群验证 32 个 mkdir 合批、首次绑定无业务效果、成功/失败原始结果重试、参数重绑定拒绝、ack 退休及后台 TTL 提交。完整 hsm-rs workspace 的 30 项功能测试与文档测试再次通过。协调器使用统一 panic 监督，避免后台 task 消失而队列永久保持 running；这一点不代替后续故障注入验收。
 
 关闭 HSM 的普通卷返回明确的 `LegacyResult`，保留原有确认行为；已经绑定 incarnation 的请求不能在关闭卷上执行。无 HSM 单 Master 与启用 HSM 三 Master 的两个真实集群用例均通过。后续比较必须区分 legacy 确认与 committed 确认，不能只凭共用 RPC envelope 就视为等价。
+
+新文件创建接入后的 Master 225 项单元测试和两个真实集群用例通过，新增覆盖 32 文件创建合批、创建成功后重命名仍返回原始结果、零长度完成纳管，以及后续真实块写入/透明读路径。覆盖写、重新打开、块分配和完成写入仍待迁移，暂未改变其原有 gate 路径。
 
 专项回归覆盖读状态物化、预算去重、快照规则变更、范围清理后的重放、恢复等待短快照、时钟跳变及空页不增长历史。真实 MiniCluster 已验证同 inode 32 读者合批与覆盖隔离；本轮代码使用路径 patch 接入 hsm-rs 后，workspace 的 30 项功能测试及全部文档测试通过，包含普通写入纳管、策略执行、并发自动 Recall、控制器资格切换和进程重启；百万测试保持 ignored，未把前一轮百万结果当成本轮验收。尚不能据此声明 P2 或全部性能优化完成。
 

@@ -1,10 +1,10 @@
 #![cfg(feature = "hsm-scale-test")]
 use curvine_config::ClusterConf;
 use curvine_fs_api::{Path, Reader, RpcCode, Writer};
-use curvine_model::{MkdirOpts, ProtoUtils};
+use curvine_model::{CreateFileOpts, MkdirOpts, OpenFlags, ProtoUtils};
 use curvine_proto::{
-    HsmControlRequest, MkdirRequest, NativeMutationRequest, NativeMutationResponse,
-    NativeMutationStatusProto as NativeStatus,
+    CreateFileRequest, HsmControlRequest, MkdirRequest, NativeMutationRequest,
+    NativeMutationResponse, NativeMutationStatusProto as NativeStatus,
 };
 use curvine_runtime::{common::Utils, runtime::RpcRuntime};
 use curvine_server::test::MiniCluster;
@@ -208,6 +208,55 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         next.incarnation = "another-volume".into();
         let fenced: NativeMutationResponse = native.rpc(RpcCode::NativeMutation, next).await?;
         assert_eq!(fenced.status, NativeStatus::Fenced as i32);
+        let mut create = request.clone();
+        create.session = request_id();
+        create.sequence = 1;
+        create.acknowledged = 0;
+        create.code = RpcCode::CreateFile as u32;
+        create.header = CreateFileRequest {
+            path: "/native-created-file".into(),
+            opts: ProtoUtils::create_opts_to_pb(
+                CreateFileOpts::with_create(false),
+                "manual",
+            ),
+            flags: OpenFlags::new_create().set_overwrite(false).value(),
+        }
+        .encode_to_vec();
+        let created: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, create.clone()).await?;
+        assert!(created.success && created.status == NativeStatus::Committed as i32);
+        fs.rename(
+            &Path::from_str("/native-created-file")?,
+            &Path::from_str("/native-renamed-file")?,
+        )
+        .await?;
+        let retry_create: NativeMutationResponse =
+            native.rpc(RpcCode::NativeMutation, create).await?;
+        assert_eq!(created, retry_create);
+        assert!(!fs.exists(&Path::from_str("/native-created-file")?).await?);
+        let before_files = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let writers: Vec<_> = stream::iter(0..32)
+            .map(|i| {
+                let fs = &fs;
+                async move {
+                    fs.create(&Path::from_str(format!("/native-file-{i}"))?, false)
+                        .await
+                }
+            })
+            .buffer_unordered(32)
+            .try_collect()
+            .await?;
+        let after_files = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let file_bundles = after_files["native_bundles"].as_u64().unwrap()
+            - before_files["native_bundles"].as_u64().unwrap();
+        let file_commands = after_files["native_commands"].as_f64().unwrap()
+            - before_files["native_commands"].as_f64().unwrap();
+        assert!(file_bundles > 0 && file_bundles < 32 && file_commands >= 32.0);
+        stream::iter(writers)
+            .map(|mut writer| async move { writer.complete().await })
+            .buffer_unordered(32)
+            .try_collect::<Vec<_>>()
+            .await?;
         // Native TTL still uses its original operation during migration, but
         // joins the same gate and confirms its journal prefix on an OS thread.
         let mut ttl_options = MkdirOpts::with_create(false);

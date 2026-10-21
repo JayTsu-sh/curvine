@@ -3,7 +3,6 @@ use super::authority::{apply_creation, NativeCommand, NativeResult, RequestIdent
 use crate::master::{fs::MasterFilesystem, journal::NativeEntry, meta::FsDir};
 use curvine_core_error::{err_box, CommonResult, ErrorExt};
 use curvine_error::{FsError, FsResult};
-use curvine_fs_api::RpcCode;
 use curvine_proto::{
     NativeMutationRequest, NativeMutationResponse, NativeMutationStatusProto as Status,
 };
@@ -101,13 +100,8 @@ impl MasterFilesystem {
         &self,
         request: NativeMutationRequest,
         mount_manager: Arc<crate::master::MountManager>,
+        input: super::NativeInput,
     ) -> FsResult<NativeMutationResponse> {
-        if request.version != VERSION
-            || request.code != RpcCode::Mkdir as u32
-            || request.header.len() > 2 * 1024 * 1024
-        {
-            return err_box!("unsupported native mutation format, operation or size");
-        }
         if request.incarnation.is_empty() {
             let gate = self.fs_dir.read().hsm_mutation_gate.clone();
             let _serial = gate.lock().await;
@@ -128,7 +122,7 @@ impl MasterFilesystem {
         }
         let coordinator = self.fs_dir.read().native_coordinator.clone();
         coordinator
-            .execute(self.clone(), mount_manager, request)
+            .execute(self.clone(), mount_manager, request, input)
             .await
     }
 

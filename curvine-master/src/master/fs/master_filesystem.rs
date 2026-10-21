@@ -378,17 +378,15 @@ impl MasterFilesystem {
         Ok(())
     }
 
-    pub fn create_with_opts<T: AsRef<str>>(
+    pub(crate) fn validate_create_opts(
         &self,
-        path: T,
-        opts: CreateFileOpts,
-        flags: OpenFlags,
-    ) -> FsResult<FileStatus> {
+        path: &str,
+        opts: &CreateFileOpts,
+        flags: &OpenFlags,
+    ) -> FsResult<()> {
         if !flags.create() {
             return err_box!("create_with_opts requires O_CREAT flag");
         }
-        let path = path.as_ref();
-
         // Check the path length
         self.check_path_length(path)?;
 
@@ -409,6 +407,18 @@ impl MasterFilesystem {
                 self.conf.max_block_size
             );
         }
+
+        Ok(())
+    }
+
+    pub fn create_with_opts<T: AsRef<str>>(
+        &self,
+        path: T,
+        opts: CreateFileOpts,
+        flags: OpenFlags,
+    ) -> FsResult<FileStatus> {
+        let path = path.as_ref();
+        self.validate_create_opts(path, &opts, &flags)?;
 
         let mut fs_dir = self.fs_dir.write();
         let inp = Self::resolve_path(&fs_dir, path)?;
