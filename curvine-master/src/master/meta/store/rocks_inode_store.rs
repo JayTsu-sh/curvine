@@ -48,6 +48,7 @@ impl RocksInodeStore {
     pub(crate) const CF_NATIVE_NAMESPACE_FORMAT: &'static str = "hsm_native_v6";
     pub(crate) const CF_HSM_CONDITIONAL_FORMAT: &'static str = "hsm_native_v7";
     pub(crate) const CF_LIFECYCLE_CONDITIONAL_FORMAT: &'static str = "hsm_native_v8";
+    pub(crate) const CF_WORKER_CLEANUP_FORMAT: &'static str = "hsm_native_v9";
 
     pub const PREFIX_MOUNT: u8 = 0x01;
     pub const PREFIX_LOCK: u8 = 0x02;
@@ -346,6 +347,23 @@ impl RocksInodeStore {
         after: Option<i64>,
         limit: usize,
     ) -> CommonResult<Vec<i64>> {
+        let block_ids = self.worker_blocks_page(worker_id, after, limit)?;
+        if !block_ids.is_empty() {
+            let mut batch = self.new_batch();
+            for id in &block_ids {
+                batch.delete_location(*id, worker_id)?;
+            }
+            batch.commit()?;
+        }
+        Ok(block_ids)
+    }
+
+    pub(crate) fn worker_blocks_page(
+        &self,
+        worker_id: u32,
+        after: Option<i64>,
+        limit: usize,
+    ) -> CommonResult<Vec<i64>> {
         if limit == 0 || limit > 1024 {
             return Err("lost Worker location page limit must be in 1..=1024".into());
         }
@@ -376,15 +394,55 @@ impl RocksInodeStore {
             iter.next();
         }
         iter.status()?;
-        drop(iter);
-        if !block_ids.is_empty() {
-            let mut batch = self.new_batch();
-            for id in &block_ids {
-                batch.delete_location(*id, worker_id)?;
-            }
-            batch.commit()?;
-        }
         Ok(block_ids)
+    }
+
+    /// One seek per Worker, never a walk of its complete block inventory.
+    pub(crate) fn location_workers_page(
+        &self,
+        after: Option<u32>,
+        limit: usize,
+    ) -> CommonResult<Vec<u32>> {
+        if limit == 0 || limit > 64 {
+            return Err("invalid Worker inventory page limit".into());
+        }
+        let Some(mut next) = after.map_or(Some(0), |id| id.checked_add(1)) else {
+            return Ok(vec![]);
+        };
+        let mut options = ReadOptions::default();
+        options.fill_cache(false);
+        let mut iter = self
+            .db
+            .get_db()
+            .raw_iterator_cf_opt(self.db.cf(Self::CF_LOCATION)?, options);
+        let mut ids = Vec::with_capacity(limit);
+        loop {
+            iter.seek(RocksUtils::u32_to_bytes(next));
+            let Some((key, _)) = iter.item() else {
+                break;
+            };
+            if key.len() != 12 {
+                return Err("invalid reverse location key".into());
+            }
+            let id = u32::from_be_bytes(key[..4].try_into()?);
+            ids.push(id);
+            if ids.len() == limit {
+                break;
+            }
+            match id.checked_add(1) {
+                Some(id) => next = id,
+                None => break,
+            }
+        }
+        iter.status()?;
+        Ok(ids)
+    }
+
+    pub(crate) fn inode_bytes(&self, id: i64) -> CommonResult<Option<Vec<u8>>> {
+        Ok(self
+            .db
+            .get_cf(Self::CF_INODES, RocksUtils::i64_to_bytes(id))?
+            .map(|value| value.to_vec()))
     }
 
     pub fn get_block_ids(&self, worker_id: u32) -> CommonResult<Vec<i64>> {
@@ -601,6 +659,31 @@ mod tests {
     use curvine_runtime::common::Utils;
 
     #[test]
+    fn worker_inventory_discovery_seeks_past_dense_block_prefixes() -> CommonResult<()> {
+        let directory = tempfile::tempdir()?;
+        let store = RocksInodeStore::new(
+            DBConf::new(directory.path().to_string_lossy().into_owned()),
+            true,
+        )?;
+        let mut batch = store.new_batch();
+        for worker in [0, 7, 9, u32::MAX] {
+            for block in 1..=2050 {
+                batch.add_location(block, &BlockLocation::with_id(worker))?;
+            }
+        }
+        batch.commit()?;
+        let before = store.db.get_db().latest_sequence_number();
+        assert_eq!(store.location_workers_page(None, 2)?, [0, 7]);
+        assert_eq!(store.location_workers_page(Some(7), 2)?, [9, u32::MAX]);
+        assert_eq!(store.location_workers_page(Some(10), 2)?, [u32::MAX]);
+        assert!(store.location_workers_page(Some(u32::MAX), 2)?.is_empty());
+        assert!(store.location_workers_page(None, 0).is_err());
+        assert!(store.location_workers_page(None, 65).is_err());
+        assert_eq!(store.db.get_db().latest_sequence_number(), before);
+        Ok(())
+    }
+
+    #[test]
     fn lost_worker_location_pages_follow_byte_order_and_bound_the_last_worker_prefix(
     ) -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
@@ -703,9 +786,12 @@ mod tests {
         let native_v7 = native_v6
             .clone()
             .add_cf(RocksInodeStore::CF_HSM_CONDITIONAL_FORMAT);
-        let upgraded = native_v7
+        let native_v8 = native_v7
             .clone()
             .add_cf(RocksInodeStore::CF_LIFECYCLE_CONDITIONAL_FORMAT);
+        let upgraded = native_v8
+            .clone()
+            .add_cf(RocksInodeStore::CF_WORKER_CLEANUP_FORMAT);
         let store = RocksInodeStore::new(upgraded.clone(), true)?;
         let checkpoint = store.db.create_checkpoint(1)?;
         drop(store);
@@ -717,8 +803,13 @@ mod tests {
         assert!(RocksInodeStore::new(native_v5, false).is_err());
         assert!(RocksInodeStore::new(native_v6, false).is_err());
         assert!(RocksInodeStore::new(native_v7, false).is_err());
+        assert!(RocksInodeStore::new(native_v8, false).is_err());
         let mut store = RocksInodeStore::new(upgraded, false)?;
         store.db.restore(checkpoint)?;
+        assert!(store
+            .db
+            .cf(RocksInodeStore::CF_WORKER_CLEANUP_FORMAT)
+            .is_ok());
         assert!(store
             .db
             .cf(RocksInodeStore::CF_LIFECYCLE_CONDITIONAL_FORMAT)

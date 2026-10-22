@@ -227,3 +227,10 @@ rename/替换/交换、递归属性/删除在 Native journal v5 记录紧凑输�
 Heartbeat 清理逐页取得 Background 独占资格，每页最多 1024 个位置；页间可提交前台/Recall。每次失联创建新的本地 token，接受重连心跳或新位置报告时取消；检查与本页删除按 fs_dir → WorkerManager 的锁顺序串行化。各页还必须属于最初 Leader 任期，角色恢复不会自动恢复旧本地清理任务。
 
 UFS 缓存失效确认后才安排 Worker 删除，安排完成后释放该页资格；副本修复在资格外逐页交接。该路径没有新增持久 outbox，因此不承诺提交后进程退出时旧缓存删除安排必然保留；本地 token 也不能代替物理 Worker fencing 或磁盘冗余。范围和回归证据见[分页清理设计](lost-worker-cleanup.md)。
+
+
+### Worker 清理检查点与持久修复需求
+
+清理 job、pending 页面和 cursor、每块修复需求现已由专用 CAS envelope 在 HSM 复制权威域提交。每页先提交 pending+需求；删除后的进度确认丢失可重新执行。Follower 不使用本地 Worker 视图执行删除。新任期从单调时刻开始等待配置的 worker_lost_interval，并要求当前无注册、近期无联系；继承 pending 后重新检查本地位置清单，不能把另一节点的 cursor 当作完整投影证明。修复需求不会因进入内存队列就丢弃，健康确认需要当前 inode 原始值、需求 observation 和本任期的新 Live 联系。
+
+实现、日志限制、v9 checkpoint 栅栏与测试范围见[持久接续设计](worker-cleanup-recovery.md)。这补上清理检查点与修复需求的接续，不代表旧缓存删除 outbox、物理磁盘故障、Recall 多副本或归档冗余已经完成。

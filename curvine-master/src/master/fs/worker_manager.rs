@@ -27,12 +27,44 @@ use curvine_runtime::common::{ByteUnit, LocalTime};
 use log::{info, warn};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// Local cancellation identity, not a durable file or HSM authority fact.
 /// A fresh identity is created for every observed loss, including an ABA loss.
 #[derive(Clone)]
-pub(crate) struct WorkerLossToken(Arc<()>);
+pub(crate) struct WorkerLossToken(Arc<WorkerLoss>);
+struct WorkerLoss {
+    id: String,
+    term: AtomicU64,
+    running: AtomicBool,
+}
+pub(crate) struct WorkerCleanupRun(WorkerLossToken);
+impl Drop for WorkerCleanupRun {
+    fn drop(&mut self) {
+        self.0 .0.running.store(false, Ordering::Release);
+    }
+}
+impl WorkerLossToken {
+    fn new(id: String, term: u64) -> Self {
+        Self(Arc::new(WorkerLoss {
+            id,
+            term: AtomicU64::new(term),
+            running: AtomicBool::new(false),
+        }))
+    }
+    pub(crate) fn id(&self) -> &str {
+        &self.0.id
+    }
+    pub(crate) fn try_run(&self) -> Option<WorkerCleanupRun> {
+        self.0
+            .running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| WorkerCleanupRun(self.clone()))
+    }
+}
 
 pub struct WorkerManager {
     pub(crate) worker_map: WorkerMap,
@@ -41,6 +73,7 @@ pub struct WorkerManager {
     pub(crate) cluster_id: String,
     pub(crate) conf: ClusterConf,
     lost_worker_tokens: HashMap<u32, WorkerLossToken>,
+    worker_contacts: HashMap<u32, Instant>,
 }
 
 impl WorkerManager {
@@ -54,6 +87,7 @@ impl WorkerManager {
             cluster_id: conf.cluster_id.to_string(),
             conf: conf.clone(),
             lost_worker_tokens: HashMap::new(),
+            worker_contacts: HashMap::new(),
         })
     }
 
@@ -86,7 +120,7 @@ impl WorkerManager {
                 // Enforce the same worker_id ↔ address rule as insert() before remove(): a Start
                 // from a conflicting address must not evict the live registration.
                 self.worker_map.ensure_worker_id_addr(&addr)?;
-                self.lost_worker_tokens.remove(&addr.worker_id);
+                self.cancel_worker_loss(addr.worker_id);
                 for stale in self.worker_map.remove_same_endpoint(&addr) {
                     self.lost_worker_tokens.remove(&stale.worker_id());
                     warn!(
@@ -123,7 +157,7 @@ impl WorkerManager {
             storages,
             component_info,
         )?;
-        self.lost_worker_tokens.remove(&worker_id);
+        self.cancel_worker_loss(worker_id);
         self.expire_scheduled_bytes();
         Ok(cmds)
     }
@@ -221,8 +255,10 @@ impl WorkerManager {
 
     pub fn remove_expired_worker(&mut self, id: u32) -> Option<WorkerInfo> {
         let worker = self.worker_map.remove_expired(id)?;
-        self.lost_worker_tokens
-            .insert(id, WorkerLossToken(Arc::new(())));
+        self.lost_worker_tokens.insert(
+            id,
+            WorkerLossToken::new(curvine_model::hsm::native::token(), 0),
+        );
         Some(worker)
     }
 
@@ -241,6 +277,47 @@ impl WorkerManager {
 
     pub(crate) fn cancel_worker_loss(&mut self, id: u32) {
         self.lost_worker_tokens.remove(&id);
+        self.worker_contacts.insert(id, Instant::now());
+    }
+
+    pub(crate) fn worker_contact_since(&self, id: u32, since: Instant) -> bool {
+        self.worker_contacts.get(&id).is_some_and(|at| *at >= since)
+    }
+
+    /// Durable jobs are hints. Every term first observes a fresh absence window;
+    /// no old persisted cursor authorizes deleting a live or recently seen Worker.
+    pub(crate) fn qualify_worker_loss(
+        &mut self,
+        id: u32,
+        loss: &str,
+        term: u64,
+        absence: Duration,
+    ) -> Option<WorkerLossToken> {
+        if term == 0
+            || self.get_worker(id).is_some()
+            || self
+                .worker_contacts
+                .get(&id)
+                .is_some_and(|at| at.elapsed() < absence)
+        {
+            return None;
+        }
+        if let Some(token) = self.lost_worker_tokens.get(&id) {
+            let previous = token.0.term.load(Ordering::Acquire);
+            if token.id() == loss && (previous == 0 || previous == term) {
+                token.0.term.store(term, Ordering::Release);
+                return Some(token.clone());
+            }
+        }
+        self.worker_map.lost_workers.entry(id).or_insert_with(|| {
+            let mut worker = WorkerInfo::default();
+            worker.address.worker_id = id;
+            worker.status = WorkerStatus::Lost;
+            worker
+        });
+        let token = WorkerLossToken::new(loss.to_owned(), term);
+        self.lost_worker_tokens.insert(id, token.clone());
+        Some(token)
     }
 
     pub fn add_blacklist_worker(&mut self, id: u32) -> Option<WorkerInfo> {

@@ -14,6 +14,7 @@
 
 mod worker_manager;
 pub use self::worker_manager::WorkerManager;
+pub(crate) mod worker_cleanup;
 
 mod heartbeat_checker;
 pub use self::heartbeat_checker::HeartbeatChecker;

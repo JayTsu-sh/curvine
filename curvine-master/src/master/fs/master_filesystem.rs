@@ -124,7 +124,7 @@ impl MasterFilesystem {
         self.committed_background_in_term(None, action, |_| true, |_| {})
     }
 
-    fn committed_background_in_term<T>(
+    pub(super) fn committed_background_in_term<T>(
         &self,
         originating_term: Option<u64>,
         action: impl FnOnce() -> FsResult<T>,
@@ -1578,9 +1578,11 @@ impl MasterFilesystem {
             // cancellation with the location publication under fs_dir.
             {
                 let mut wm = self.worker_manager.write();
+                let mut previous_worker = None;
                 for (add, _, location) in &chunk {
-                    if *add {
+                    if *add && previous_worker != Some(location.worker_id) {
                         wm.cancel_worker_loss(location.worker_id);
+                        previous_worker = Some(location.worker_id);
                     }
                 }
             }

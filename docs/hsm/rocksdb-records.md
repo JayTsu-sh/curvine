@@ -325,3 +325,8 @@ Native 创建和私有 Import 共用内存原子 ID 预留器；准备失败留�
 新增空 CF `hsm_native_v8`，没有新增逐文件数据库。`hsm-lifecycle-conditional-v1` 在 journal 中携带有界检查集：namespace 与动作 outcome 的原始值、容量策略读到的 `budget:online:v1`、候选/claim 的 Record 合并版本、当前路径和副本数；Transaction 中的 policy/run/intent/active expected 值继续逐键核对。检查过期返回 Busy/Fenced，不写游标、任务、索引、预算、binding 或 outcome。成功仍沿用同一 WriteBatch。最多 16 个文件、3 个公共键、34 个控制键、1 MiB 编码。
 
 水位仍基于 Worker 遥测样本，逻辑预算 CAS 防止并发发布重复消费旧观察，不代表物理容量强预留。历史 Transaction、read-batch、v7 文件封装的解释不变，全部 Master 必须匹配新代码。详细流程见[生命周期共享条件提交](lifecycle-shared-commit.md)。
+
+
+## Worker 清理的持久工作记录
+
+common CF 新增 `\x03hsm:worker-loss:v1:{worker:08x}`（JSON job/pending/cursor/term/rewind）与 `\x03hsm:worker-repair:v1:{block:016x}`（JSON block/observation）。它们是清理检查点和修复需求，不是 namespace 属性镜像。每页最多 1024 个块，pending 与需求同一个 CAS / WriteBatch 提交；新 observation 防止旧确认删除新失联需求。内部 envelope 为 hsm-worker-cleanup-v1，最大 1025 个写行、64 个 inode 检查和 2 MiB payload；空 CF hsm_native_v9 标记格式。所有 Master 必须匹配，旧 v8 opener 不能打开 v9 checkpoint。完整字段、接续顺序与健康确认边界见[详细设计](worker-cleanup-recovery.md)。

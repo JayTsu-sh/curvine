@@ -287,6 +287,16 @@ impl MiniCluster {
             .unwrap()
     }
 
+    #[cfg(feature = "hsm-scale-test")]
+    pub fn hsm_test_local_master_fs(&self) -> MasterFilesystem {
+        self.master_entries
+            .iter()
+            .next()
+            .expect("test Master not started")
+            .0
+            .clone()
+    }
+
     pub fn get_active_master_replication_manager(&self) -> Arc<MasterReplicationManager> {
         self.master_entries
             .iter()

@@ -437,7 +437,7 @@ hsm-rs 八个直接依赖及 lock 的 29 个 Curvine 包固定 `d5e88f1d03f399ff
 已完成公开批量写、目录共享等待、加权资格、外部执行通道、文件级控制共享提交与两次在线选主验证；**没有将全部性能优化标为完成**。
 
 1. 文件级 HSM、Seal、策略/任务和 GC 的共享提交已完成；namespace 创建/升级、controller epoch 变更及业务拒绝重新确认的独占是保留的全局协调边界。兼容原始 RPC 仍通过旧投影隔离，不能将它们描述为 owned 命令。
-2. 旧后台收敛仍需处理：失联 Worker 已改为最多 1024 项一页、页间重新排队，并按本次失联 token 和原始 Leader 任期取消旧任务；UFS 缓存失效仍在该页独占资格下确认，部分 TTL/UFS 动作也保留旧路径。普通无 UFS、已纳管文件的 TTL 旁路与原生目录 TTL 删除已在 owned 路径；仍不能把旧式 Worker 副作用全部描述为持久 outbox；清理跨任期的自动接续也尚未实现。
+2. 旧后台收敛仍需处理：失联 Worker 已改为最多 1024 项一页、页间重新排队，并按本次失联 token 和原始 Leader 任期取消旧任务；UFS 缓存失效仍在该页独占资格下确认，部分 TTL/UFS 动作也保留旧路径。普通无 UFS、已纳管文件的 TTL 旁路与原生目录 TTL 删除已在 owned 路径；仍不能把旧式 Worker 副作用全部描述为持久 outbox；清理跨任期接续现已实现，需在新任期重新确认失联；完整物理故障矩阵仍待验收。
 3. 网络选择性分区、Worker/磁盘丢失、归档冗余和控制者自动接管不因 Master 暂停/恢复通过而完成。尤其单副本私有 Recall 的物理 HA 保持原限制。
 4. 本轮没有升级 PVE，没有执行新版本百万规模持续负载验收或最终原版性能比较。完成剩余优化后再进行统一对照，不复用历史性能数字。
 
@@ -453,3 +453,10 @@ hsm-rs 八个直接依赖及 lock 的 29 个 Curvine 包固定 `d5e88f1d03f399ff
 最终 Source 回归通过：**290 项 Master、2 项真实 TCP/Raft、64 项文件系统与 6 项 inode 测试，0 失败**。纯位置清理无需 journal 回执的专项测试、清理暂停时真实 SDK 写入/读回、原有 UFS 缓存失效与 Follower journal 重放均通过。原始日志为开发环境 `research/hsm-worker-cleanup-end-final.log`（相对 `/work/jay/hsm`）；匹配外部组件的固定 Git 回归另行记录。
 
 配套组合回归已完成：Source 固定 `a1878b22`，hsm-rs 固定依赖提交 `9284921`；**32 项功能测试和全部文档测试通过**，七个 managed 场景含策略/任务两次在线选主、实际 Release/自动 Recall、后台暂停独立 Recall 与冷恢复。最终日志 `research/hsm-worker-cleanup-end-fixed-git.log`；完整范围及物理 Worker/清理接续限制见[分页清理验证](lost-worker-cleanup.md#验证)。没有开始新版本百万验收或最终原版性能对比。
+
+
+## Worker 清理的持久接续与修复需求
+
+当前生产 HSM 的清理 job、pending 页面、cursor 与修复需求已经写入 Curvine 的复制元数据。删除前同批提交 pending 与最多 1024 项修复需求；真正删除重新检查本地 token / 原始任期；共享提交推进进度，页内位置删除不等待空回执。每个新任期按 worker_lost_interval 重新确认失联，保留 pending 并重新检查该节点的位置清单。持久需求不能仅因交给内存副本队列就删除，确认还检查当前 inode、需求 observation 与新任期 Live 联系。
+
+恢复每轮最多发现 8 个 job、8 个有位置的 Worker，后者按前缀 seek 跳过整份块清单；每轮分发/确认最多 64 项修复。调度使用 try_spawn，队列满立即退让并释放 running/busy guard。新增日志 envelope hsm-worker-cleanup-v1 与 checkpoint 栅栏 hsm_native_v9；全部 Master 必须匹配。Source 最终回归 **297 项 Master、2 项真实 TCP/Raft、64 项文件系统与 6 项 inode 测试通过**。设计与剩余 UFS 删除 outbox / 大文件成本见[持久接续设计](worker-cleanup-recovery.md)。固定来源在线 HA 测试另行记录。

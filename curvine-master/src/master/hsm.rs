@@ -186,6 +186,9 @@ impl FsDir {
         self.apply_hsm_results(payload).map(|_| ())
     }
     fn apply_hsm_results(&mut self, payload: &[u8]) -> CommonResult<Vec<Value>> {
+        if let Some(bytes) = payload.strip_prefix(crate::master::fs::worker_cleanup::MAGIC) {
+            return crate::master::fs::worker_cleanup::apply(self, bytes).map(|value| vec![value]);
+        }
         if let Some(bytes) = payload.strip_prefix(READ_BATCH_MAGIC) {
             let transactions: Vec<Transaction> = decode(bytes)?;
             if transactions.is_empty() || transactions.len() > 32 {
@@ -642,7 +645,7 @@ impl MasterFilesystem {
         self.hsm_submit_payload(payload, transactions.len(), originating_term)
             .await
     }
-    async fn hsm_submit_payload(
+    pub(crate) async fn hsm_submit_payload(
         &self,
         payload: Vec<u8>,
         expected_results: usize,
