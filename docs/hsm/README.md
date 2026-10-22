@@ -71,3 +71,5 @@
 
 
 失联 Worker 清理已改为最多 1024 项分页、页间释放资格并交接副本修复；原始 Leader 任期与每次失联 token 共同取消旧任务，新位置报告早于 Running 心跳时也受保护。UFS 缓存按整个失联 Worker 不可用判断，旧式失效仍保留页内提交保护。实现、回归范围与剩余成本见[分页清理设计](lost-worker-cleanup.md)。
+
+Source `a1878b22` 的配套验收通过：290 项 Master、2 项真实 TCP/Raft、64 项文件系统、6 项 inode，以及固定 Git 的完整 hsm-rs 32 项功能/全部文档测试。清理页间前台真实读写、End 下线保留清理与原有两次在线选主场景均通过；物理 Worker 故障和清理自动接续仍待实现/验收。详见[最终范围](lost-worker-cleanup.md#验证)。

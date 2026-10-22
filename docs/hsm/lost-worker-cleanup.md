@@ -31,6 +31,7 @@ token 只是本地后台任务的取消资格，不是文件权威事实，不�
 - 旧缓存的 Worker 删除安排在确认之后、释放资格之前，但仍不是完整持久 outbox；提交后进程退出导致删除安排遗漏的恢复缺口需要后续改造。
 - 完整块报告 reconciliation 仍有整个 Worker 的集合/清单成本，未与本次 heartbeat 清理混为同一个路径。
 - 副本管理器仍保存必要的修复需求；逐页交接不意味着修复队列总内存与失联块数无关。
+- 清理调度和修复需求仍含本地状态。本次阻止旧任务跨任期继续，尚未增加持久清理游标或换主后的自动接续；页间取消测试不能当作完整故障修复验收。
 - 本地 token 不代替 Worker fencing、数据副本冗余、网络分区测试或控制器自动接管。
 
 本次没有修改持久格式，仍沿用此前 `hsm_native_v8` 栅栏和匹配版本 Master 的部署要求。百万规模验收、PVE 更新和最终原版 Curvine 性能对比不属于本次回归结论。
@@ -52,3 +53,6 @@ CARGO_TARGET_DIR=/work/cargo-target CXXFLAGS=-g0 cargo test \
 结果：**290 项 Master、2 项真实 TCP/Raft、64 项文件系统和 6 项 inode 测试通过，0 失败**；2 项 Master 规模测试及 1 项手工文件系统基准保持 ignored。纯位置清理专项用例启用 HSM gate，但使用无法提供提交回执的测试 writer；两页清理成功，证明其不依赖无日志确认。真实集群在首个 1024 项页面后暂停，剩余 1026 项未删除时仍完成 SDK 数据写入、关闭、读取及读取关闭；恢复后 2050 项全部清理，页大小为 1024/1024/2。
 
 最终日志：开发环境 `/work/jay/hsm/research/hsm-worker-cleanup-end-final.log`。前一版完整回归为 `research/hsm-worker-cleanup-root.log`，最终新增的无日志确认优化以 final 日志为准。
+
+
+配套固定 Git 回归：Source 代码为 `a1878b22f7fdbb5cb4cad532c520015912a511e8`，hsm-rs 提交为 `928492184c7da4491717b29d59aa2d560842c68d`。8 个直接依赖及 29 个 Curvine 锁定包均使用该 Source，其他依赖保持不变，没有 path patch。完整 workspace 启用 `hsm-curvine/native-integration` 后 **32 项功能、四个 crate 的文档测试全部通过，0 失败、3 ignored**；七个真实 managed 场景通过（88.58 秒），单独 native 搬运场景通过（22.79 秒）。包含普通写入/策略 Release/自动 Recall、冷恢复、后台暂停期间 Recall 及独立进程两次在线选主；该组合结果不代替物理 Worker 故障或清理自动接续验收。原始日志：`research/hsm-worker-cleanup-end-fixed-git.log`，详细范围见 [hsm-rs 验证记录](https://github.com/JayTsu-sh/hsm-rs/blob/main/docs/VALIDATION.md#2026-10-22-失联-worker-分页清理与固定来源回归)。
