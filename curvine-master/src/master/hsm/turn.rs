@@ -1,22 +1,24 @@
 // Copyright 2026 OPPO. Licensed under the Apache License, Version 2.0.
 //! Release coordination only for effects authorized by committed immutable
 //! reservations/retirement facts. Requalify before touching authority again.
+use crate::master::authority_gate::{AuthorityGate, AuthorityGuard, Class};
 use crate::master::fs::MasterFilesystem;
 use curvine_model::hsm::native::*;
 use std::{future::Future, sync::Arc};
-use tokio::sync::{OwnedRwLockWriteGuard, RwLock};
 
 pub(super) struct AuthorityTurn {
-    gate: Arc<RwLock<()>>,
-    guard: Option<OwnedRwLockWriteGuard<()>>,
+    gate: Arc<AuthorityGate>,
+    guard: Option<AuthorityGuard>,
+    class: Class,
     invalidated: bool,
 }
 impl AuthorityTurn {
-    pub(super) async fn acquire(fs: &MasterFilesystem) -> Self {
+    pub(super) async fn acquire(fs: &MasterFilesystem, class: Class) -> Self {
         let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
-        let guard = gate.clone().write_owned().await;
+        let guard = gate.enter(class, false).await;
         Self {
             gate,
+            class,
             guard: Some(guard),
             invalidated: false,
         }
@@ -46,7 +48,7 @@ impl AuthorityTurn {
                 .observe(started.elapsed().as_micros() as f64);
         }
         let waiting = std::time::Instant::now();
-        self.guard = Some(self.gate.clone().write_owned().await);
+        self.guard = Some(self.gate.enter(self.class, false).await);
         if let Ok(metrics) = crate::master::Master::get_metrics() {
             metrics
                 .hsm_stage_duration

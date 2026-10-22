@@ -41,12 +41,14 @@ const MODE_SETGID: u32 = 0o2000;
 /// Note: The modification operation uses &mut self, which is a necessary improvement. We use the unsafe API to perform modifications.
 pub struct FsDir {
     pub(crate) hsm_replaying: bool,
-    pub(crate) hsm_mutation_gate: Arc<tokio::sync::RwLock<()>>,
-    pub(crate) hsm_control_slots: Arc<tokio::sync::Semaphore>,
+    pub(crate) hsm_mutation_gate: Arc<crate::master::authority_gate::AuthorityGate>,
+    pub(crate) hsm_control_slots: [Arc<tokio::sync::Semaphore>; 3],
     pub(crate) hsm_metadata_reads: Arc<crate::master::committed::MetadataReads>,
     pub(crate) hsm_read_batcher: Arc<crate::master::hsm::read_batch::ReadBatcher>,
     pub(crate) hsm_read_clock: crate::master::hsm::read_clock::ReadClock,
     pub(crate) hsm_mutation_batcher: Arc<HsmMutationBatcher>,
+    #[cfg(feature = "hsm-scale-test")]
+    pub(crate) native_test_drop_receipt: Option<String>,
     pub(crate) native_coordinator: Arc<crate::master::committed::NativeCoordinator>,
     pub(crate) native_local_apply: Arc<
         dashmap::DashMap<
@@ -149,11 +151,13 @@ impl FsDir {
         let fs_dir = Self {
             hsm_replaying: false,
             hsm_mutation_gate: Default::default(),
-            hsm_control_slots: Arc::new(tokio::sync::Semaphore::new(128)),
+            hsm_control_slots: std::array::from_fn(|_| Arc::new(tokio::sync::Semaphore::new(128))),
             hsm_metadata_reads: Default::default(),
             hsm_read_batcher: Default::default(),
             hsm_read_clock: Default::default(),
             hsm_mutation_batcher: Default::default(),
+            #[cfg(feature = "hsm-scale-test")]
+            native_test_drop_receipt: None,
             native_coordinator: Default::default(),
             native_local_apply: Default::default(),
             hsm_local_apply: Default::default(),
@@ -255,7 +259,12 @@ impl FsDir {
     }
 
     #[cfg(feature = "hsm-scale-test")]
-    pub fn hsm_test_mutation_gate(&self) -> Arc<tokio::sync::RwLock<()>> {
+    pub fn hsm_test_drop_native_receipt(&mut self, session: &str) {
+        self.native_test_drop_receipt = Some(session.to_owned());
+    }
+
+    #[cfg(feature = "hsm-scale-test")]
+    pub fn hsm_test_mutation_gate(&self) -> Arc<crate::master::authority_gate::AuthorityGate> {
         self.hsm_mutation_gate.clone()
     }
 

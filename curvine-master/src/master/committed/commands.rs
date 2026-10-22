@@ -16,6 +16,7 @@ pub(super) struct PreparedCommand {
     pub(super) edits: PreparedEdits,
     pub(super) response: Vec<u8>,
     pub(super) allocation: Option<Allocation>,
+    pub(super) failure: Option<FsError>,
 }
 
 fn directory(
@@ -97,6 +98,7 @@ pub(super) fn mkdir(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -154,6 +156,7 @@ pub(super) fn create(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -212,6 +215,7 @@ pub(super) fn complete(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -223,10 +227,19 @@ pub(super) struct Allocation {
     workers: Vec<curvine_model::WorkerAddress>,
     block_size: i64,
     release: bool,
+    additional: Vec<Allocation>,
 }
 impl Allocation {
+    pub(super) fn combine(mut items: Vec<Self>) -> Option<Self> {
+        let mut first = items.pop()?;
+        first.additional.extend(items);
+        Some(first)
+    }
     pub(super) fn retain(mut self) {
         self.release = false;
+        for item in self.additional.drain(..) {
+            item.retain();
+        }
     }
 }
 impl Drop for Allocation {
@@ -284,6 +297,7 @@ pub(super) fn add_block(
             edits: view.finish()?,
             response,
             allocation: None,
+            failure: None,
         });
     }
     let commits: Vec<_> = request
@@ -304,6 +318,7 @@ pub(super) fn add_block(
         block_size: file.block_size as i64,
         workers: workers.clone(),
         release: true,
+        additional: vec![],
     };
     let has_spdk = fs.worker_manager.read().workers_have_spdk(&workers);
     file.add_block(crate::master::meta::BlockMeta::with_pre(block_id, &workers));
@@ -324,6 +339,7 @@ pub(super) fn add_block(
         edits: view.finish()?,
         response: ProtoUtils::located_block_to_pb(block).encode_to_vec(),
         allocation: Some(allocation),
+        failure: None,
     })
 }
 
@@ -361,6 +377,7 @@ pub(super) fn reopen(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -387,6 +404,7 @@ pub(super) fn overwrite(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -459,6 +477,7 @@ pub(super) fn set_attr(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -569,6 +588,7 @@ pub(super) fn delete(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -615,6 +635,7 @@ pub(super) fn rename(
             edits: view.finish()?,
             response,
             allocation: None,
+            failure: None,
         });
     }
     if dst[..dst_parts.len() - 1].contains(&source)
@@ -640,6 +661,7 @@ pub(super) fn rename(
             edits: view.finish()?,
             response,
             allocation: None,
+            failure: None,
         });
     }
     let mut refresh = view.subtree(source)?;
@@ -731,6 +753,7 @@ pub(super) fn rename(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -786,6 +809,7 @@ pub(super) fn resize(
         edits: view.finish()?,
         response,
         allocation: None,
+        failure: None,
     })
 }
 
@@ -820,6 +844,7 @@ pub(super) fn assign_worker(
             edits: view.finish()?,
             response,
             allocation: None,
+            failure: None,
         });
     }
     let workers = fs.choose_worker_for_file(
@@ -832,6 +857,7 @@ pub(super) fn assign_worker(
         workers: workers.clone(),
         block_size: file.block_size as i64,
         release: true,
+        additional: vec![],
     };
     let has_spdk = fs.worker_manager.read().workers_have_spdk(&workers);
     let meta = file.search_block_mut_check(request.block.id)?;
@@ -857,5 +883,6 @@ pub(super) fn assign_worker(
         edits: view.finish()?,
         response,
         allocation: Some(allocation),
+        failure: None,
     })
 }

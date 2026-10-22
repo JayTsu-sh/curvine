@@ -50,3 +50,6 @@
 2026-10-22 的当前代码已将 mkdir/create/overwrite/add-block/flush/close/write-open、非递归 SetAttr/Delete 接入 Native owned 命令和原始结果去重；读取保护合批、访问 overlay、有界历史、后台快照筛查及 Worker 网络等待解耦也已实现。Master 260 项及两个真实集群用例通过。rename/交换/替换、递归 SetAttr/Delete 和无挂载 TTL Delete 已使用紧凑 committed 输入与持久清理；各业务共用有界 ReadIndex 资格队列，详见[目录与后台命令](native-namespace.md)。owned 路径共享准备，相邻 Native/HSM entry 可合并 proposal；其余稀有 RPC、完整业务优先级与组合故障矩阵仍在收敛，旧式修改的独占边界尚未删除。完整优化后再执行本轮百万验收与原版对比，进度以[性能优化方案](optimization-plan.md)为准。
 
 [HA 设计与验收矩阵](ha-design.md) 将换主、微批幂等、读租约、控制器/执行器接管、归档冗余及 Recall 布局故障恢复作为性能优化前置约束；P1 已覆盖普通日志 originating term 约束，其余仍分阶段实现。
+
+
+最新批量/调度改造见 [批量写入与前后台调度](native-batches-scheduling.md)：三个公开批量接口使用单一持久身份与原子成功前缀；目录命令共享等待；Recall/前台/后台分别接入、按 4:8:1 分配资格。Master 268 项及两个真实集群用例通过，含提交后回执丢失注入；固定 Git 与组合 HA 验证仍以优化方案最新追加记录为准。历史段落中的“完整优先级未实现”描述的是当时提交。

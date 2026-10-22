@@ -208,6 +208,21 @@ impl MasterFilesystem {
         if results.len() != expected {
             return err_box!("native apply result count mismatch");
         }
+        #[cfg(feature = "hsm-scale-test")]
+        {
+            // Deliberately lose the success receipt only AFTER real Raft
+            // commit/local apply. Target one test session, never another
+            // request or a pre-commit failure. Production builds omit this.
+            let mut dir = self.fs_dir.write();
+            if dir
+                .native_test_drop_receipt
+                .as_ref()
+                .is_some_and(|session| results.iter().any(|result| result.session == *session))
+            {
+                dir.native_test_drop_receipt = None;
+                return err_box!("injected loss of committed Native receipt");
+            }
+        }
         Ok(results)
     }
 }

@@ -19,6 +19,7 @@ use curvine_raft::raft::storage::RocksLogStorage;
 use curvine_raft::raft::RaftJournal;
 use curvine_runtime::sync::ArcRwLock;
 
+pub mod authority_gate;
 pub mod meta;
 
 mod job;

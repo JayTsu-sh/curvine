@@ -327,6 +327,64 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert!(bundles > 0 && bundles < 32 && commands >= 32.0,
             "nonrecursive setattr did not use native committed batches");
         assert_eq!(fs.get_status(&Path::from_str("/native-file-0")?).await?.owner, "policy-owner");
+        // Public batch methods retain one durable identity per batch. The
+        // three stages use the owned coordinator, including per-item close
+        // failure and ordering for repeated paths.
+        let batch_client = fs.fs_client();
+        let before_batches = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        let batch_files = batch_client.create_files_batch((0..32).map(|i| {
+            let mut opts = CreateFileOpts::with_create(true);
+            opts.block_size = 4096;
+            opts.replicas = 1;
+            (format!("/public-batch/file-{i}"), opts, OpenFlags::new_create().set_overwrite(false))
+        }).collect()).await?;
+        assert_eq!(batch_files.len(), 32);
+        let locations = batch_client.add_blocks_batch((0..32)
+            .map(|i| format!("/public-batch/file-{i}")).collect()).await?;
+        assert_eq!(locations.len(), 32);
+        assert!(locations.iter().all(|block| !block.locs.is_empty()));
+        let name = batch_client.context().clone_client_name();
+        let mut closes: Vec<_> = (0..32).map(|i|
+            (format!("/public-batch/file-{i}"), 0, vec![], name.clone(), false)).collect();
+        closes.insert(1, ("/public-batch/missing".into(), 0, vec![], name, false));
+        let closed = batch_client.complete_files_batch(closes).await?;
+        assert_eq!(closed.len(), 33);
+        assert!(!closed[1]);
+        assert!(closed.iter().enumerate().all(|(i, ok)| i == 1 || *ok));
+        let after_batches = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
+        assert!(after_batches["native_commands"].as_f64().unwrap()
+            - before_batches["native_commands"].as_f64().unwrap() >= 3.0,
+            "public batches bypassed owned native publication");
+        let managed_batch = control(&fs, &json!({"op":"resolve","path":"/public-batch/file-0"})).await?;
+        assert_eq!(managed_batch["data"]["residency"], "Online");
+        fs.delete(&Path::from_str("/public-batch")?, true).await?;
+        // Inject a lost receipt after a real committed successful prefix.
+        // Uncertain is not an instruction to retry under a new identity.
+        let mut uncertain_batch = request.clone();
+        uncertain_batch.session = request_id();
+        uncertain_batch.sequence = 1;
+        uncertain_batch.acknowledged = 0;
+        uncertain_batch.code = RpcCode::CreateFilesBatch as u32;
+        let item = |path: &str| CreateFileRequest {
+            path: path.into(), opts: ProtoUtils::create_opts_to_pb(CreateFileOpts::with_create(true), "lost-receipt"),
+            flags: OpenFlags::new_create().set_overwrite(false).value(),
+        };
+        uncertain_batch.header = curvine_proto::CreateFilesBatchRequest {
+            requests: vec![item("/uncertain-batch"), item("/uncertain-batch"), item("/uncertain-never")],
+        }.encode_to_vec();
+        cluster.get_active_master_fs().fs_dir().write()
+            .hsm_test_drop_native_receipt(&uncertain_batch.session);
+        let lost: NativeMutationResponse = native.rpc(RpcCode::NativeMutation, uncertain_batch.clone()).await?;
+        assert_eq!(lost.status, NativeStatus::Uncertain as i32);
+        assert!(fs.exists(&Path::from_str("/uncertain-batch")?).await?);
+        assert!(!fs.exists(&Path::from_str("/uncertain-never")?).await?);
+        fs.rename(&Path::from_str("/uncertain-batch")?, &Path::from_str("/uncertain-moved")?).await?;
+        let original: NativeMutationResponse = native.rpc(RpcCode::NativeMutation, uncertain_batch.clone()).await?;
+        assert_eq!(original.status, NativeStatus::Committed as i32);
+        assert!(!original.success);
+        let repeated: NativeMutationResponse = native.rpc(RpcCode::NativeMutation, uncertain_batch).await?;
+        assert_eq!(original, repeated);
+        assert!(!fs.exists(&Path::from_str("/uncertain-batch")?).await?);
         // Real cross-family load touches independent inodes. Both pipelines
         // must preserve their results when ready entries share a proposal.
         let writes = stream::iter(0..64).map(|i| {
@@ -352,8 +410,17 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             fs.mkdir(&Path::from_str("/owned-during-shared-query")?, false)).await??;
         tokio::time::timeout(std::time::Duration::from_secs(2), fs.get_status(&online_path)).await??;
         let source_dir = Path::from_str("/native-batch-1")?;
+        let owned_dir = Path::from_str("/owned-after-shared-query")?;
+        tokio::time::timeout(std::time::Duration::from_secs(2),
+            fs.rename(&source_dir, &owned_dir)).await??;
         let moved_dir = Path::from_str("/legacy-after-shared-query")?;
-        let mut legacy = Box::pin(fs.rename(&source_dir, &moved_dir));
+        // rpc_bytes intentionally bypasses SDK Native routing: this really
+        // exercises the speculative compatibility handler, unlike fs.rename.
+        let legacy_client = fs.fs_client();
+        let mut legacy = Box::pin(legacy_client.rpc_bytes(RpcCode::Rename,
+            curvine_proto::RenameRequest {
+                src: owned_dir.encode(), dst: moved_dir.encode(), flags: 0,
+            }));
         assert!(tokio::time::timeout(std::time::Duration::from_millis(25), &mut legacy).await.is_err(),
             "legacy speculative rename entered a shared projection boundary");
         drop(shared);

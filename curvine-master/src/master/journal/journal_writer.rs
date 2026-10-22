@@ -948,7 +948,7 @@ mod tests {
             Some(monitor.journal_term.clone()),
         )?);
         let batcher = Arc::new(HsmMutationBatcher::default());
-        let gate = Arc::new(tokio::sync::RwLock::new(()));
+        let gate = Arc::new(crate::master::authority_gate::AuthorityGate::default());
         let held = gate.write().await;
         let (mutated, observed) = tokio::sync::oneshot::channel();
         let mut mutated = Some(mutated);

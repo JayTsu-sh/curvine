@@ -148,6 +148,7 @@ pub(super) fn apply(
                             }
                             .encode_to_vec(),
                             allocation: None,
+                            failure: None,
                         });
                     }
                 }
@@ -167,7 +168,7 @@ pub(super) fn apply(
     Ok(transport::response(&command.identity, result))
 }
 impl MasterFilesystem {
-    /// Called by the owned coordinator with its exclusive projection turn.
+    /// Called by the owned coordinator with its shared projection turn.
     /// Cancellation of the connection cannot release this turn before fencing.
     pub(super) async fn namespace_mutate(
         &self,

@@ -32,16 +32,17 @@ struct Pending {
 struct Queue {
     pending: VecDeque<Pending>,
     running: bool,
+    foreground_turns: usize,
 }
 pub(crate) struct NativeCoordinator {
     queue: Mutex<Queue>,
-    slots: Arc<Semaphore>,
+    slots: [Arc<Semaphore>; 2],
 }
 impl Default for NativeCoordinator {
     fn default() -> Self {
         Self {
             queue: Mutex::default(),
-            slots: Arc::new(Semaphore::new(128)),
+            slots: std::array::from_fn(|_| Arc::new(Semaphore::new(128))),
         }
     }
 }
@@ -54,8 +55,7 @@ impl NativeCoordinator {
         input: NativeInput,
     ) -> FsResult<NativeMutationResponse> {
         let queued = std::time::Instant::now();
-        let slot = self
-            .slots
+        let slot = self.slots[input.background() as usize]
             .clone()
             .acquire_owned()
             .await
@@ -89,12 +89,32 @@ impl NativeCoordinator {
             queue.running = false;
             return None;
         }
+        let foreground = queue
+            .pending
+            .iter()
+            .position(|item| !item.input.as_ref().unwrap().background());
+        let background = queue
+            .pending
+            .iter()
+            .position(|item| item.input.as_ref().unwrap().background());
+        if let Some(index) =
+            background.filter(|_| foreground.is_none() || queue.foreground_turns >= 8)
+        {
+            queue.foreground_turns = 0;
+            return Some(vec![queue.pending.remove(index).unwrap()]);
+        }
+        queue.foreground_turns = queue.foreground_turns.saturating_add(1).min(8);
         let mut batch: Vec<Pending> = vec![];
         let mut bytes = 0usize;
         while batch.len() < 32 {
-            let Some(next) = queue.pending.front() else {
+            let Some(index) = queue
+                .pending
+                .iter()
+                .position(|item| !item.input.as_ref().unwrap().background())
+            else {
                 break;
             };
+            let next = &queue.pending[index];
             if !batch.is_empty()
                 && (bytes.saturating_add(next.request.header.len()) > 512 * 1024
                     || next.input.as_ref().unwrap().namespace_input()
@@ -102,7 +122,7 @@ impl NativeCoordinator {
             {
                 break;
             }
-            let next = queue.pending.pop_front().unwrap();
+            let next = queue.pending.remove(index).unwrap();
             bytes = bytes.saturating_add(next.request.header.len());
             batch.push(next);
         }
@@ -117,11 +137,17 @@ impl NativeCoordinator {
             let namespace = pending[0].input.as_ref().unwrap().namespace_input();
             let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
             let gate_at = std::time::Instant::now();
-            let (_shared, _exclusive) = if namespace {
-                (None, Some(gate.write().await))
+            // Both prepared edits and compact namespace inputs are owned.
+            // Namespace expansion reads the current committed state at apply,
+            // including readers admitted after its captured protection clock.
+            // Keep speculative legacy writers excluded until commit/fencing,
+            // without excluding other owned requests while Raft is waiting.
+            let class = if pending[0].input.as_ref().unwrap().background() {
+                crate::master::authority_gate::Class::Background
             } else {
-                (Some(gate.read().await), None)
+                crate::master::authority_gate::Class::Foreground
             };
+            let _shared = gate.enter(class, true).await;
             let metrics = Master::get_metrics().expect("Master metrics initialized");
             metrics
                 .hsm_stage_duration
@@ -262,16 +288,25 @@ impl NativeCoordinator {
                     };
                     let (edits, reply) = match prepared {
                         Ok(prepared) => {
+                            let body = prepared
+                                .failure
+                                .as_ref()
+                                .map(|error| error.encode().to_vec())
+                                .unwrap_or_default();
                             if let Some(allocation) = prepared.allocation {
-                                allocations.push((commands.len(), allocation));
+                                allocations.push((commands.len(), allocation, body.clone()));
                             }
                             (
                                 prepared.edits,
                                 NativeReply {
                                     code: request.code as i8,
-                                    success: true,
-                                    header: prepared.response,
-                                    body: vec![],
+                                    success: prepared.failure.is_none(),
+                                    header: if prepared.failure.is_none() {
+                                        prepared.response
+                                    } else {
+                                        vec![]
+                                    },
+                                    body,
                                 },
                             )
                         }
@@ -326,10 +361,14 @@ impl NativeCoordinator {
                 }
                 result
             };
-            for (index, allocation) in allocations {
+            for (index, allocation, prefix_error) in allocations {
                 let retain = match &committed {
                     Ok(results) => {
-                        results[index].success || results[index].status == Status::Uncertain as i32
+                        results[index].success
+                            || results[index].status == Status::Uncertain as i32
+                            || !prefix_error.is_empty()
+                                && results[index].status == Status::Committed as i32
+                                && results[index].body == prefix_error
                     }
                     Err(_) => true,
                 };
@@ -352,5 +391,65 @@ impl NativeCoordinator {
                 let _ = item.response.send(result);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn foreground_batches_overtake_ttl_but_background_gets_a_bounded_turn() {
+        let coordinator = NativeCoordinator::default();
+        let push = |sequence, background| {
+            let input = if background {
+                NativeInput::TtlDelete {
+                    path: "/ttl".into(),
+                    inode: 2,
+                    metadata: [0; 32],
+                }
+            } else {
+                // Namespace inputs take one turn each; no 32-item ordinary
+                // coalescing obscures the foreground turn bound in this test.
+                NativeInput::Rename(curvine_proto::RenameRequest {
+                    src: "/a".into(),
+                    dst: "/b".into(),
+                    flags: 0,
+                })
+            };
+            let (response, _) = oneshot::channel();
+            coordinator
+                .queue
+                .lock()
+                .unwrap()
+                .pending
+                .push_back(Pending {
+                    request: NativeMutationRequest {
+                        sequence,
+                        ..Default::default()
+                    },
+                    input: Some(input),
+                    response,
+                    queued: std::time::Instant::now(),
+                    mounts: None,
+                    _slot: coordinator.slots[background as usize]
+                        .clone()
+                        .try_acquire_owned()
+                        .unwrap(),
+                });
+        };
+        push(100, true);
+        for sequence in 1..=12 {
+            push(sequence, false);
+        }
+        for sequence in 1..=8 {
+            assert_eq!(coordinator.take().unwrap()[0].request.sequence, sequence);
+        }
+        assert_eq!(coordinator.take().unwrap()[0].request.sequence, 100);
+        for sequence in 9..=12 {
+            assert_eq!(coordinator.take().unwrap()[0].request.sequence, sequence);
+        }
+        assert!(coordinator.take().is_none());
+        assert_eq!(coordinator.slots[0].available_permits(), 128);
+        assert_eq!(coordinator.slots[1].available_permits(), 128);
     }
 }

@@ -86,7 +86,7 @@ impl HsmMutationBatcher {
     pub(crate) async fn enqueue(
         self: &Arc<Self>,
         bytes: usize,
-        gate: Arc<tokio::sync::RwLock<()>>,
+        gate: Arc<crate::master::authority_gate::AuthorityGate>,
         writer: Arc<JournalWriter>,
         monitor: MasterMonitor,
     ) -> FsResult<MutationTicket> {
@@ -153,7 +153,7 @@ impl HsmMutationBatcher {
 
     async fn run(
         self: Arc<Self>,
-        gate: Arc<tokio::sync::RwLock<()>>,
+        gate: Arc<crate::master::authority_gate::AuthorityGate>,
         writer: Arc<JournalWriter>,
         monitor: MasterMonitor,
     ) {
@@ -162,7 +162,7 @@ impl HsmMutationBatcher {
             // fixed timer penalty when a client has only one RPC connection.
             tokio::task::yield_now().await;
             let wait = std::time::Instant::now();
-            let serial = gate.clone().write_owned().await;
+            let serial = gate.write().await;
             writer
                 .metrics
                 .hsm_stage_duration

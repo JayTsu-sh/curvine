@@ -741,9 +741,11 @@ impl MasterFilesystem {
                 }
             }
         };
+        let class =
+            crate::master::authority_gate::Class::control(value["op"].as_str().unwrap_or(""));
         let result = if value["op"] == "policy_scan" {
             let fs = self.clone();
-            self.hsm_run_owned(async move { fs.hsm_policy_scan(value).await })
+            self.hsm_run_owned(class, async move { fs.hsm_policy_scan(value).await })
                 .await
         } else if matches!(
             value["op"].as_str(),
@@ -756,7 +758,7 @@ impl MasterFilesystem {
                 .unwrap_or_else(error_value)
         } else {
             let fs = self.clone();
-            self.hsm_run_owned(async move { fs.hsm_serial_execute(value).await })
+            self.hsm_run_owned(class, async move { fs.hsm_serial_execute(value).await })
                 .await
         };
         HsmControlResponse {
@@ -770,9 +772,10 @@ impl MasterFilesystem {
     /// authority gate while a submitted outcome is still unknown.
     async fn hsm_run_owned(
         &self,
+        class: crate::master::authority_gate::Class,
         future: impl std::future::Future<Output = HsmResult<Value>> + Send + 'static,
     ) -> Value {
-        let slots = self.fs_dir.read().hsm_control_slots.clone();
+        let slots = self.fs_dir.read().hsm_control_slots[class as usize].clone();
         let permit = match slots.acquire_owned().await {
             Ok(permit) => permit,
             Err(error) => return error_value(io(error)),
@@ -789,7 +792,9 @@ impl MasterFilesystem {
     async fn hsm_serial_execute(&self, request: Value) -> HsmResult<Value> {
         // Legacy native writers still share this boundary until committed
         // publication is activated for every relevant mutation family.
-        let mut turn = turn::AuthorityTurn::acquire(self).await;
+        let class =
+            crate::master::authority_gate::Class::control(request["op"].as_str().unwrap_or(""));
+        let mut turn = turn::AuthorityTurn::acquire(self, class).await;
         let result = self.hsm_execute(request, &mut turn).await;
         if matches!(&result, Err(HsmError::Unknown(_))) {
             if let Err(error) = self.hsm_read_barrier().await {
@@ -1866,18 +1871,23 @@ mod tests {
             .enable_all()
             .build()?;
         rt.block_on(async {
-            let slots = fs.fs_dir.read().hsm_control_slots.clone();
+            let slots = fs.fs_dir.read().hsm_control_slots
+                [crate::master::authority_gate::Class::Foreground as usize]
+                .clone();
             let release = Arc::new(tokio::sync::Notify::new());
             let action_release = release.clone();
             let (finished, done) = tokio::sync::oneshot::channel();
             let child_fs = fs.clone();
             let caller = tokio::spawn(async move {
                 child_fs
-                    .hsm_run_owned(async move {
-                        action_release.notified().await;
-                        let _ = finished.send(());
-                        Ok(serde_json::json!({"kind":"done"}))
-                    })
+                    .hsm_run_owned(
+                        crate::master::authority_gate::Class::Foreground,
+                        async move {
+                            action_release.notified().await;
+                            let _ = finished.send(());
+                            Ok(serde_json::json!({"kind":"done"}))
+                        },
+                    )
                     .await
             });
             tokio::time::timeout(Duration::from_secs(2), async {
@@ -1906,10 +1916,13 @@ mod tests {
             let full = slots.clone().acquire_many_owned(128).await?;
             let executed = Arc::new(AtomicBool::new(false));
             let marker = executed.clone();
-            let mut waiting = Box::pin(fs.hsm_run_owned(async move {
-                marker.store(true, Ordering::SeqCst);
-                Ok(serde_json::json!({"kind":"done"}))
-            }));
+            let mut waiting = Box::pin(fs.hsm_run_owned(
+                crate::master::authority_gate::Class::Foreground,
+                async move {
+                    marker.store(true, Ordering::SeqCst);
+                    Ok(serde_json::json!({"kind":"done"}))
+                },
+            ));
             assert!(futures::poll!(&mut waiting).is_pending());
             drop(waiting);
             drop(full);

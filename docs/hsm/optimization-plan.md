@@ -1,6 +1,6 @@
 # HSM 性能优化方案
 
-状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open、非递归 SetAttr 和非递归 Delete 接入真实 committed 命令与 SDK 会话去重，rename/替换/交换、递归 SetAttr/Delete 和无 UFS 的 TTL Delete 已接入紧凑 committed 命令；少数其他 RPC 仍走过渡微批。owned 路径共享投影资格，相邻 prepared Native/HSM 条目可共用 proposal；各类请求已有统一 ReadIndex 资格队列，完整业务优先级调度仍未完成；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open、非递归 SetAttr 和非递归 Delete 接入真实 committed 命令与 SDK 会话去重，rename/替换/交换、递归 SetAttr/Delete 和无 UFS 的 TTL Delete 已接入紧凑 committed 命令；少数其他 RPC 仍走过渡微批。owned 路径共享投影资格，相邻 prepared Native/HSM 条目可共用 proposal；各类请求共用 ReadIndex 资格队列，投影资格已增加 Recall/前台/后台加权调度；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
 
 ## 当前实现与完成门槛（2026-10-22）
 
@@ -8,13 +8,13 @@
 |---|---|---|
 | 逻辑元数据查询 | Exists、FileStatus、目录列表、块信息、锁/挂载信息使用有界已提交读取资格；最多 64 个查询共用 ReadIndex，128 个接收名额、512 KiB 请求/批次限制；不生成工作流结果或空日志 | 当前查询完成前仍保护旧式投影；大型目录响应与统一混合队列仍待优化 |
 | 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
-| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/Resize/AssignWorker/非递归 SetAttr/Delete 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
+| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/Resize/AssignWorker/非递归 SetAttr/Delete 及三个公开批量写 API，最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
 | 非递归属性 | 只检查和修改目标 inode，不遍历/刷新后代；文件属性与稳定 HSM 记录、候选索引、ctime、原始结果同批发布；最多 32 条 Native 命令合批 | 递归属性使用紧凑 committed 输入和整批原子发布；大子树内存/时延仍需验收 |
 | 读取保护 | 最多 32 个条件读命令合并一次日志；普通在线读增量再合并为一次 RocksDB WriteBatch；批内读者/版本按顺序合并；原生 atime 每 inode 只写最终值 | 混合原生/HSM 统一提交；真实故障注入 |
 | 大文件读结果 | 超过 32 块时，持久化原始授权、原始 FileStatus 和逻辑布局摘要；即时回复仍返回完整块位置，重试在有效保护下重建位置，不延长授权 | 大布局/复制位置变化及故障重试验收；此项减少结果编码量，不等同于吞吐收益 |
 | 高频状态 | `record:{inode}` 保存稳定实体；`access:{inode}` 保存 base/version、revision、atime、readers；稳定变更原子合并并删除 overlay | 精确 atime 仍迁移候选索引、仍更新原生 inode，语义保持 |
 | 租约 | 任期内单调时间；`read-clock:v1` 持久时间下界；新任期/恢复时对既有读者保守等待 120 秒；SDK 截止期从发请求时计算 | 节点暂停、墙钟跳变与换主的端到端组合故障测试；无日志 delegation 未启用 |
-| 策略筛查 | 提交前缀后固定 RocksDB 快照，后台最多 4 个扫描；每页软预算 10 ms/2 MiB（允许首条进展），最多 256 行；不填充 RocksDB block cache | 前台持续 I/O 下的百万 namespace 验收；最终调度优先级 |
+| 策略筛查 | 提交前缀后固定 RocksDB 快照，后台最多 4 个扫描；每页软预算 10 ms/2 MiB（允许首条进展），最多 256 行；不填充 RocksDB block cache | 前台持续 I/O 下的百万 namespace 验收；已增加后台加权资格，仍需验收实际 P99 |
 | 策略入队 | 每批最多 16 个候选；重新检查 policy/run、record version、当前路径、读保护和共享预算 | 已用无日志 ReadIndex 建立前后读取资格；P2 完成后缩短跨提交 gate |
 | 空扫描页 | 手动纯查询不记工作流结果；周期页面只条件提交 cursor/pressure，通过 apply 回执返回，无永久 outcome/binding；真正入队继续持久保存结果 | 新旧日志/checkpoint 及取消/丢回执回归 |
 | 容量预算 | `budget:online:v1` 与 Ready/Running/终态 reservation 同批增减；正常读取 O(1)；旧 checkpoint 缺项时有界分页重建 | 并发规则与换主压力测试；不是 Recall 硬容量预留 |
@@ -363,3 +363,14 @@ hsm-rs 的八个直接依赖和 lock 的 29 个 Curvine 包固定 `6a60ef60f6dc1
 增强的全进程重启用例保留磁盘目录并排除旧 Leader：首次 Exists 正确，部分截断后的保留文件 inode/属性/内容一致，递归删除不复活，Worker 清理得到确认；保存的原始 Native 属性请求在目录后代已经改变、换主和重放后，仍逐字节返回原始响应。Curvine 另有 **260 项 Master 测试、两个 TCP/Raft 集群用例**通过。原始日志为开发环境 `research/hsm-namespace-canonical-result-green.log` 与 `research/hsm-namespace-canonical-git-pinned.log`（相对于 `/work/jay/hsm`）。hsm-rs 的发布记录见 [验证文档](https://github.com/JayTsu-sh/hsm-rs/blob/main/docs/VALIDATION.md)。
 
 此轮没有升级 PVE，也未执行当前代码的百万验收和最终原版性能比较。剩余是批量写 API、少数旧式 RPC 的迁移/保护边界、完整业务优先级和后台最低进度调度、组合故障矩阵；这些没有因资格证明合批而被标为完成。
+
+
+### 追加里程碑：批量写、目录共享等待与加权业务调度
+
+三个公开批量写 API 已使用单一 Native 身份、私有有界准备、条件原子发布和原始结果。创建/块分配保留遇错停止及成功前缀，关闭保留逐项结果；同一 Record 在一个公开批量请求中只推进一次 authority version。目录命令改为共享资格等待，apply 仍复核准备后出现的读者。实现细节、预算和限制见 [批量写入与前后台调度](native-batches-scheduling.md)。
+
+AuthorityGate 按 Recall/前台/后台 4:8:1 轮次调度，分别限制接入名额，保留共享/独占隔离；Worker I/O 释放并重新排队验证。Native 自身最多 8 个前台轮次后执行一个已等待的 TTL 请求，避免独立队列内部遮蔽全局权重。
+
+当前结构回归为 Master **268 项通过、2 ignored**，两个 TCP/Raft 集群用例通过；原始日志 `research/hsm-owned-batch-scheduling-receipt.log`。用例包含真实提交后指定会话回执丢失、改名后原身份重试、原始前缀错误及旧路径不复活。这个故障注入不等于网络分区。固定 Git 来源、进程重启/在线节点故障组合结果在后续确认后追加。
+
+仍保留少数稀有/挂载 RPC 与普通 HSM 控制的独占边界；没有把加权接入称为所有业务效果都可并行发布。百万规模持续负载、组合 HA 故障矩阵及最终原版对比尚未执行；历史数字不代表本次结果。

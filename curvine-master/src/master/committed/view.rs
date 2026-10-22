@@ -48,6 +48,7 @@ impl PreparedEdits {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct BatchView<'a> {
     authority: &'a FsDir,
     base_dirs: HashMap<i64, &'a InodeView>,
@@ -151,6 +152,13 @@ impl<'a> BatchView<'a> {
             .checked_add(*self.child_deltas.get(&id).unwrap_or(&0))
             .filter(|n| *n >= 0)
             .ok_or_else(|| "invalid prepared directory child count".into())
+    }
+    pub(super) fn rebase_records(&mut self, edits: &PreparedEdits) -> CommonResult<()> {
+        for (id, json) in &edits.hsm_records {
+            self.hsm_records
+                .insert(*id, Some(serde_json::from_slice(json)?));
+        }
+        Ok(())
     }
     fn install(&mut self, edits: &PreparedEdits) -> CommonResult<()> {
         let records = edits

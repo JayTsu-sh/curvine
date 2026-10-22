@@ -220,6 +220,13 @@ fn recursive_unlink_counts_all_aliases_without_deleting_outside_links() -> Commo
 fn captured_read_clock_guards_the_entire_command_without_partial_publication() -> CommonResult<()> {
     let (_root, fs) = fixture()?;
     let id = file(&fs, "/protected/data")?;
+    // Capture the compact command BEFORE a concurrent protected read commits.
+    // Shared admission must still observe that reader at committed expansion.
+    let bytes = rename(&fs, "/protected", "/moved", RenameFlags::new(0))?;
+    let mut blocked: NamespaceCommand = SerdeUtils::deserialize(&bytes)?;
+    blocked.protection =
+        serde_json::from_value(serde_json::json!({"now":1000,"recovering":false}))?;
+    let bytes = SerdeUtils::serialize(&blocked)?;
     {
         let dir = fs.fs_dir.read();
         let mut record = dir.hsm_record(id)?.unwrap();
@@ -232,11 +239,6 @@ fn captured_read_clock_guards_the_entire_command_without_partial_publication() -
         )?;
         batch.commit()?;
     }
-    let bytes = rename(&fs, "/protected", "/moved", RenameFlags::new(0))?;
-    let mut blocked: NamespaceCommand = SerdeUtils::deserialize(&bytes)?;
-    blocked.protection =
-        serde_json::from_value(serde_json::json!({"now":1000,"recovering":false}))?;
-    let bytes = SerdeUtils::serialize(&blocked)?;
     let result = replay(&fs, &bytes)?;
     assert!(!result.success);
     assert!(fs.exists("/protected/data")? && !fs.exists("/moved")?);

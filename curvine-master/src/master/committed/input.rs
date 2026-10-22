@@ -17,6 +17,9 @@ use prost::Message;
 
 pub(crate) enum NativeInput {
     Mkdir(MkdirRequest),
+    CreateBatch(curvine_proto::CreateFilesBatchRequest),
+    AddBatch(curvine_proto::AddBlocksBatchRequest),
+    CompleteBatch(curvine_proto::CompleteFilesBatchRequest),
     Create(CreateFileRequest),
     Complete(CompleteFileRequest),
     AddBlock(curvine_proto::AddBlockRequest),
@@ -38,6 +41,21 @@ impl NativeInput {
             return err_box!("unsupported native mutation format or size");
         }
         match request.code {
+            value if value == RpcCode::CreateFilesBatch as u32 => {
+                curvine_proto::CreateFilesBatchRequest::decode(request.header.as_slice())
+                    .map(Self::CreateBatch)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
+            value if value == RpcCode::AddBlocksBatch as u32 => {
+                curvine_proto::AddBlocksBatchRequest::decode(request.header.as_slice())
+                    .map(Self::AddBatch)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
+            value if value == RpcCode::CompleteFilesBatch as u32 => {
+                curvine_proto::CompleteFilesBatchRequest::decode(request.header.as_slice())
+                    .map(Self::CompleteBatch)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
             value if value == RpcCode::Mkdir as u32 => {
                 MkdirRequest::decode(request.header.as_slice())
                     .map(Self::Mkdir)
@@ -93,6 +111,18 @@ impl NativeInput {
     }
     pub(crate) fn path(&self) -> &str {
         match self {
+            Self::CreateBatch(request) => request
+                .requests
+                .first()
+                .map_or("/", |item| item.path.as_str()),
+            Self::AddBatch(request) => request
+                .requests
+                .first()
+                .map_or("/", |item| item.path.as_str()),
+            Self::CompleteBatch(request) => request
+                .requests
+                .first()
+                .map_or("/", |item| item.path.as_str()),
             Self::Mkdir(request) => &request.path,
             Self::Create(request) => &request.path,
             Self::Complete(request) => &request.path,
@@ -106,6 +136,9 @@ impl NativeInput {
             Self::TtlDelete { path, .. } => path,
         }
     }
+    pub(super) fn background(&self) -> bool {
+        matches!(self, Self::TtlDelete { .. })
+    }
     pub(super) fn namespace_input(&self) -> bool {
         match self {
             Self::Rename(_) | Self::TtlDelete { .. } => true,
@@ -116,6 +149,40 @@ impl NativeInput {
     }
     pub(crate) fn legacy(self, fs: &MasterFilesystem) -> FsResult<Vec<u8>> {
         match self {
+            Self::CreateBatch(request) => {
+                let mut file_statuses = vec![];
+                for item in request.requests {
+                    let bytes = Self::Create(item).legacy(fs)?;
+                    file_statuses.push(
+                        CreateFileResponse::decode(bytes.as_slice())
+                            .map_err(|error| FsError::common(error.to_string()))?
+                            .file_status,
+                    );
+                }
+                Ok(curvine_proto::CreateFilesBatchResponse { file_statuses }.encode_to_vec())
+            }
+            Self::AddBatch(request) => {
+                let mut blocks = vec![];
+                for item in request.requests {
+                    let bytes = Self::AddBlock(item).legacy(fs)?;
+                    blocks.push(
+                        curvine_proto::LocatedBlockProto::decode(bytes.as_slice())
+                            .map_err(|error| FsError::common(error.to_string()))?,
+                    );
+                }
+                Ok(curvine_proto::AddBlocksBatchResponse { blocks }.encode_to_vec())
+            }
+            Self::CompleteBatch(request) => {
+                let results = request
+                    .requests
+                    .into_iter()
+                    .map(|mut item| {
+                        item.return_file_blocks = Some(false);
+                        Self::Complete(item).legacy(fs).is_ok()
+                    })
+                    .collect();
+                Ok(curvine_proto::CompleteFilesBatchResponse { results }.encode_to_vec())
+            }
             Self::Resize(request) => Ok(curvine_proto::FileResizeResponse {
                 file_blocks: ProtoUtils::file_blocks_to_pb(fs.resize_by_id(
                     request.path,
@@ -249,6 +316,12 @@ impl NativeInput {
         view: &mut BatchView<'_>,
         time: i64,
     ) -> FsResult<PreparedCommand> {
+        if matches!(
+            self,
+            Self::CreateBatch(_) | Self::AddBatch(_) | Self::CompleteBatch(_)
+        ) {
+            return super::batch::prepare(self, fs, mounts, view, time);
+        }
         if mounts
             .get_mount_info(&Path::from_str(self.path())?)?
             .is_some()
@@ -256,6 +329,7 @@ impl NativeInput {
             return err_box!("native HSM metadata requires a path outside UFS mounts");
         }
         match self {
+            Self::CreateBatch(_) | Self::AddBatch(_) | Self::CompleteBatch(_) => unreachable!(),
             Self::Resize(request) => commands::resize(view, fs, request, time),
             Self::AssignWorker(request) => commands::assign_worker(view, fs, request),
             Self::TtlDelete { .. } => err_box!("TTL input requires compact committed expansion"),

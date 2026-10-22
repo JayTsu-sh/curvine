@@ -897,7 +897,13 @@ impl FsClient {
         }
         if matches!(
             code,
-            RpcCode::Mkdir | RpcCode::CreateFile | RpcCode::CompleteFile | RpcCode::AddBlock
+            RpcCode::Mkdir
+                | RpcCode::CreateFile
+                | RpcCode::CompleteFile
+                | RpcCode::AddBlock
+                | RpcCode::CreateFilesBatch
+                | RpcCode::AddBlocksBatch
+                | RpcCode::CompleteFilesBatch
         ) {
             self.native_rpc(code, header).await
         } else if matches!(

@@ -36,7 +36,9 @@ impl MasterFilesystem {
         context.validate()?;
         self.hsm_ensure_read_namespace().await?;
         let gate = self.fs_dir.read().hsm_mutation_gate.clone();
-        let serial = gate.read().await;
+        let serial = gate
+            .enter(crate::master::authority_gate::Class::Background, true)
+            .await;
         let readiness = async {
             self.hsm_read_barrier().await?;
             self.fs_dir
@@ -73,7 +75,9 @@ impl MasterFilesystem {
         ready?;
         let page = work.await.map_err(io)??;
         let wait = Instant::now();
-        let _serial = gate.write().await;
+        let _serial = gate
+            .enter(crate::master::authority_gate::Class::Background, false)
+            .await;
         self.hsm_read_barrier().await?;
         let current = self.fs_dir.read().hsm_namespace().map_err(io)?;
         let current = current.ok_or(HsmError::Fenced)?;

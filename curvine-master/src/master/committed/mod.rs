@@ -3,6 +3,7 @@
 //! all native mutation families have deterministic preparation/publication.
 mod authority;
 mod background;
+mod batch;
 mod commands;
 mod coordinator;
 mod garbage;

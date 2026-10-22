@@ -186,3 +186,10 @@ LocalArchive 的数据和 catalog/receipt 都是本地单节点文件。增加�
 rename/替换/交换、递归属性/删除在 Native journal v5 记录紧凑输入，由各副本在 committed apply 展开并原子发布；不执行旧式 Leader 提前修改。判断读者有效性的逻辑时钟及恢复宽限位随日志保存。旧结果重试不再展开目录；旧 inode 的后台 TTL 候选也不能删除同名新 inode 或新进入的子项。格式、硬链接、目录所有权转移和 GC 细节见 [目录与后台命令](native-namespace.md)。
 
 所有读取资格统一进入有界 FIFO，仅证明开始前摘出的等待者可共享该证明；新到达请求、不同任期和失败证明不能借用资格。OS 调度的 TTL 删除通过现有运行时提交 Native 命令，等待超时不取消 owned 任务。配额同步扫描/等待位于 blocking 线程，不在 Tokio RPC worker 上阻塞。其他旧式后台修改仍保留独占及自身前缀确认，不能将这些改造视为端到端故障验收完成。
+
+
+## 批量请求与调度的 HA 补充
+
+公开批量请求的成功前缀与原始错误一同持久发布。整个批量 CAS 冲突时不发布任何成功前缀；换主重试遵循同一 Native 身份，不重新准备已经确定的结果。一次公开批量请求合并内部 Record 版本变化，但保留最终 generation/state 和退休事实。详见 [批量写与调度](native-batches-scheduling.md)。
+
+加权资格是临时进程状态，重启后无需复制其队列；持久状态、ReadIndex、origin term 与条件 apply 仍是安全边界。公平权重不抢占已开始的提交，不承诺故障中的墙钟延迟。新增真实 Raft commit/local apply 后丢失指定 Native 回执的测试，改名后同身份重试保持成功前缀原错误且不重建路径；它不代替在线 Master 失联/恢复或网络分区验证。
