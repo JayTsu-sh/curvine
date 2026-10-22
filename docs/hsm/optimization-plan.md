@@ -394,3 +394,19 @@ ReadBatcher 的预检失败已向调用方返回错误，协调循环现正常�
 ### 执行器分流与按类索引分页
 
 增加 Source 的 work_class 分页，在既有 work:0:/work:1: 上 seek，不改变磁盘键和游标格式；跨类别游标拒绝。Master 回归增加 1,000 个 Recall 与两个后台任务混排的边界、分页和只读检查。hsm-rs 常驻 worker 分开运行 Recall 与 Archive/Release；原始 claim 与工作流结果继续由 Source 维护。详细行为见[批量写入与前后台调度](native-batches-scheduling.md)。执行器暂停后台、普通读自动 Recall 的组合回归另记。
+
+
+### 执行通道组合验收（代码 222a3254）
+
+Curvine **270 项 Master 测试通过、2 ignored**，两个 TCP/Raft 优化集群用例通过，日志 `research/hsm-work-class-pages-fixed.log`。hsm-rs 八个依赖及 29 个 Curvine Git source 固定 `222a32549739d91d9e685fad29647f9fe6532918`，没有本地路径 patch，其他 lock 项不变。完整 native-integration workspace **32 项功能测试通过、0 失败、3 ignored**，全部文档测试执行成功，日志 `research/hsm-worker-lanes-full-fixed-git.log`。客户端及测试提交：[d6e17ac](https://github.com/JayTsu-sh/hsm-rs/commit/d6e17ac9450d38001ecfdba38581736edc7829d2)。
+
+七个 managed 场景通过，包含两次在线选主/旧 Leader 恢复，以及真实 CLI worker 的后台轮次暂停：普通读取独立自动 Recall、校验 1 MiB+37 字节，后台文件此时仍 Online；恢复后台后 Archive 完成。全进程重启回归核对三个批量 API 的原始结果与成功前缀，单独 native 搬运场景也通过。三个 ignored 为百万规模测试及两个父测试显式启动的子进程 fixture。
+
+### 当前剩余边界
+
+本轮完成了公开批量写、目录共享等待、加权资格、外部执行通道与两次在线选主验证；**没有将全部性能优化标为完成**。
+
+1. 普通 HSM 控制仍独占提交。要与 Native 准备共享，需要先统一普通/私有 inode ID 预留，区分可重试的并发 CAS 冲突与必须持久保存的业务失败，避免通过直接去锁引入 ID 冲突或固化暂态失败。
+2. 少数兼容 RPC 与旧后台/UFS 副作用继续保留投影隔离；不能把 Worker 删除全部描述为已迁移持久 outbox。当前无 UFS 普通文件主路径已走 owned 命令，但完整 P2 收敛仍需完成。
+3. 网络选择性分区、Worker/磁盘丢失、归档冗余和控制者自动接管不因 Master 暂停/恢复通过而完成。尤其单副本私有 Recall 的物理 HA 保持原限制。
+4. 本轮没有升级 PVE，没有执行新版本百万规模持续负载验收或最终原版性能比较。完成剩余优化后再进行统一对照，不复用历史性能数字。
