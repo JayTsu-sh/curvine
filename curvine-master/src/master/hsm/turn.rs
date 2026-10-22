@@ -10,19 +10,37 @@ pub(super) struct AuthorityTurn {
     gate: Arc<AuthorityGate>,
     guard: Option<AuthorityGuard>,
     class: Class,
+    shared: bool,
     invalidated: bool,
 }
 impl AuthorityTurn {
-    pub(super) async fn acquire(fs: &MasterFilesystem, class: Class) -> Self {
+    pub(super) async fn acquire(fs: &MasterFilesystem, class: Class, shared: bool) -> Self {
         let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
-        let guard = gate.enter(class, false).await;
+        let guard = gate.enter(class, shared).await;
         Self {
             gate,
             class,
+            shared,
             guard: Some(guard),
             invalidated: false,
         }
     }
+    pub(super) fn shared(&self) -> bool {
+        self.shared
+    }
+
+    /// Business rejections still use the exclusive path. Drop/reenter and
+    /// requalify, then the caller MUST re-plan the whole request from scratch.
+    pub(super) async fn exclusive(
+        &mut self,
+        fs: &MasterFilesystem,
+        namespace: &Namespace,
+    ) -> HsmResult<()> {
+        assert!(self.shared && !self.invalidated);
+        self.shared = false;
+        self.external(fs, namespace, async { Ok(()) }).await
+    }
+
     pub(super) fn lost_qualification(&self) -> bool {
         self.invalidated
     }
@@ -48,7 +66,7 @@ impl AuthorityTurn {
                 .observe(started.elapsed().as_micros() as f64);
         }
         let waiting = std::time::Instant::now();
-        self.guard = Some(self.gate.enter(self.class, false).await);
+        self.guard = Some(self.gate.enter(self.class, self.shared).await);
         if let Ok(metrics) = crate::master::Master::get_metrics() {
             metrics
                 .hsm_stage_duration

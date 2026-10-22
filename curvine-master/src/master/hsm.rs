@@ -200,7 +200,16 @@ impl FsDir {
             }
             return Ok(results);
         }
-        let mut tx: Transaction = decode(payload.strip_prefix(LIFECYCLE_MAGIC).unwrap_or(payload))?;
+        let conditional = payload.starts_with(conditional::MAGIC);
+        let mut tx: Transaction = decode(
+            payload
+                .strip_prefix(conditional::MAGIC)
+                .or_else(|| payload.strip_prefix(LIFECYCLE_MAGIC))
+                .unwrap_or(payload),
+        )?;
+        if conditional {
+            conditional::validate(&tx)?;
+        }
         lifecycle::validate_scan_progress(&tx)?;
         if !tx.scan_progress_only {
             if let Some(outcome) = self.hsm_outcome(&tx.outcome)? {
@@ -212,6 +221,13 @@ impl FsDir {
                         "operation step already committed with different input",
                     )
                 }]);
+            }
+        }
+        // Only the new envelope changes stale-plan semantics. Legacy journal
+        // entries retain their original durable conflict outcomes on replay.
+        if conditional {
+            if let Some(response) = conditional::stale(self, &tx)? {
+                return Ok(vec![response]);
             }
         }
         let mut response = tx.response.clone();
@@ -563,6 +579,22 @@ impl MasterFilesystem {
         transactions: &[Transaction],
         originating_term: Option<u64>,
     ) -> HsmResult<Vec<Value>> {
+        self.hsm_submit_encoded(transactions, originating_term, false)
+            .await
+    }
+    async fn hsm_submit_conditional(&self, tx: &Transaction) -> HsmResult<Value> {
+        conditional::validate(tx).map_err(io)?;
+        Ok(self
+            .hsm_submit_encoded(std::slice::from_ref(tx), None, true)
+            .await?
+            .remove(0))
+    }
+    async fn hsm_submit_encoded(
+        &self,
+        transactions: &[Transaction],
+        originating_term: Option<u64>,
+        conditional: bool,
+    ) -> HsmResult<Vec<Value>> {
         if transactions.is_empty() {
             return Ok(vec![]);
         }
@@ -587,7 +619,14 @@ impl MasterFilesystem {
         // Even a singleton access overlay uses the versioned bundle. Older
         // running HSM replicas must reject the new state-machine format rather
         // than ignore read_state and falsely acknowledge an unprotected read.
-        let payload = if transactions.len() > 1
+        let payload = if conditional {
+            assert_eq!(transactions.len(), 1);
+            [
+                conditional::MAGIC,
+                pack(&transactions[0]).map_err(io)?.as_slice(),
+            ]
+            .concat()
+        } else if transactions.len() > 1
             || transactions
                 .iter()
                 .any(|tx| tx.read_state.is_some() || tx.scan_progress_only)
@@ -787,10 +826,13 @@ impl MasterFilesystem {
     }
 
     async fn hsm_serial_execute(&self, request: Value) -> HsmResult<Value> {
-        // Legacy native writers still share this boundary until committed
-        // publication is activated for every relevant mutation family.
         let class = crate::master::authority_gate::Class::request(&request);
-        let mut turn = turn::AuthorityTurn::acquire(self, class).await;
+        let shared = conditional::shared_request(&request);
+        // Bootstrap remains exclusive; no shared planner creates namespaces.
+        if request["op"] != "capabilities" {
+            self.hsm_ensure_read_namespace().await?;
+        }
+        let mut turn = turn::AuthorityTurn::acquire(self, class, shared).await;
         // Reject failed preflight before entering the mutation uncertainty
         // boundary. In particular, NotLeader after a pause is not a reason
         // to abort an otherwise healthy follower that has submitted nothing.
@@ -1149,6 +1191,10 @@ impl MasterFilesystem {
             ) {
                 return Err(error);
             }
+            if turn.shared() {
+                turn.exclusive(self, &namespace).await?;
+                return Box::pin(self.hsm_execute(request, turn)).await;
+            }
             return self
                 .hsm_submit(&rejected(&namespace, &request, &key, &fingerprint, error))
                 .await;
@@ -1164,13 +1210,23 @@ impl MasterFilesystem {
             {
                 return Err(e)
             }
-            Err(e) => Plan {
-                tx: rejected(&namespace, &request, &key, &fingerprint, e),
-                allocate: None,
-                gc: None,
-            },
+            Err(e) => {
+                if turn.shared() {
+                    turn.exclusive(self, &namespace).await?;
+                    return Box::pin(self.hsm_execute(request, turn)).await;
+                }
+                Plan {
+                    tx: rejected(&namespace, &request, &key, &fingerprint, e),
+                    allocate: None,
+                    gc: None,
+                }
+            }
         };
-        let response = self.hsm_submit(&plan.tx).await?;
+        let response = if turn.shared() {
+            self.hsm_submit_conditional(&plan.tx).await?
+        } else {
+            self.hsm_submit(&plan.tx).await?
+        };
         if response["kind"] != "error" {
             if plan.allocate.is_some() {
                 let target: RecallTarget = field(&response, "data")?;
@@ -1602,12 +1658,15 @@ impl MasterFilesystem {
     ) -> HsmResult<()> {
         let id = entity_id(entity, namespace)?;
         loop {
-            let mut record = self
-                .fs_dir
-                .read()
-                .hsm_record(id)
-                .map_err(io)?
-                .ok_or_else(|| HsmError::NotFound("managed entity".into()))?;
+            let mut record = {
+                let fs = self.fs_dir.read();
+                let mut record = fs
+                    .hsm_record(id)
+                    .map_err(io)?
+                    .ok_or_else(|| HsmError::NotFound("managed entity".into()))?;
+                record.path = fs.get_inode_path(id).map_err(io)?;
+                record
+            };
             if !record.native_garbage.is_empty() {
                 let blocks = {
                     let fs = self.fs_dir.read();
@@ -1658,7 +1717,7 @@ impl MasterFilesystem {
                         data: None,
                         action: None,
                     };
-                    let response = self.hsm_submit(&tx).await?;
+                    let response = self.hsm_submit_conditional(&tx).await?;
                     if response["kind"] == "error" {
                         return Err(HsmError::Busy("GC raced a record update".into()));
                     }
@@ -1689,11 +1748,14 @@ impl MasterFilesystem {
             // Reads and other GC work may have advanced the record while the
             // Worker was deleting. Remove only the acknowledged immutable ID
             // from the latest version, retaining new readers/layouts/anchors.
-            let current = self.fs_dir.read().hsm_record(id).map_err(io)?;
-            let Some(current) = current else {
-                return Ok(());
+            record = {
+                let fs = self.fs_dir.read();
+                let Some(mut current) = fs.hsm_record(id).map_err(io)? else {
+                    return Ok(());
+                };
+                current.path = fs.get_inode_path(id).map_err(io)?;
+                current
             };
-            record = current;
             if record
                 .published
                 .as_ref()
@@ -1732,10 +1794,10 @@ impl MasterFilesystem {
                 data: None,
                 action: None,
             };
-            let result = self.hsm_submit(&tx).await?;
+            let result = self.hsm_submit_conditional(&tx).await?;
             if result["kind"] == "error" {
-                return Err(HsmError::Unknown(
-                    "GC acknowledgement needs reconciliation".into(),
+                return Err(HsmError::Busy(
+                    "GC acknowledgement raced an authority update".into(),
                 ));
             }
         }
@@ -2007,4 +2069,5 @@ mod read_apply;
 #[path = "hsm/read_clock.rs"]
 pub(crate) mod read_clock;
 
+mod conditional;
 mod turn;

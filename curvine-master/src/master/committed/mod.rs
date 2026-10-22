@@ -120,7 +120,46 @@ mod tests {
     }
 
     #[test]
-    fn failed_budget_admission_does_not_consume_ids_or_leave_pending_edges() -> CommonResult<()> {
+    fn independent_native_views_and_private_hsm_reserve_distinct_inode_ids() -> CommonResult<()> {
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let fs = JournalSystem::fs_only_for_test(&conf)?;
+        let authority = fs.fs_dir.read();
+        let sequence = authority
+            .get_rocks_store()
+            .db
+            .get_db()
+            .latest_sequence_number();
+        let mut first = BatchView::new(&authority, 1024);
+        let mut second = BatchView::new(&authority, 1024);
+        let a = first.command().allocate_inode()?;
+        let private = authority.inode_id.next()?;
+        let b = second.command().allocate_inode()?;
+        assert!(a < private && private < b);
+        authority.update_last_inode_id(a)?;
+        assert_eq!(authority.last_inode_id(), b);
+        // Reservation itself creates neither inode nor persistent metadata.
+        for id in [a, private, b] {
+            assert!(authority.store.get_inode(id, None)?.is_none());
+        }
+        assert_eq!(
+            authority
+                .get_rocks_store()
+                .db
+                .get_db()
+                .latest_sequence_number(),
+            sequence
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_budget_admission_leaves_an_id_gap_without_pending_edges() -> CommonResult<()> {
         crate::master::Master::init_test_metrics();
         let root = tempfile::tempdir()?;
         let mut conf = curvine_config::ClusterConf::format();
@@ -150,7 +189,7 @@ mod tests {
         assert!(rejected);
         assert!(command.finish().is_err());
         let mut next_command = batch.command();
-        assert_eq!(next_command.allocate_inode()?, next);
+        assert_eq!(next_command.allocate_inode()?, next + 1);
         assert_eq!(next_command.resolve("/never-0")?, vec![ROOT_INODE_ID]);
         assert!(authority.root_dir.get_child("never").is_none());
         Ok(())

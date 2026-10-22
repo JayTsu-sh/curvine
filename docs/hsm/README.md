@@ -56,3 +56,6 @@
 
 
 固定 Git `222a3254` 的组合验证已通过：Master **270 项**、两个 TCP/Raft 优化用例、完整 hsm-rs **32 项功能及全部文档测试**。新增真实常驻 worker 后台暂停期间普通读独立 Recall、恢复后 Archive；独立 Master 进程两次在线选主/旧任期恢复也通过。当前剩余普通 HSM 控制并行化、旧式后台副作用及规模/最终性能验收，详见[最新进度与边界](optimization-plan.md#当前剩余边界)。未升级 PVE。
+
+
+文件级 HSM 控制、Seal 和已有 namespace 的 SDK 绑定已改为共享等待；统一 Native/Import 的 inode 预留，以新条件封装区分可重试的过期计划与持久业务拒绝。**276 项 Master 与两个真实 TCP/Raft 用例通过**，见[文件级条件提交](conditional-controls.md)。策略/任务的跨记录条件和少数旧后台路径仍在收敛，尚未执行本轮百万及最终性能对照。

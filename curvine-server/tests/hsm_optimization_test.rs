@@ -144,6 +144,34 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             payload: br#"{"op":"namespace"}"#.to_vec(),
         })
         .await?;
+        // A real HSM Import and native namespace creation must both finish
+        // while another shared authority turn remains held. The previous
+        // exclusive control path could not pass this boundary. Their IDs
+        // come from one allocator, including Worker allocation/requalification.
+        let authority_gate = cluster.get_active_master_fs().fs_dir().read().hsm_test_mutation_gate();
+        let shared_turn = authority_gate.read().await;
+        let ids = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            stream::iter(0..16).map(|index| {
+                let fs = &fs;
+                async move {
+                    let context = json!({"operation_id":request_id(),"controller_epoch":1,"attempt_epoch":1});
+                    let prepare = json!({"op":"prepare_import", "context":context,
+                        "path":format!("/.hsm/parallel-import-{index}"), "length":0,
+                        "digest":{"algorithm":"blake3","value":blake3::hash(b"").as_bytes().to_vec()}});
+                    let path = Path::from_str(format!("/parallel-native-{index}"))?;
+                    let (import, native) = tokio::join!(control(fs, &prepare), fs.mkdir(&path, false));
+                    native?;
+                    let import = import?;
+                    assert_eq!(import["kind"], "recall", "{import}");
+                    let private = import["data"]["data"]["entity"]["entity"].as_str().ok_or("missing import ID")?.parse::<i64>()?;
+                    let native = fs.get_status(&path).await?.id;
+                    Ok::<_, Box<dyn std::error::Error + Send + Sync>>([private, native])
+                }
+            }).buffer_unordered(8).try_collect::<Vec<_>>().await
+        }).await??;
+        drop(shared_turn);
+        let unique: std::collections::BTreeSet<_> = ids.into_iter().flatten().collect();
+        assert_eq!(unique.len(), 32, "parallel HSM/native inode identity collision");
         let before_native = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
         stream::iter(0..32)
             .map(|i| {

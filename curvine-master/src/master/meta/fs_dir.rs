@@ -131,7 +131,8 @@ impl FsDir {
                 .add_cf(RocksInodeStore::CF_NATIVE_FORMAT)
                 .add_cf(RocksInodeStore::CF_NATIVE_GC_FORMAT)
                 .add_cf(RocksInodeStore::CF_NATIVE_DELETE_FORMAT)
-                .add_cf(RocksInodeStore::CF_NATIVE_NAMESPACE_FORMAT);
+                .add_cf(RocksInodeStore::CF_NATIVE_NAMESPACE_FORMAT)
+                .add_cf(RocksInodeStore::CF_HSM_CONDITIONAL_FORMAT);
         }
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;
@@ -1146,12 +1147,7 @@ impl FsDir {
     }
 
     pub fn update_last_inode_id(&self, new_value: i64) -> CommonResult<()> {
-        let old_value = self.last_inode_id();
-        if new_value > old_value {
-            self.inode_id.reset(new_value)
-        } else {
-            Ok(())
-        }
+        self.inode_id.advance_to(new_value)
     }
 
     // Read data from rocksdb to build a directory tree

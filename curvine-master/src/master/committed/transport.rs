@@ -127,15 +127,23 @@ impl MasterFilesystem {
         input: super::NativeInput,
     ) -> FsResult<NativeMutationResponse> {
         if request.incarnation.is_empty() {
+            // Creating/upgrading the namespace is rare and exclusive. Binding
+            // another SDK session to an existing namespace is a read, and must
+            // not stall all shared native/HSM preparation behind a writer.
+            self.hsm_ensure_read_namespace()
+                .await
+                .map_err(|error| FsError::common(error.to_string()))?;
             let gate = self.fs_dir.read().hsm_mutation_gate.clone();
-            let _serial = gate.write().await;
+            let _shared = gate.read().await;
             self.hsm_read_barrier()
                 .await
                 .map_err(|error| FsError::common(error.to_string()))?;
             let ns = self
-                .hsm_namespace_init()
-                .await
-                .map_err(|error| FsError::common(error.to_string()))?;
+                .fs_dir
+                .read()
+                .hsm_namespace()?
+                .filter(|namespace| namespace.ordinary_format >= 2)
+                .ok_or_else(|| FsError::common("native namespace requires upgrade"))?;
             let mut response = basic(
                 &request,
                 Status::NeedsNamespace,

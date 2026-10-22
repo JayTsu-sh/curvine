@@ -203,3 +203,10 @@ rename/替换/交换、递归属性/删除在 Native journal v5 记录紧凑输�
 
 
 后续固定 Git `222a3254` 的组合回归已通过：旧 Leader 不再因无修改的预检失败退出，独立进程的两次选主/恢复完成，Release/Recall、inode/内容及批量原始响应保持正确。另验证后台执行器暂停期间普通读取独立 Recall、恢复后 Archive 进展。完整结果见[组合验收](optimization-plan.md#执行通道组合验收代码-222a3254)。这仍未覆盖选择性网络分区、私有 Recall 的 Worker/磁盘故障或归档单节点丢失。
+
+
+### 文件级 HSM 共享准备的结果边界
+
+文件级控制和 Seal 使用新条件日志封装；新读者、内容版本或路径观察使计划过期时，apply 返回确定的未发布 Busy，不创建 workflow binding/outcome。同一逻辑操作可在新 Leader 上重新准备；已有成功 outcome 优先返回原始结果。业务拒绝释放共享资格后重新取得独占资格、验证 ReadIndex/namespace/epoch 并从头检查，不能保存旧准备产生的错误。已提交但回执未知仍需前缀确认，未弱化 fail-stop 边界。
+
+新空 CF `hsm_native_v7` 是 checkpoint 兼容性栅栏，历史日志解释不变，全 Master 必须匹配代码。Native 与 Import 的共享原子预留避免并发 inode 别名，恢复 floor 不回退到较低重放值。详细设计及 Root 回归见[文件级条件提交](conditional-controls.md)和[最新进度](optimization-plan.md#文件控制共享提交与-inode-统一预留)。物理 Worker/磁盘故障覆盖不因这些元数据并发检查而完成。

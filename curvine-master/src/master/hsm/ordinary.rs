@@ -397,7 +397,12 @@ impl MasterFilesystem {
         match self.hsm_prepare_ordinary(ns, request, None)? {
             OrdinaryPlan::Immediate(value) => Ok(value),
             OrdinaryPlan::Transaction(tx, _, public) => {
-                let applied = self.hsm_submit(&tx).await?;
+                let applied =
+                    if matches!(request["op"].as_str(), Some("seal_begin" | "seal_commit")) {
+                        self.hsm_submit_conditional(&tx).await?
+                    } else {
+                        self.hsm_submit(&tx).await?
+                    };
                 Ok(read_grant::publish(&tx.response, applied, public.as_ref()))
             }
         }

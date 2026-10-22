@@ -73,6 +73,20 @@ impl InodeId {
         self.0.get()
     }
 
+    /// Replay/application raises a floor while live preparation may reserve
+    /// further IDs. Advancing must never fail merely because a reservation won.
+    pub(crate) fn advance_to(&self, floor: i64) -> CommonResult<()> {
+        if !(ROOT_INODE_ID..=Self::ID_MASK).contains(&floor) {
+            return err_box!("invalid inode allocation floor {}", floor);
+        }
+        loop {
+            let current = self.current();
+            if current >= floor || self.0.compare_and_set(current, floor) {
+                return Ok(());
+            }
+        }
+    }
+
     pub fn reset(&self, new_value: i64) -> CommonResult<()> {
         loop {
             let c = self.current();
@@ -96,6 +110,40 @@ mod tests {
     use crate::master::meta::InodeId;
     use curvine_core_error::CommonResult;
     use curvine_runtime::common::Utils;
+
+    #[test]
+    fn concurrent_reservations_and_replay_floors_only_advance() -> CommonResult<()> {
+        let allocator = InodeId::new();
+        let reservations = std::thread::scope(|scope| {
+            let tasks: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut ids = Vec::new();
+                        for _ in 0..2048 {
+                            let id = allocator.next().unwrap();
+                            // A replay/apply floor may be older than another thread's
+                            // reservation. It must neither rewind nor fail.
+                            allocator.advance_to(id).unwrap();
+                            allocator
+                                .advance_to(crate::master::meta::inode::ROOT_INODE_ID)
+                                .unwrap();
+                            ids.push(id);
+                        }
+                        ids
+                    })
+                })
+                .collect();
+            tasks
+                .into_iter()
+                .flat_map(|task| task.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let unique: std::collections::BTreeSet<_> = reservations.iter().copied().collect();
+        assert_eq!(unique.len(), 8192);
+        assert!(allocator.current() >= *unique.last().unwrap());
+        assert!(allocator.advance_to(InodeId::ID_MASK + 1).is_err());
+        Ok(())
+    }
 
     #[test]
     fn test_id_create() -> CommonResult<()> {

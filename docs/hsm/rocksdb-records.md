@@ -311,3 +311,10 @@ HSM 卷冷启动用一个 WriteBatch 的 7 个范围墓碑清除原生 inode/edg
 `hsm_native_v6` 是新增的空兼容性 CF，业务数据仍在既有 inode/edge/block/location/common 中。它标识 compact namespace command：原始输入、稳定请求身份、捕获的操作/租约时间以及内部 TTL 条件进入 journal；不把全子树展开数据塞入日志。apply 生成的 inode/edge/HSM/access/candidate/每块退休事实与 session 原始结果同一 WriteBatch。目录移动后加载 FileEntry 对应的完整 inode 并更新 HSM 路径。
 
 历史 Native v1–v4 的 DTO 不改变；v5 单独解码。CF v6 使旧进程不能误开新 checkpoint，仍要求全 Master 支持后启用，不提供混合版本滚动激活。失联 Worker 的派生位置正反索引以 1,024 块为一批同时移除；该位置清理不代表 Worker 磁盘删除确认。
+
+
+### 文件控制条件封装与格式栅栏 v7
+
+新增空 CF `hsm_native_v7`，没有新增元数据镜像或逐文件副本。新 `hsm-conditional-v1` 日志复用 Transaction 数据，专用于文件记录条件发布；版本、当前路径或 create 观察过期时，不修改投影、不创建 binding/outcome，返回 Busy。成功状态、Record/派生索引/退休事实与原始结果继续同一 WriteBatch。历史无此封装的 Transaction 仍按旧规则持久保存 CAS 冲突。
+
+Native 创建和私有 Import 共用内存原子 ID 预留器；准备失败留下空洞。已有持久 inode floor 继续只由 committed apply 推进；并发预留超过重放 floor 时只保持较大值。已有 namespace 的 SDK 绑定是共享读取，创建/升级才独占。具体流程与回退边界见[文件级条件提交](conditional-controls.md)。

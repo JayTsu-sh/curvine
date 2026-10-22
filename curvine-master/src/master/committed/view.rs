@@ -494,13 +494,11 @@ impl CommandView<'_, '_> {
         Ok(resolved)
     }
     pub(super) fn allocate_inode(&mut self) -> CommonResult<i64> {
-        self.edits.last_inode = self
-            .edits
-            .last_inode
-            .checked_add(1)
-            .filter(|id| *id <= crate::master::meta::InodeId::ID_MASK)
-            .ok_or("inode allocation exhausted")?;
-        Ok(self.edits.last_inode)
+        // Native preparation and private HSM import share one reservation
+        // allocator. Failed/abandoned commands may leave gaps, never aliases.
+        let id = self.batch.authority.inode_id.next()?;
+        self.edits.last_inode = self.edits.last_inode.max(id);
+        Ok(id)
     }
     pub(super) fn put_inode(&mut self, inode: InodeView) -> CommonResult<()> {
         let id = inode.id();

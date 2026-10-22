@@ -402,11 +402,19 @@ Curvine **270 项 Master 测试通过、2 ignored**，两个 TCP/Raft 优化集�
 
 七个 managed 场景通过，包含两次在线选主/旧 Leader 恢复，以及真实 CLI worker 的后台轮次暂停：普通读取独立自动 Recall、校验 1 MiB+37 字节，后台文件此时仍 Online；恢复后台后 Archive 完成。全进程重启回归核对三个批量 API 的原始结果与成功前缀，单独 native 搬运场景也通过。三个 ignored 为百万规模测试及两个父测试显式启动的子进程 fixture。
 
+### 文件控制共享提交与 inode 统一预留
+
+成功的文件级 HSM 控制、Seal 和只读控制已共享资格准备/等待 Raft。Native 与私有 Import 共用 inode 原子预留，apply 以原子 max 推进恢复 floor；失败准备可以留下 ID 空洞。新增 `hsm-conditional-v1` 封装：apply 前版本/路径/create 观察过期返回 Busy，不写入 Record、工作流绑定或永久 outcome；相同身份重新准备可成功。业务拒绝重新取得独占资格并从头检查后才持久保存。旧日志仍重放旧语义，新增空 CF `hsm_native_v7` 阻止旧二进制误开 checkpoint。详情见[文件级条件提交](conditional-controls.md)。
+
+真实共享进展回归同时发起 16 个 HSM Import 和 16 个 Native 创建，并保持一个共享资格不退出，检查 32 个 inode 均不同。它首先暴露 SDK 绑定已有 namespace 仍申请独占资格：`research/hsm-conditional-control-fixed.log` 的集群测试超时。修复为“仅创建/升级独占、绑定已有 namespace 共享读取”后通过，未放宽测试边界。最终完整 Root 回归日志 `research/hsm-conditional-final-root.log`：**276 项 Master 通过、0 失败、2 ignored，两个 TCP/Raft 用例通过（38.85 秒）**。还覆盖新读者使已准备 Release 失效且租约不丢失、暂态拒绝不写 RocksDB/绑定、原身份重试、历史持久冲突兼容、路径观察失效、格式栅栏与并发 ID 预留。
+
+以上日志相对 `/work/jay/hsm`，没有运行百万规模和最终性能比较。固定 Git 的 hsm-rs 组合验证另记。
+
 ### 当前剩余边界
 
-本轮完成了公开批量写、目录共享等待、加权资格、外部执行通道与两次在线选主验证；**没有将全部性能优化标为完成**。
+已完成公开批量写、目录共享等待、加权资格、外部执行通道、文件级控制共享提交与两次在线选主验证；**没有将全部性能优化标为完成**。
 
-1. 普通 HSM 控制仍独占提交。要与 Native 准备共享，需要先统一普通/私有 inode ID 预留，区分可重试的并发 CAS 冲突与必须持久保存的业务失败，避免通过直接去锁引入 ID 冲突或固化暂态失败。
+1. 文件级 HSM 控制、Seal 与只读控制已共享提交；namespace 创建/升级、controller epoch 修改、策略更新/扫描入队、任务 claim/finish 和显式 GC 入口仍独占。下一步是将跨记录条件、容量预算和路径观察明确纳入提交前检查，再缩短这些生命周期控制的独占区间。不能仅以文件 Record CAS 替代它们的跨记录约束。
 2. 少数兼容 RPC 与旧后台/UFS 副作用继续保留投影隔离；不能把 Worker 删除全部描述为已迁移持久 outbox。当前无 UFS 普通文件主路径已走 owned 命令，但完整 P2 收敛仍需完成。
 3. 网络选择性分区、Worker/磁盘丢失、归档冗余和控制者自动接管不因 Master 暂停/恢复通过而完成。尤其单副本私有 Recall 的物理 HA 保持原限制。
 4. 本轮没有升级 PVE，没有执行新版本百万规模持续负载验收或最终原版性能比较。完成剩余优化后再进行统一对照，不复用历史性能数字。
