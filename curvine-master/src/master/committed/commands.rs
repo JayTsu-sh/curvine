@@ -390,6 +390,30 @@ pub(super) fn overwrite(
     })
 }
 
+/// Protobuf maps have no canonical iteration order. Namespace commands build
+/// this response independently on each replica, so persist a sorted encoding.
+/// The small wrappers use the existing wire tags/types; the public generated
+/// DTO and already-cached original response bytes remain unchanged.
+fn attribute_response(mut status: curvine_proto::FileStatusProto) -> Vec<u8> {
+    #[derive(Clone, PartialEq, Message)]
+    struct OrderedAttributes {
+        #[prost(btree_map = "string, bytes", tag = "13")]
+        values: std::collections::BTreeMap<String, Vec<u8>>,
+    }
+    #[derive(Clone, PartialEq, Message)]
+    struct Response {
+        // A nested message and bytes share the length-delimited wire type.
+        #[prost(bytes = "vec", required, tag = "1")]
+        status: Vec<u8>,
+    }
+    let attributes = OrderedAttributes {
+        values: std::mem::take(&mut status.x_attr).into_iter().collect(),
+    };
+    let mut encoded = status.encode_to_vec();
+    encoded.extend(attributes.encode_to_vec());
+    Response { status: encoded }.encode_to_vec()
+}
+
 /// Recursive inputs are expanded only inside committed apply. Child options
 /// retain Curvine's ACL/replica inheritance without propagating timestamps/TTL.
 pub(super) fn set_attr(
@@ -430,10 +454,7 @@ pub(super) fn set_attr(
             view.enroll(&inode)?;
         }
     }
-    let response = curvine_proto::SetAttrResponse {
-        status: ProtoUtils::file_status_to_pb(view.status(path, root)?),
-    }
-    .encode_to_vec();
+    let response = attribute_response(ProtoUtils::file_status_to_pb(view.status(path, root)?));
     Ok(PreparedCommand {
         edits: view.finish()?,
         response,

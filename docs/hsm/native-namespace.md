@@ -54,7 +54,7 @@ TTL 候选携带 inode ID 和规范化元数据摘要。apply 同时复核当前
 
 Native journal v1/v2/v3/v4 继续按历史 DTO 解码；v5 是独立紧凑 namespace 输入，公共 NativeMutation envelope 仍为 v1。新增空 CF `hsm_native_v6` 阻止不支持该语义的二进制打开 checkpoint。所有 Master 必须支持后再启用；没有跨版本滚动激活协议。
 
-当前 Master 259 项通过、2 项 ignored；两个 TCP/Raft 优化集群用例通过。覆盖 Native 部分截断/清零/扩展与实际 Worker 分配、有界退休/原分配结果重试、2,048 文件递归属性、完整目录移动/交换、硬链接递归删除、原结果重试、捕获的租约时钟、同摘要新增子项的 TTL 拒绝、替换 inode 保护、资格合并/取消/任期错误、有界位置清理及真实 Worker 删除确认。完整 hsm-rs/进程重启组合回归另记于性能优化方案；这些不是新的百万验收或原版性能对比。
+当前 Master 260 项通过、2 项 ignored；两个 TCP/Raft 优化集群用例通过。覆盖 Native 部分截断/清零/扩展与实际 Worker 分配、有界退休/原分配结果重试、2,048 文件递归属性、完整目录移动/交换、硬链接递归删除、原结果重试、捕获的租约时钟、同摘要新增子项的 TTL 拒绝、替换 inode 保护、资格合并/取消/任期错误、有界位置清理及真实 Worker 删除确认。完整 hsm-rs/进程重启组合回归另记于性能优化方案；这些不是新的百万验收或原版性能对比。
 
 复现 Curvine 回归：
 
@@ -63,3 +63,7 @@ CARGO_TARGET_DIR=/work/cargo-target CXXFLAGS=-g0 cargo test \
   -p curvine-master -p curvine-server --features hsm-scale-test \
   --lib --test hsm_optimization_test -j 6
 ```
+
+### 属性结果的确定性编码
+
+紧凑命令由各副本生成结果，不能依赖 HashMap 的进程内迭代顺序。SetAttrResponse 的 xattr 现在按键排序编码，其他 FileStatus 字段与现有 protobuf wire tag/type 保持；公共 DTO 仍是既有类型，已缓存的旧结果按原字节返回。新增回归先稳定复现原实现相同逻辑属性得到不同响应字节，再验证反复重新加载映射得到相同响应。当前 Master 260 项及两个真实集群用例通过；不改变历史 journal DTO 或 checkpoint 格式。

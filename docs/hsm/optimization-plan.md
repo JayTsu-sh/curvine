@@ -8,7 +8,7 @@
 |---|---|---|
 | 逻辑元数据查询 | Exists、FileStatus、目录列表、块信息、锁/挂载信息使用有界已提交读取资格；最多 64 个查询共用 ReadIndex，128 个接收名额、512 KiB 请求/批次限制；不生成工作流结果或空日志 | 当前查询完成前仍保护旧式投影；大型目录响应与统一混合队列仍待优化 |
 | 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
-| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/非递归 SetAttr/Delete 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
+| 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/Resize/AssignWorker/非递归 SetAttr/Delete 最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
 | 非递归属性 | 只检查和修改目标 inode，不遍历/刷新后代；文件属性与稳定 HSM 记录、候选索引、ctime、原始结果同批发布；最多 32 条 Native 命令合批 | 递归属性使用紧凑 committed 输入和整批原子发布；大子树内存/时延仍需验收 |
 | 读取保护 | 最多 32 个条件读命令合并一次日志；普通在线读增量再合并为一次 RocksDB WriteBatch；批内读者/版本按顺序合并；原生 atime 每 inode 只写最终值 | 混合原生/HSM 统一提交；真实故障注入 |
 | 大文件读结果 | 超过 32 块时，持久化原始授权、原始 FileStatus 和逻辑布局摘要；即时回复仍返回完整块位置，重试在有效保护下重建位置，不延长授权 | 大布局/复制位置变化及故障重试验收；此项减少结果编码量，不等同于吞吐收益 |
@@ -347,3 +347,10 @@ Resize/AssignWorker 接入 Native owned 命令；操作时间、布局与 Worker
 最新 Curvine 回归：Master **259 通过、2 ignored**，两个真实集群用例通过。实际 SDK 验证 13,000 字节文件部分截断为 4,103 字节、截断为零、重新扩展为 8,193 字节全零数据，旧块 ID 不复用；先前的目录、TTL、控制者交接和 Worker 清理回归继续通过。
 
 此前的完整 native-integration 路径验证为 30 项功能及全部文档测试通过；本次 Resize 与删除发布优化的最终组合还需由固定 Git 来源回归确认。本轮没有更新 PVE，没有执行当前版本百万验收或最终原版性能比较。
+
+
+### 原始属性结果的副本一致性
+
+复核发现紧凑属性命令在各副本重新编码 protobuf map，逻辑字段相同但响应字节可能因 HashMap 顺序不同。新增回归在修正前明确失败；SetAttr 响应现使用排序后的 xattr 编码，保留公开 wire tag/type 和已有缓存原字节。Master **260 通过、2 ignored**，两个优化集群用例再次通过。进程重启场景同时增加保留原始 Native 属性请求、删除后代改变目录状态、换主后逐字节核对原始响应；固定 Git 组合回归结果另记。
+
+当前仍需处理批量写 API 和其他少数旧式 RPC、完整业务优先级/后台最低进度调度，以及网络分区/提交回执丢失等组合故障矩阵；没有将共享 ReadIndex FIFO 当作所有业务已经统一调度。

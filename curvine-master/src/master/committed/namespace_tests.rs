@@ -380,3 +380,45 @@ fn recursive_delete_removes_wide_nested_tree_without_reusing_detached_pointers()
     assert!(fs.exists("/wide-delete/recreated")?);
     Ok(())
 }
+
+#[test]
+fn namespace_attribute_original_results_are_identical_across_fresh_map_encodings(
+) -> CommonResult<()> {
+    let (_root, fs) = fixture()?;
+    file(&fs, "/canonical-attributes")?;
+    let time = LocalTime::mills() as i64 + 10_000;
+    let mut first = None;
+    for _ in 0..16 {
+        let opts = SetAttrOpts {
+            recursive: true,
+            mtime: Some(1234),
+            atime: Some(1234),
+            add_x_attr: (0..16)
+                .map(|i| (format!("user.key-{i}"), vec![i]))
+                .collect(),
+            ..Default::default()
+        };
+        let mut input = command(
+            &fs,
+            curvine_fs_api::RpcCode::SetAttr,
+            SetAttrRequest {
+                path: "/canonical-attributes".into(),
+                opts: ProtoUtils::set_attr_opts_to_pb(opts),
+            },
+        )?;
+        input.time = time;
+        let response = replay(&fs, &SerdeUtils::serialize(&input)?)?;
+        assert!(response.success);
+        let status = curvine_proto::SetAttrResponse::decode(response.header.as_slice())?.status;
+        assert_eq!(status.x_attr.len(), 16);
+        if let Some(original) = &first {
+            assert_eq!(
+                &response.header, original,
+                "replicated attribute response depends on a process-local HashMap order"
+            );
+        } else {
+            first = Some(response.header);
+        }
+    }
+    Ok(())
+}
