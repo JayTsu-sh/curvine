@@ -416,11 +416,19 @@ hsm-rs 的八个直接依赖及 lock 的 29 个 Curvine 包固定 `ad3391bd3cc21
 
 Root 的 276 项 Master 与两个 TCP/Raft 用例为同一生产代码的验证；最后仅补充文档。两个仓库格式/差异检查通过，已推送 Jay fork/main 及 hsm-rs/main。未执行新版本百万负载、最终性能对比或 PVE 升级，未将物理 HA 能力计为已完成。
 
+### 生命周期共享提交、跨记录检查与 Recall 认领优先级
+
+策略更新、扫描入队、任务 claim/finish 和显式 GC 入口已共享资格等待；namespace 初始化/升级、controller epoch 更新及业务拒绝重新确认仍按原规则独占。新增独立 lifecycle 条件封装与 `hsm_native_v8` checkpoint 栅栏，记录最多 16 个文件版本/当前路径/副本数、3 个公共键观察，并复核最多 34 个控制键，总编码上限 1 MiB。历史日志与 v7 文件封装语义不变。详情见[生命周期共享条件提交](lifecycle-shared-commit.md)。
+
+容量策略检查已复制的待释放预算旧值；水位样本随命令保留，不能当作物理空间强预留。claim/finish 还检查动作结果的存在性，防止准备失败报告之后成功动作已经提交，却仍把任务标为失败。Source 用当前 namespace 路径筛选 claim。Recall 的 claim/finish/get 按任务实际 action 选择独立接入名额和相同的 gate 类别，后台名额满时不会退回后台队列。
+
+初始 Root 回归 `research/hsm-lifecycle-readset-regression.log` 为 282 项 Master 和两个 TCP/Raft 用例通过；追加实际 Source claim 暂停/读取插入的回归 `research/hsm-lifecycle-claim-race.log` 也通过。最终增加按任务 action 的 Recall 接入测试，日志 `research/hsm-lifecycle-priority-final.log`：**283 项 Master 通过、0 失败、2 ignored，两个 TCP/Raft 用例通过（36.80 秒）**。真实集群在持有另一共享资格时执行 Seal、policy_put、policy_scan、claim、finish、GC；暂停实际 claim 的准备后让普通读取提交，旧请求返回 Busy，原身份重试得到 Superseded。暂停 hook 只在 hsm-scale-test 编译。固定 Git 的完整 hsm-rs 组合验证另记。
+
 ### 当前剩余边界
 
 已完成公开批量写、目录共享等待、加权资格、外部执行通道、文件级控制共享提交与两次在线选主验证；**没有将全部性能优化标为完成**。
 
-1. 文件级 HSM 控制、Seal 与只读控制已共享提交；namespace 创建/升级、controller epoch 修改、策略更新/扫描入队、任务 claim/finish 和显式 GC 入口仍独占。下一步是将跨记录条件、容量预算和路径观察明确纳入提交前检查，再缩短这些生命周期控制的独占区间。不能仅以文件 Record CAS 替代它们的跨记录约束。
-2. 少数兼容 RPC 与旧后台/UFS 副作用继续保留投影隔离；不能把 Worker 删除全部描述为已迁移持久 outbox。当前无 UFS 普通文件主路径已走 owned 命令，但完整 P2 收敛仍需完成。
+1. 文件级 HSM、Seal、策略/任务和 GC 的共享提交已完成；namespace 创建/升级、controller epoch 变更及业务拒绝重新确认的独占是保留的全局协调边界。兼容原始 RPC 仍通过旧投影隔离，不能将它们描述为 owned 命令。
+2. 旧后台收敛仍需处理：失联 Worker 的位置清理和 UFS 缓存失效共用 committed_background 独占路径，部分 TTL/UFS 动作也保留它。普通无 UFS、已纳管文件的 TTL 旁路与原生目录 TTL 删除已在 owned 路径；仍不能把旧式 Worker 副作用全部描述为持久 outbox。
 3. 网络选择性分区、Worker/磁盘丢失、归档冗余和控制者自动接管不因 Master 暂停/恢复通过而完成。尤其单副本私有 Recall 的物理 HA 保持原限制。
 4. 本轮没有升级 PVE，没有执行新版本百万规模持续负载验收或最终原版性能比较。完成剩余优化后再进行统一对照，不复用历史性能数字。

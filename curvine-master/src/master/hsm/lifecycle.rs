@@ -193,7 +193,11 @@ impl MasterFilesystem {
         let op = request["op"].as_str().unwrap();
         let key = operation_key(&ctx.operation_id, op);
         let fingerprint = request_fingerprint(request)?;
-        let tx = {
+        let term = self
+            .master_monitor
+            .journal_term
+            .load(std::sync::atomic::Ordering::Acquire);
+        let (tx, checks) = {
             let fs = self.fs_dir.read();
             let store = fs.get_rocks_store();
             if matches!(op, "policy_list" | "intent_list") {
@@ -289,6 +293,7 @@ impl MasterFilesystem {
                 return Ok(old.response);
             }
             let now = curvine_runtime::common::LocalTime::mills() as i64;
+            let mut checks = lifecycle_commit::Checks::new(&fs)?;
             let mut tx = Transaction {
                 scan_progress_only: false,
                 read_state: None,
@@ -382,6 +387,8 @@ impl MasterFilesystem {
                     if let Some(w) = &policy.selection.capacity {
                         let info = self.filesystem_info().map_err(io)?;
                         let capacity = info.allocatable_capacity.max(0) as u64;
+                        checks.capacity(capacity, info.allocatable_available.max(0) as u64);
+                        checks.common(&fs, RESERVATION_TOTAL)?;
                         // Actual worker disk usage includes replicas and non-Curvine occupants.
                         let (active, target) = pressure_target(
                             run.pressure,
@@ -622,6 +629,12 @@ impl MasterFilesystem {
                             } else {
                                 1
                             });
+                        checks.file(
+                            inode_id,
+                            Some(&record),
+                            Some(record.path.clone()),
+                            lifecycle_commit::copies(&fs, inode_id).map_err(io)?,
+                        )?;
                         budget_bytes = budget_bytes.saturating_sub(physical);
                         run.admitted += 1;
                         admitted.push(iid);
@@ -710,25 +723,28 @@ impl MasterFilesystem {
                             });
                             Some(p)
                         };
-                        let success = fs
-                            .hsm_outcome(&operation_key(
-                                &intent.context.operation_id,
-                                effect_step(&intent.action),
-                            ))
-                            .map_err(io)?
-                            .filter(|o| {
-                                o.data.as_ref() == Some(&intent.expected.data)
-                                    && o.action.as_ref() == Some(&intent.action)
-                                    && o.response["kind"] == "entity"
-                            });
+                        let effect = outcome_key(&operation_key(
+                            &intent.context.operation_id,
+                            effect_step(&intent.action),
+                        ));
+                        let observed: Option<Outcome> = raw(checks.common(&fs, &effect)?)?;
+                        let success = observed.filter(|o| {
+                            o.data.as_ref() == Some(&intent.expected.data)
+                                && o.action.as_ref() == Some(&intent.action)
+                                && o.response["kind"] == "entity"
+                        });
+                        let observed_record = if success.is_none() {
+                            checks.record(&fs, entity_id(&intent.expected.data.entity, ns)?)?
+                        } else {
+                            None
+                        };
                         if let Some(outcome) = success {
                             intent.status = IntentStatus::Done;
                             intent.result = Some(field(&outcome.response, "data")?);
                             intent.last_error = None;
-                        } else if fs
-                            .hsm_record(entity_id(&intent.expected.data.entity, ns)?)
-                            .map_err(io)?
-                            .is_none_or(|r| r.state != intent.expected)
+                        } else if observed_record
+                            .as_ref()
+                            .is_none_or(|record| record.state != intent.expected)
                         {
                             intent.status = IntentStatus::Superseded;
                             intent.last_error = Some("source observation changed".into());
@@ -740,11 +756,10 @@ impl MasterFilesystem {
                             intent.last_error = Some("admitting policy disabled or revised".into());
                         } else {
                             if let Some(policy) = &policy {
-                                let record = fs
-                                    .hsm_record(entity_id(&intent.expected.data.entity, ns)?)
-                                    .map_err(io)?
+                                let record = observed_record
+                                    .as_ref()
                                     .ok_or_else(|| HsmError::NotFound("intent record".into()))?;
-                                if !selected(policy, &record, now) {
+                                if !selected(policy, record, now) {
                                     return Err(HsmError::Busy(
                                         "policy eligibility changed; defer candidate".into(),
                                     ));
@@ -752,6 +767,10 @@ impl MasterFilesystem {
                                 if let Some(w) = &policy.selection.capacity {
                                     let info = self.filesystem_info().map_err(io)?;
                                     let capacity = info.allocatable_capacity.max(0) as u64;
+                                    checks.capacity(
+                                        capacity,
+                                        info.allocatable_available.max(0) as u64,
+                                    );
                                     let used = capacity
                                         .saturating_sub(info.allocatable_available.max(0) as u64);
                                     if capacity == 0
@@ -783,12 +802,11 @@ impl MasterFilesystem {
                             return Err(HsmError::Fenced);
                         }
                         let report: IntentCompletion = field(request, "report")?;
-                        let outcome = fs
-                            .hsm_outcome(&operation_key(
-                                &intent.context.operation_id,
-                                effect_step(&intent.action),
-                            ))
-                            .map_err(io)?;
+                        let effect = outcome_key(&operation_key(
+                            &intent.context.operation_id,
+                            effect_step(&intent.action),
+                        ));
+                        let outcome: Option<Outcome> = raw(checks.common(&fs, &effect)?)?;
                         let success = outcome.filter(|o| {
                             o.data.as_ref() == Some(&intent.expected.data)
                                 && o.action.as_ref() == Some(&intent.action)
@@ -845,9 +863,10 @@ impl MasterFilesystem {
                 }
                 _ => return Err(HsmError::Unsupported(format!("lifecycle operation {op}"))),
             }
-            tx
+            (tx, checks)
         };
-        self.hsm_submit(&tx).await
+        self.hsm_submit_lifecycle(lifecycle_commit::Command { tx, checks }, term)
+            .await
     }
 }
 

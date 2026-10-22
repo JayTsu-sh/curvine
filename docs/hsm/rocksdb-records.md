@@ -318,3 +318,10 @@ HSM 卷冷启动用一个 WriteBatch 的 7 个范围墓碑清除原生 inode/edg
 新增空 CF `hsm_native_v7`，没有新增元数据镜像或逐文件副本。新 `hsm-conditional-v1` 日志复用 Transaction 数据，专用于文件记录条件发布；版本、当前路径或 create 观察过期时，不修改投影、不创建 binding/outcome，返回 Busy。成功状态、Record/派生索引/退休事实与原始结果继续同一 WriteBatch。历史无此封装的 Transaction 仍按旧规则持久保存 CAS 冲突。
 
 Native 创建和私有 Import 共用内存原子 ID 预留器；准备失败留下空洞。已有持久 inode floor 继续只由 committed apply 推进；并发预留超过重放 floor 时只保持较大值。已有 namespace 的 SDK 绑定是共享读取，创建/升级才独占。具体流程与回退边界见[文件级条件提交](conditional-controls.md)。
+
+
+### 生命周期条件封装与格式栅栏 v8
+
+新增空 CF `hsm_native_v8`，没有新增逐文件数据库。`hsm-lifecycle-conditional-v1` 在 journal 中携带有界检查集：namespace 与动作 outcome 的原始值、容量策略读到的 `budget:online:v1`、候选/claim 的 Record 合并版本、当前路径和副本数；Transaction 中的 policy/run/intent/active expected 值继续逐键核对。检查过期返回 Busy/Fenced，不写游标、任务、索引、预算、binding 或 outcome。成功仍沿用同一 WriteBatch。最多 16 个文件、3 个公共键、34 个控制键、1 MiB 编码。
+
+水位仍基于 Worker 遥测样本，逻辑预算 CAS 防止并发发布重复消费旧观察，不代表物理容量强预留。历史 Transaction、read-batch、v7 文件封装的解释不变，全部 Master 必须匹配新代码。详细流程见[生命周期共享条件提交](lifecycle-shared-commit.md)。

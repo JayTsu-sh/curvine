@@ -201,12 +201,21 @@ impl FsDir {
             return Ok(results);
         }
         let conditional = payload.starts_with(conditional::MAGIC);
-        let mut tx: Transaction = decode(
-            payload
-                .strip_prefix(conditional::MAGIC)
-                .or_else(|| payload.strip_prefix(LIFECYCLE_MAGIC))
-                .unwrap_or(payload),
-        )?;
+        let (mut tx, lifecycle_checks) =
+            if let Some(bytes) = payload.strip_prefix(lifecycle_commit::MAGIC) {
+                let command = lifecycle_commit::decode_command(bytes)?;
+                (command.tx, Some(command.checks))
+            } else {
+                (
+                    decode::<Transaction>(
+                        payload
+                            .strip_prefix(conditional::MAGIC)
+                            .or_else(|| payload.strip_prefix(LIFECYCLE_MAGIC))
+                            .unwrap_or(payload),
+                    )?,
+                    None,
+                )
+            };
         if conditional {
             conditional::validate(&tx)?;
         }
@@ -227,6 +236,11 @@ impl FsDir {
         // entries retain their original durable conflict outcomes on replay.
         if conditional {
             if let Some(response) = conditional::stale(self, &tx)? {
+                return Ok(vec![response]);
+            }
+        }
+        if let Some(checks) = lifecycle_checks {
+            if let Some(response) = checks.stale(self, &tx)? {
                 return Ok(vec![response]);
             }
         }
@@ -601,21 +615,6 @@ impl MasterFilesystem {
         if transactions.len() > 32 {
             return Err(HsmError::Invalid("HSM batch exceeds 32 commands".into()));
         }
-        let (writer, op_id, local) = {
-            let fs = self.fs_dir.read();
-            (
-                fs.journal_writer.clone(),
-                fs.next_op_id(),
-                fs.hsm_local_apply.clone(),
-            )
-        };
-        let ticket = token();
-        let (applied, result) = tokio::sync::oneshot::channel();
-        local.insert(ticket.clone(), applied);
-        let _cleanup = BarrierWait {
-            ticket: ticket.clone(),
-            waiters: local,
-        };
         // Even a singleton access overlay uses the versioned bundle. Older
         // running HSM replicas must reject the new state-machine format rather
         // than ignore read_state and falsely acknowledge an unprotected read.
@@ -640,6 +639,30 @@ impl MasterFilesystem {
                 [LIFECYCLE_MAGIC, bytes.as_slice()].concat()
             }
         };
+        self.hsm_submit_payload(payload, transactions.len(), originating_term)
+            .await
+    }
+    async fn hsm_submit_payload(
+        &self,
+        payload: Vec<u8>,
+        expected_results: usize,
+        originating_term: Option<u64>,
+    ) -> HsmResult<Vec<Value>> {
+        let (writer, op_id, local) = {
+            let fs = self.fs_dir.read();
+            (
+                fs.journal_writer.clone(),
+                fs.next_op_id(),
+                fs.hsm_local_apply.clone(),
+            )
+        };
+        let ticket = token();
+        let (applied, result) = tokio::sync::oneshot::channel();
+        local.insert(ticket.clone(), applied);
+        let _cleanup = BarrierWait {
+            ticket: ticket.clone(),
+            waiters: local,
+        };
         let entry = HsmEntry {
             op_id,
             ticket,
@@ -656,7 +679,7 @@ impl MasterFilesystem {
         })
         .await
         .map_err(|_| HsmError::Unknown("HSM committed apply timeout; query outcome".into()))??;
-        if results.len() != transactions.len() {
+        if results.len() != expected_results {
             return Err(HsmError::Unknown(
                 "committed apply returned an invalid response count".into(),
             ));
@@ -778,7 +801,7 @@ impl MasterFilesystem {
                 }
             }
         };
-        let class = crate::master::authority_gate::Class::request(&value);
+        let class = self.hsm_control_class(&value);
         let result = if value["op"] == "policy_scan" {
             let fs = self.clone();
             self.hsm_run_owned(class, async move { fs.hsm_policy_scan(value).await })
@@ -794,8 +817,11 @@ impl MasterFilesystem {
                 .unwrap_or_else(error_value)
         } else {
             let fs = self.clone();
-            self.hsm_run_owned(class, async move { fs.hsm_serial_execute(value).await })
-                .await
+            self.hsm_run_owned(
+                class,
+                async move { fs.hsm_owned_execute(value, class).await },
+            )
+            .await
         };
         HsmControlResponse {
             protocol_version: 1,
@@ -825,8 +851,41 @@ impl MasterFilesystem {
         receive.await.unwrap_or_else(|error| error_value(io(error)))
     }
 
-    async fn hsm_serial_execute(&self, request: Value) -> HsmResult<Value> {
-        let class = crate::master::authority_gate::Class::request(&request);
+    // Scheduling only: the immutable action is a hint from the local projection,
+    // never an authorization. Preflight, epoch and read-set checks still run.
+    fn hsm_control_class(&self, request: &Value) -> crate::master::authority_gate::Class {
+        use crate::master::authority_gate::Class;
+        if matches!(
+            request["op"].as_str(),
+            Some("intent_claim" | "intent_finish" | "intent_get")
+        ) {
+            let intent = request["id"]
+                .as_str()
+                .and_then(|id| lifecycle::intent_key(id).ok())
+                .and_then(|key| {
+                    self.fs_dir
+                        .read()
+                        .get_rocks_store()
+                        .hsm_get(&key)
+                        .ok()
+                        .flatten()
+                })
+                .and_then(|bytes| decode::<LifecycleIntent>(&bytes).ok());
+            if let Some(intent) = intent {
+                return if matches!(intent.action, ManagedAction::Recall(_)) {
+                    Class::Recall
+                } else {
+                    Class::Background
+                };
+            }
+        }
+        Class::request(request)
+    }
+    async fn hsm_owned_execute(
+        &self,
+        request: Value,
+        class: crate::master::authority_gate::Class,
+    ) -> HsmResult<Value> {
         let shared = conditional::shared_request(&request);
         // Bootstrap remains exclusive; no shared planner creates namespaces.
         if request["op"] != "capabilities" {
@@ -2070,4 +2129,5 @@ mod read_apply;
 pub(crate) mod read_clock;
 
 mod conditional;
+mod lifecycle_commit;
 mod turn;

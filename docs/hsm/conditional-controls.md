@@ -35,7 +35,7 @@ GC 使用相同条件封装确认最新 Record 中的退休事实。Worker 删�
 
 ## 本轮仍保留的独占边界
 
-controller epoch 修改、策略修改/筛查入队及任务 claim/finish、显式批量 GC 和旧式 RPC/后台副作用继续独占。策略容量预算等跨记录条件需要单独的提交检查，不能只因为 Record 已支持 CAS 就一并移除隔离。普通读取合批和 owned Native 路径沿用此前的共享实现。
+v7 阶段保留策略/任务控制独占；后续 v8 已为跨记录条件、容量预算和路径观察增加独立封装，使策略更新/扫描入队、claim/finish 及显式 GC 也共享等待，见[生命周期共享条件提交](lifecycle-shared-commit.md)。controller epoch 修改、namespace 创建/升级、业务拒绝重新确认和旧式 RPC/后台副作用继续独占。普通读取合批和 owned Native 路径沿用此前的共享实现。
 
 本页描述实现与约束；回归结果、提交号及尚未执行的规模验收见[优化方案](optimization-plan.md)。没有以本轮改动推算最终性能收益。
 

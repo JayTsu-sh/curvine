@@ -32,12 +32,12 @@ rename、递归属性、递归删除和内部 TTL 删除只把紧凑输入写入
 `AuthorityGate` 保留共享/独占语义，按三个 FIFO 类别调度：Recall、前台、后台。持续有请求时，每轮分别分配 **4、8、1 个资格**，空类直接跳过。一个资格可能对应一个含多项逻辑请求的协调器批次；这些是轮次数量权重，不是带宽或墙钟时间保证。
 
 - 三类各有 128 个名额，共享资格最多同时 32 个。HSM 控制入口也分别保留三类名额，后台请求不会占满 Recall 的接入容量。
-- 普通读写、元数据查询及兼容 handler 属于前台；Prepare/Commit/AbortRecall 属于 Recall；策略筛查/入队、意图调度、Archive、Release、GC 属于后台。
+- 普通读写、元数据查询及兼容 handler 属于前台；Prepare/Commit/AbortRecall 属于 Recall；策略筛查/入队、Archive、Release、GC 属于后台。intent_claim/finish/get 按 Source 任务 action 分到 Recall 或后台，类别贯穿接入和 gate。
 - OS 后台独占修改属于后台；Native 队列内部另设前台/TTL 名额，持续前台请求最多执行 8 个协调器轮次就给等待 TTL 一次机会。
 - 已选中的独占请求等待现有读者退出时，后来读者不能持续越过它。取消排队者立即移除，取消已授权者释放资格；已被 owned 任务接收的实际提交仍由任务完成或确认前缀。
 - 控制操作等待 Worker 网络 I/O 时释放资格；回来后按原类别重新排队，并重新验证 ReadIndex、namespace 和 controller epoch。
 
-调度仅改变本地等待顺序。Raft、CAS、租约、持久原始结果与未知结果的前缀隔离仍决定能否修改权威状态。文件级 HSM 控制与 Seal 已通过独立条件封装共享准备/等待，详见[文件级条件提交](conditional-controls.md)。策略修改/入队、任务 claim/finish 等跨记录控制及旧式路径仍保留独占等待。
+调度仅改变本地等待顺序。Raft、CAS、租约、持久原始结果与未知结果的前缀隔离仍决定能否修改权威状态。文件级 HSM 控制与 Seal 已通过独立条件封装共享准备/等待，详见[文件级条件提交](conditional-controls.md)。跨记录生命周期控制后续已通过[有界检查集](lifecycle-shared-commit.md)共享等待；旧式路径保留独占隔离。
 
 `hsm_stage_duration` 的 `authority_queue` 操作及 `foreground/recall/background` 阶段标签记录排队时长；权重与限额目前是代码常量，没有新增运维配置。
 

@@ -47,6 +47,7 @@ impl RocksInodeStore {
 
     pub(crate) const CF_NATIVE_NAMESPACE_FORMAT: &'static str = "hsm_native_v6";
     pub(crate) const CF_HSM_CONDITIONAL_FORMAT: &'static str = "hsm_native_v7";
+    pub(crate) const CF_LIFECYCLE_CONDITIONAL_FORMAT: &'static str = "hsm_native_v8";
 
     pub const PREFIX_MOUNT: u8 = 0x01;
     pub const PREFIX_LOCK: u8 = 0x02;
@@ -594,9 +595,12 @@ mod tests {
         let native_v6 = native_v5
             .clone()
             .add_cf(RocksInodeStore::CF_NATIVE_NAMESPACE_FORMAT);
-        let upgraded = native_v6
+        let native_v7 = native_v6
             .clone()
             .add_cf(RocksInodeStore::CF_HSM_CONDITIONAL_FORMAT);
+        let upgraded = native_v7
+            .clone()
+            .add_cf(RocksInodeStore::CF_LIFECYCLE_CONDITIONAL_FORMAT);
         let store = RocksInodeStore::new(upgraded.clone(), true)?;
         let checkpoint = store.db.create_checkpoint(1)?;
         drop(store);
@@ -607,8 +611,13 @@ mod tests {
         assert!(RocksInodeStore::new(native_v4, false).is_err());
         assert!(RocksInodeStore::new(native_v5, false).is_err());
         assert!(RocksInodeStore::new(native_v6, false).is_err());
+        assert!(RocksInodeStore::new(native_v7, false).is_err());
         let mut store = RocksInodeStore::new(upgraded, false)?;
         store.db.restore(checkpoint)?;
+        assert!(store
+            .db
+            .cf(RocksInodeStore::CF_LIFECYCLE_CONDITIONAL_FORMAT)
+            .is_ok());
         assert!(store
             .db
             .cf(RocksInodeStore::CF_HSM_CONDITIONAL_FORMAT)

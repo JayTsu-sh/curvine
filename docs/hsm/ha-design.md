@@ -210,3 +210,10 @@ rename/替换/交换、递归属性/删除在 Native journal v5 记录紧凑输�
 文件级控制和 Seal 使用新条件日志封装；新读者、内容版本或路径观察使计划过期时，apply 返回确定的未发布 Busy，不创建 workflow binding/outcome。同一逻辑操作可在新 Leader 上重新准备；已有成功 outcome 优先返回原始结果。业务拒绝释放共享资格后重新取得独占资格、验证 ReadIndex/namespace/epoch 并从头检查，不能保存旧准备产生的错误。已提交但回执未知仍需前缀确认，未弱化 fail-stop 边界。
 
 新空 CF `hsm_native_v7` 是 checkpoint 兼容性栅栏，历史日志解释不变，全 Master 必须匹配代码。Native 与 Import 的共享原子预留避免并发 inode 别名，恢复 floor 不回退到较低重放值。详细设计及 Root 回归见[文件级条件提交](conditional-controls.md)和[最新进度](optimization-plan.md#文件控制共享提交与-inode-统一预留)。物理 Worker/磁盘故障覆盖不因这些元数据并发检查而完成。
+
+
+### 生命周期控制的跨记录提交检查
+
+新的生命周期封装将 namespace 原始值、候选合并版本/路径/副本数、动作 outcome（含不存在）和容量逻辑预算作为提交前检查。originating term 固定准备所属任期；follower 只应用已捕获输入，不用其本地容量遥测重新计算策略。任务、工作索引、活动标记、预算与成功结果仍同批提交。过期计划不发布 binding/outcome，原身份可重试；旧日志语义不变，新增 hsm_native_v8 栅栏要求全 Master 匹配。
+
+真实 TCP/Raft 测试暂停已准备的 claim，插入普通读取，恢复后旧 claim 返回 Busy，原请求重试 Superseded；Source 未固化暂态失败。Recall claim/finish/get 的类别由任务 action 决定，后台 128 个接入名额占满不消耗 Recall 名额。设计、预算采样边界与回归记录见[生命周期共享提交](lifecycle-shared-commit.md)。这不替代 Worker/磁盘故障和归档冗余验收。

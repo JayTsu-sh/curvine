@@ -49,6 +49,9 @@ pub struct FsDir {
     pub(crate) hsm_mutation_batcher: Arc<HsmMutationBatcher>,
     #[cfg(feature = "hsm-scale-test")]
     pub(crate) native_test_drop_receipt: Option<String>,
+    #[cfg(feature = "hsm-scale-test")]
+    pub(crate) lifecycle_test_pauses:
+        Option<dashmap::DashMap<String, (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
     pub(crate) native_coordinator: Arc<crate::master::committed::NativeCoordinator>,
     pub(crate) native_local_apply: Arc<
         dashmap::DashMap<
@@ -132,7 +135,8 @@ impl FsDir {
                 .add_cf(RocksInodeStore::CF_NATIVE_GC_FORMAT)
                 .add_cf(RocksInodeStore::CF_NATIVE_DELETE_FORMAT)
                 .add_cf(RocksInodeStore::CF_NATIVE_NAMESPACE_FORMAT)
-                .add_cf(RocksInodeStore::CF_HSM_CONDITIONAL_FORMAT);
+                .add_cf(RocksInodeStore::CF_HSM_CONDITIONAL_FORMAT)
+                .add_cf(RocksInodeStore::CF_LIFECYCLE_CONDITIONAL_FORMAT);
         }
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;
@@ -159,6 +163,8 @@ impl FsDir {
             hsm_mutation_batcher: Default::default(),
             #[cfg(feature = "hsm-scale-test")]
             native_test_drop_receipt: None,
+            #[cfg(feature = "hsm-scale-test")]
+            lifecycle_test_pauses: None,
             native_coordinator: Default::default(),
             native_local_apply: Default::default(),
             hsm_local_apply: Default::default(),
@@ -262,6 +268,18 @@ impl FsDir {
     #[cfg(feature = "hsm-scale-test")]
     pub fn hsm_test_drop_native_receipt(&mut self, session: &str) {
         self.native_test_drop_receipt = Some(session.to_owned());
+    }
+
+    #[cfg(feature = "hsm-scale-test")]
+    pub fn hsm_test_pause_lifecycle(
+        &mut self,
+        operation: &str,
+    ) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+        let signals = (Arc::default(), Arc::default());
+        self.lifecycle_test_pauses
+            .get_or_insert_with(Default::default)
+            .insert(operation.to_owned(), signals.clone());
+        signals
     }
 
     #[cfg(feature = "hsm-scale-test")]

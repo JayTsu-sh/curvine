@@ -172,6 +172,60 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         drop(shared_turn);
         let unique: std::collections::BTreeSet<_> = ids.into_iter().flatten().collect();
         assert_eq!(unique.len(), 32, "parallel HSM/native inode identity collision");
+        // Lifecycle metadata operations must complete under a concurrent
+        // shared authority turn as well, including the off-gate scan phase.
+        let lifecycle_path = Path::from_str("/shared-lifecycle-file")?;
+        fs.create(&lifecycle_path, false).await?.complete().await?;
+        let lifecycle_id = fs.get_status(&lifecycle_path).await?.id;
+        let data = cluster.get_active_master_fs().fs_dir().read().hsm_record(lifecycle_id)?.unwrap().state.data;
+        let shared_lifecycle = authority_gate.read().await;
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let token = uuid::Uuid::new_v4().simple().to_string();
+            let begun = control(&fs, &json!({"op":"seal_begin", "entity":data.entity, "data":data, "token":token})).await?;
+            assert_eq!(begun["kind"], "blocks", "{begun}");
+            let sealed = control(&fs, &json!({"op":"seal_commit", "entity":data.entity, "data":data, "token":token,
+                "evidence":{"length":0,"digest":{"algorithm":"blake3","value":blake3::hash(b"").as_bytes().to_vec()}}})).await?;
+            assert_eq!(sealed["kind"], "entity", "{sealed}");
+            let context = || json!({"operation_id":request_id(),"controller_epoch":1,"attempt_epoch":1});
+            let policy = json!({"id":"shared-lifecycle", "revision":1,"enabled":true,"prefix":"/shared-lifecycle-file",
+                "min_size":0,"max_size":null,"min_residency_ms":0,"action":"archive","backend":"local"});
+            let put = control(&fs, &json!({"op":"policy_put", "context":context(), "policy":policy,"expected_revision":null})).await?;
+            assert_eq!(put["kind"], "policy", "{put}");
+            let scanned = control(&fs, &json!({"op":"policy_scan","context":context(),"id":"shared-lifecycle","limit":256})).await?;
+            assert_eq!(scanned["kind"], "scan", "{scanned}");
+            let task = scanned["data"]["admitted"][0].as_str().ok_or("missing admitted lifecycle task")?;
+            let claimed = control(&fs, &json!({"op":"intent_claim", "context":context(), "id":task,"owner":"shared-test"})).await?;
+            assert_eq!(claimed["data"]["status"], "running", "{claimed}");
+            let finished = control(&fs, &json!({"op":"intent_finish","context":context(),"id":task,
+                "version":claimed["data"]["version"],"claim":claimed["data"]["claim"],
+                "report":{"status":"retry","message":"shared publication test"}})).await?;
+            assert_eq!(finished["data"]["status"], "ready", "{finished}");
+            // Pause the actual Source claim after preparation, let a real
+            // ordinary reader commit, then deliver the stale claim to Raft.
+            // The SAME request can subsequently resolve to Superseded.
+            let claim_context = context();
+            let operation = claim_context["operation_id"].as_str().unwrap();
+            let (started, resume) = cluster.get_active_master_fs().fs_dir().write().hsm_test_pause_lifecycle(operation);
+            struct ResumeOnDrop(std::sync::Arc<tokio::sync::Notify>);
+            impl Drop for ResumeOnDrop { fn drop(&mut self) { self.0.notify_one(); } }
+            let wake = ResumeOnDrop(resume.clone());
+            let request = json!({"op":"intent_claim", "context":claim_context,"id":task,"owner":"racing-reader"});
+            let client = fs.clone();
+            let input = request.clone();
+            let pending = tokio::spawn(async move { control(&client, &input).await });
+            tokio::time::timeout(std::time::Duration::from_secs(3), started.notified()).await?;
+            let mut reader = fs.open(&lifecycle_path).await?;
+            resume.notify_one();
+            let rejected = pending.await??;
+            assert_eq!(rejected["data"]["code"], "busy", "{rejected}");
+            reader.complete().await?;
+            let retried = control(&fs, &request).await?;
+            assert_eq!(retried["data"]["status"], "superseded", "{retried}");
+            drop(wake);
+            assert_eq!(control(&fs, &json!({"op":"gc_batch"})).await?["kind"], "gc");
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        }).await??;
+        drop(shared_lifecycle);
         let before_native = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
         stream::iter(0..32)
             .map(|i| {
