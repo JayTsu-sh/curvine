@@ -638,12 +638,10 @@ impl MasterFilesystem {
         }
         let gate = self.fs_dir.read().hsm_mutation_gate.clone();
         let _bootstrap = gate.write().await;
-        let result = async {
-            self.hsm_read_barrier().await?;
-            self.hsm_namespace_init().await?;
-            Ok(())
-        }
-        .await;
+        // Qualification itself has no effect. Only namespace creation or
+        // upgrade can leave an uncertain submission requiring a second fence.
+        self.hsm_read_barrier().await?;
+        let result = self.hsm_namespace_init().await.map(|_| ());
         if matches!(&result, Err(HsmError::Unknown(_))) {
             if let Err(error) = self.hsm_read_barrier().await {
                 log::error!("uncertain read namespace initialization could not be fenced: {error}; aborting master");
@@ -795,6 +793,12 @@ impl MasterFilesystem {
         let class =
             crate::master::authority_gate::Class::control(request["op"].as_str().unwrap_or(""));
         let mut turn = turn::AuthorityTurn::acquire(self, class).await;
+        // Reject failed preflight before entering the mutation uncertainty
+        // boundary. In particular, NotLeader after a pause is not a reason
+        // to abort an otherwise healthy follower that has submitted nothing.
+        if request["op"] != "capabilities" {
+            self.hsm_read_barrier().await?;
+        }
         let result = self.hsm_execute(request, &mut turn).await;
         if matches!(&result, Err(HsmError::Unknown(_))) {
             if let Err(error) = self.hsm_read_barrier().await {
@@ -838,7 +842,6 @@ impl MasterFilesystem {
                 },
             ));
         }
-        self.hsm_read_barrier().await?;
         let namespace = self.hsm_namespace_init().await?;
         if matches!(
             op,

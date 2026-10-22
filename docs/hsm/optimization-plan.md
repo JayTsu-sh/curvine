@@ -374,3 +374,12 @@ AuthorityGate 按 Recall/前台/后台 4:8:1 轮次调度，分别限制接入�
 当前结构回归为 Master **268 项通过、2 ignored**，两个 TCP/Raft 集群用例通过；原始日志 `research/hsm-owned-batch-scheduling-receipt.log`。用例包含真实提交后指定会话回执丢失、改名后原身份重试、原始前缀错误及旧路径不复活。这个故障注入不等于网络分区。固定 Git 来源、进程重启/在线节点故障组合结果在后续确认后追加。
 
 仍保留少数稀有/挂载 RPC 与普通 HSM 控制的独占边界；没有把加权接入称为所有业务效果都可并行发布。百万规模持续负载、组合 HA 故障矩阵及最终原版对比尚未执行；历史数字不代表本次结果。
+
+
+### 在线换主发现的预检失败边界
+
+独立进程测试暂停 Leader、由另外两个 Master 选主、恢复旧 Leader，再暂停替代 Leader 时，发现旧 Leader 因尚未提交的读批 ReadIndex 失败而主动退出，导致第二次丢失 quorum。原始失败日志 `research/hsm-live-ha-seal-fixed.log` 及其打印的 live-servers 日志保留；没有把这次运行记为通过。
+
+ReadBatcher 的预检失败已向调用方返回错误，协调循环现正常结束该批，不再把它升级为“提交未知”并故障退出。控制操作、namespace 初始化和策略快照同样将无修改的资格预检放在提交未知边界之外；真正提交后无法确认前缀的故障退出仍保留。新增单元回归验证预检失败返回、RocksDB sequence 不变和全部接入名额释放。
+
+修正后 Curvine **269 项 Master 测试通过、2 ignored**，两个 TCP/Raft 优化用例通过，日志 `research/hsm-preflight-no-abort-regression.log`。在线两次换主及固定 Git 组合结果尚需由 hsm-rs 运行确认；本轮百万和最终原版比较仍未执行。

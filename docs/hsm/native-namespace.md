@@ -7,8 +7,8 @@
 | 输入 | 执行位置 | 工作量与限制 |
 |---|---|---|
 | mkdir/create/overwrite/add-block/flush/close/write-open、非递归 SetAttr/Delete、Resize/AssignWorker | 协调器准备 owned inode/edge/HSM 变更，apply 条件发布 | 每批最多 32 条、准备预算 2 MiB；投影共享资格 |
-| rename/替换/交换、递归 SetAttr/Delete | 协调器提交紧凑输入；每个副本在 committed apply 上展开变更 | 每次一条紧凑命令；保留目录操作的独占资格，工作和原子 WriteBatch 内存仍随子树大小增长 |
-| HSM 卷、无挂载时的 TTL Delete | OS 调度线程提交内部条件命令，进入同一个 Native FIFO | 与前台目录命令同样提交，额外核对筛选时的身份和条件 |
+| rename/替换/交换、递归 SetAttr/Delete | 协调器提交紧凑输入；每个副本在 committed apply 上展开变更 | 每次一条紧凑命令；共享资格等待提交，工作和原子 WriteBatch 内存仍随子树大小增长 |
+| HSM 卷、无挂载时的 TTL Delete | OS 调度线程提交内部条件命令，进入同一个有界 Native 协调器 | 与前台目录命令同样提交，额外核对筛选时的身份和条件 |
 
 紧凑命令保存原始 protobuf、session/sequence/ack、incarnation、请求指纹、操作时间、读取保护时钟及必要的内部 TTL 条件。它不保存展开后的全子树，也不在提交前调用旧式可见修改或发 Worker 删除。apply 先检查去重窗口；已有结果不再展开子树，过期身份不能重新执行。
 
@@ -30,7 +30,7 @@ Resize 与后续 AssignWorker 也使用 Native 会话、条件发布与原始结
 
 ## 为什么要记录读取保护时钟
 
-是否存在有效读者不能在每个副本上分别调用当前墙钟，也不能在 follower 上跳过保护。紧凑命令记录接收时的逻辑租约时间和恢复宽限状态；所有副本用该值判断相同的读者到期时间。准备和发布期间持续持有独占投影资格，不能在检查与提交之间插入新读者。已提交的保护仍阻止整棵子树的 rename、递归属性和删除。
+是否存在有效读者不能在每个副本上分别调用当前墙钟，也不能在 follower 上跳过保护。紧凑命令记录接收时的逻辑租约时间和恢复宽限状态；所有副本用该值判断相同的读者到期时间。准备和等待提交期间持有共享投影资格；在 apply 展开时读取当前 Record，因此准备之后才提交的新读者也能阻止整棵子树的 rename、递归属性和删除。旧式先修改投影的 writer 仍被排除。
 
 ## TTL 与配额
 
@@ -48,7 +48,7 @@ TTL 候选携带 inode ID 和规范化元数据摘要。apply 同时复核当前
 
 在证明开始前先摘出本轮等待者。网络等待期间到达的请求必须参加下一轮，不复用旧证明。证明失败或请求所属任期与证明任期不符时不授予资格。调用方取消不会取消一个仍在服务其他等待者的证明。真正的 prefix flush、quorum ReadIndex 和本地 apply 校验继续由 JournalWriter/Raft 完成。
 
-它统一的是资格证明；各类业务仍保留自己的有界准备队列。共享/独占投影资格由 Tokio FIFO RwLock 排序，prepared Native/HSM entry 的 proposal 合并继续由 SenderTask 处理。尚未实现前台/Recall 优先级加后台最低进度的完整业务调度器，也未移除少数旧式 RPC 的独占保护。
+它统一的是资格证明；各类业务仍保留自己的有界准备队列。共享/独占资格现由 AuthorityGate 按 Recall/前台/后台 4:8:1 调度，Native 队列内部另保证 TTL 的轮次；prepared Native/HSM entry 的 proposal 合并继续由 SenderTask 处理。少数旧式 RPC 的独占保护仍保留，详见[批量写入与前后台调度](native-batches-scheduling.md)。
 
 ## 格式与验证
 

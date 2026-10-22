@@ -52,7 +52,8 @@ impl MasterFilesystem {
         let namespace = match readiness {
             Ok(ns) => ns,
             Err(error) => {
-                self.fence_scan_unknown(&error).await;
+                // Snapshot qualification submitted no mutation. Deliver the
+                // failure without fencing/aborting a demoted process.
                 return Err(error);
             }
         };
@@ -103,17 +104,6 @@ impl MasterFilesystem {
             }
         }
         result
-    }
-
-    async fn fence_scan_unknown(&self, error: &HsmError) {
-        if matches!(error, HsmError::Unknown(_)) {
-            if let Err(error) = self.hsm_read_barrier().await {
-                log::error!(
-                    "uncertain scan readiness could not be fenced: {error}; aborting master"
-                );
-                std::process::abort();
-            }
-        }
     }
 }
 

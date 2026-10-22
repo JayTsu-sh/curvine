@@ -39,7 +39,7 @@ rename、递归属性、递归删除和内部 TTL 删除只把紧凑输入写入
 
 调度仅改变本地等待顺序。Raft、CAS、租约、持久原始结果与未知结果的前缀隔离仍决定能否修改权威状态。旧式路径的独占等待和普通 HSM 控制的独占提交仍存在，未描述为任意状态机操作可无锁并行。
 
-`hsm_stage_duration{...,authority_queue,foreground|recall|background}` 记录排队时长；权重与限额目前是代码常量，没有新增运维配置。
+`hsm_stage_duration` 的 `authority_queue` 操作及 `foreground/recall/background` 阶段标签记录排队时长；权重与限额目前是代码常量，没有新增运维配置。
 
 ## 验证边界
 

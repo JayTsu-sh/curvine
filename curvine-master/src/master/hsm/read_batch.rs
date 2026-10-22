@@ -171,11 +171,10 @@ impl ReadBatcher {
                 for pending in requests {
                     let _ = pending.response.send(response.clone());
                 }
-                // A readiness failure has no prepared native mutation. An
-                // unsuccessful barrier cannot authorize subsequent work.
-                return Err(HsmError::Unknown(
-                    "read batch readiness was not established".into(),
-                ));
+                // Nothing was prepared or submitted. The caller has its
+                // retryable error; there is no speculative/unknown mutation
+                // to fence. A demoted Leader must remain available to rejoin.
+                return Ok(());
             }
         };
         let prepare_at = std::time::Instant::now();
@@ -321,5 +320,72 @@ impl ReadBatcher {
             let _ = pending.response.send(value);
         }
         committed.map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_readiness_is_delivered_without_reporting_an_uncertain_submission() -> CommonResult<()>
+    {
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let mut fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+        fs.master_monitor = crate::master::MasterMonitor::new(
+            curvine_runtime::sync::StateCtl::new(1),
+            curvine_runtime::sync::StateCtl::new(0),
+        );
+        fs.master_monitor.journal_term.store(7, Ordering::Release);
+        assert!(fs.master_monitor.is_active());
+        let batcher = ReadBatcher::default();
+        let (response, result) = oneshot::channel();
+        let request = Pending {
+            request: serde_json::json!({"op":"read_path","path":"/unused"}),
+            queued: std::time::Instant::now(),
+            response,
+            _slot: batcher.slots.clone().try_acquire_owned()?,
+        };
+        let before = fs
+            .fs_dir
+            .read()
+            .get_rocks_store()
+            .db
+            .get_db()
+            .latest_sequence_number();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async {
+            // The fixture has no committed HSM journal. Its read proof fails
+            // while the monitor still reports the old leader term.
+            assert!(fs.hsm_read_barrier().await.is_err());
+            assert!(
+                batcher
+                    .prepare_and_commit(&fs, 7, vec![request])
+                    .await
+                    .is_ok(),
+                "preflight failure incorrectly requests fail-stop fencing"
+            );
+            let reply = result.await?;
+            assert_eq!(reply["kind"], "error");
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        })?;
+        assert_eq!(
+            fs.fs_dir
+                .read()
+                .get_rocks_store()
+                .db
+                .get_db()
+                .latest_sequence_number(),
+            before
+        );
+        assert_eq!(batcher.slots.available_permits(), MAX_PENDING);
+        Ok(())
     }
 }
