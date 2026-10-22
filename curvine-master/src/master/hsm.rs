@@ -739,8 +739,7 @@ impl MasterFilesystem {
                 }
             }
         };
-        let class =
-            crate::master::authority_gate::Class::control(value["op"].as_str().unwrap_or(""));
+        let class = crate::master::authority_gate::Class::request(&value);
         let result = if value["op"] == "policy_scan" {
             let fs = self.clone();
             self.hsm_run_owned(class, async move { fs.hsm_policy_scan(value).await })
@@ -790,8 +789,7 @@ impl MasterFilesystem {
     async fn hsm_serial_execute(&self, request: Value) -> HsmResult<Value> {
         // Legacy native writers still share this boundary until committed
         // publication is activated for every relevant mutation family.
-        let class =
-            crate::master::authority_gate::Class::control(request["op"].as_str().unwrap_or(""));
+        let class = crate::master::authority_gate::Class::request(&request);
         let mut turn = turn::AuthorityTurn::acquire(self, class).await;
         // Reject failed preflight before entering the mutation uncertainty
         // boundary. In particular, NotLeader after a pause is not a reason

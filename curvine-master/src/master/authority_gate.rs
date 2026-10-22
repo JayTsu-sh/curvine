@@ -23,6 +23,13 @@ impl Class {
             _ => Self::Foreground,
         }
     }
+    pub(crate) fn request(request: &serde_json::Value) -> Self {
+        if request["op"] == "intent_list" && request["work_class"] == "recall" {
+            Self::Recall
+        } else {
+            Self::control(request["op"].as_str().unwrap_or(""))
+        }
+    }
     fn name(self) -> &'static str {
         match self {
             Self::Recall => "recall",

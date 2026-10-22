@@ -41,6 +41,14 @@ rename、递归属性、递归删除和内部 TTL 删除只把紧凑输入写入
 
 `hsm_stage_duration` 的 `authority_queue` 操作及 `foreground/recall/background` 阶段标签记录排队时长；权重与限额目前是代码常量，没有新增运维配置。
 
+## 外部 worker 的执行通道
+
+常驻 hsm-rs worker 将 Recall 与 Archive/Release 分为两个执行通道，每类最多一个动作在执行。后台通道继续负责策略扫描和 Seal；Recall 通道单独轮询读触发的 Ready 工作。慢 Archive 不占用 Recall 的执行位置，连续 Recall 也不占用后台位置。`--once` 保留单次顺序执行语义；常驻模式的 `max-actions` 是每通道每轮的动作上限，报告新增 `lane` 字段。
+
+`intent_list` 的 `ready_only=true` 可带 `work_class=recall|background`。Source 分别 seek 已有的 `work:0:` 和 `work:1:` 范围，每页最多 16 项，不逐页跳过另一类别的任务。未指定类别的旧查询行为保持；游标仍为不透明的 priority:id，跨类别游标返回 Invalid。没有增加索引格式或外部任务镜像。分类后的 Recall 列表查询也取得 Recall 调度资格。
+
+客户端只持有一页工作，实际 claim、epoch 验证、原始结果和终态仍由 Curvine 维护。执行器收到跨类别数据时拒绝继续，需要使用匹配 Source 版本。当前为本地归档；这项改造没有实现共享磁带机的抢占调度。
+
 ## 验证边界
 
 Master 回归覆盖批量同父目录、遇错停止与原始错误重试、重复关闭的版本归并、并发新读者导致全批 CAS 拒绝、加权最低进度、取消选中独占者、后台满额仍可接收 Recall、Native 前台/TTL 的轮次边界。

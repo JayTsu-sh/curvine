@@ -383,3 +383,14 @@ AuthorityGate 按 Recall/前台/后台 4:8:1 轮次调度，分别限制接入�
 ReadBatcher 的预检失败已向调用方返回错误，协调循环现正常结束该批，不再把它升级为“提交未知”并故障退出。控制操作、namespace 初始化和策略快照同样将无修改的资格预检放在提交未知边界之外；真正提交后无法确认前缀的故障退出仍保留。新增单元回归验证预检失败返回、RocksDB sequence 不变和全部接入名额释放。
 
 修正后 Curvine **269 项 Master 测试通过、2 ignored**，两个 TCP/Raft 优化用例通过，日志 `research/hsm-preflight-no-abort-regression.log`。在线两次换主及固定 Git 组合结果尚需由 hsm-rs 运行确认；本轮百万和最终原版比较仍未执行。
+
+
+### 固定 Git 的在线 Master 失联与恢复（fd2b109f）
+
+修正预检边界后，固定 Git 来源的完整 hsm-rs workspace **31 项功能测试、3 ignored 及全部文档测试通过**，日志 `research/hsm-owned-batches-live-ha-fixed-git.log`。新增独立进程用例暂停当前 Leader、由两个存活节点选主、恢复旧 Leader，再暂停替代 Leader，要求恢复的旧节点参加下一次 quorum；完成 Archive/Release/Recall、读取并验证 2 MiB+29 字节及稳定 inode/data identity。批量成功前缀的原始错误在改名及两次选主后逐字节不变。原有的全进程重启用例另核对三个批量 API 的原始响应。
+
+31 项的记录对应 fd2b109f 与执行器分流前的客户端代码；不能直接当作后续两通道 worker 的验收。
+
+### 执行器分流与按类索引分页
+
+增加 Source 的 work_class 分页，在既有 work:0:/work:1: 上 seek，不改变磁盘键和游标格式；跨类别游标拒绝。Master 回归增加 1,000 个 Recall 与两个后台任务混排的边界、分页和只读检查。hsm-rs 常驻 worker 分开运行 Recall 与 Archive/Release；原始 claim 与工作流结果继续由 Source 维护。详细行为见[批量写入与前后台调度](native-batches-scheduling.md)。执行器暂停后台、普通读自动 Recall 的组合回归另记。

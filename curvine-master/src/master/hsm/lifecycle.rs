@@ -202,20 +202,46 @@ impl MasterFilesystem {
                     return Err(HsmError::Invalid("page limit must be 1..16".into()));
                 }
                 let cursor = request.get("after").and_then(Value::as_str);
-                let prefix =
-                    if op == "intent_list" && request["ready_only"].as_bool().unwrap_or(false) {
-                        b"\x03hsm:work:".as_slice()
-                    } else if op == "policy_list" {
-                        POLICIES
-                    } else {
-                        INTENTS
-                    };
+                let ready = op == "intent_list" && request["ready_only"].as_bool().unwrap_or(false);
+                let prefix = if ready {
+                    match request["work_class"].as_str() {
+                        None if request["work_class"].is_null() => b"\x03hsm:work:".as_slice(),
+                        Some("recall") => b"\x03hsm:work:0:".as_slice(),
+                        Some("background") => b"\x03hsm:work:1:".as_slice(),
+                        _ => {
+                            return Err(HsmError::Invalid(
+                                "work_class must be recall or background".into(),
+                            ))
+                        }
+                    }
+                } else if !request["work_class"].is_null() {
+                    return Err(HsmError::Invalid(
+                        "work_class requires a ready intent page".into(),
+                    ));
+                } else if op == "policy_list" {
+                    POLICIES
+                } else {
+                    INTENTS
+                };
+                // Keep opaque work cursors in the existing priority:id format,
+                // including class-filtered pages. Cross-class cursors reject.
+                let cursor_prefix = if ready {
+                    b"\x03hsm:work:".as_slice()
+                } else {
+                    prefix
+                };
                 let after = cursor
                     .map(|id| {
                         if op == "policy_list" {
                             policy_key(id)
-                        } else if prefix == b"\x03hsm:work:" {
-                            Ok([prefix, id.as_bytes()].concat())
+                        } else if ready {
+                            let key = [cursor_prefix, id.as_bytes()].concat();
+                            if !key.starts_with(prefix) {
+                                return Err(HsmError::Invalid(
+                                    "cursor belongs to another work class".into(),
+                                ));
+                            }
+                            Ok(key)
                         } else {
                             intent_key(id)
                         }
@@ -227,15 +253,16 @@ impl MasterFilesystem {
                 let more = page.len() > limit;
                 page.truncate(limit);
                 let next = if more {
-                    page.last()
-                        .map(|(k, _)| String::from_utf8_lossy(&k[prefix.len()..]).into_owned())
+                    page.last().map(|(k, _)| {
+                        String::from_utf8_lossy(&k[cursor_prefix.len()..]).into_owned()
+                    })
                 } else {
                     None
                 };
                 let items: Vec<Value> = page
                     .iter()
                     .map(|(_, v)| {
-                        if prefix == b"\x03hsm:work:" {
+                        if ready {
                             let id: String = decode(v).map_err(io)?;
                             let bytes = store
                                 .hsm_get(&intent_key(&id)?)
@@ -1031,4 +1058,117 @@ pub(super) fn work_key(intent: &LifecycleIntent) -> Vec<u8> {
         1
     };
     format!("\u{3}hsm:work:{priority}:{}", intent.id).into_bytes()
+}
+
+#[cfg(test)]
+mod work_class_tests {
+    use super::*;
+    #[test]
+    fn work_class_pages_seek_the_selected_index_and_preserve_opaque_cursors() -> CommonResult<()> {
+        crate::master::Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let fs = crate::master::journal::JournalSystem::fs_only_for_test(&conf)?;
+        let ns = Namespace {
+            ordinary_format: 2,
+            root_inode: 1,
+            storage: "s".into(),
+            incarnation: "n".into(),
+            epoch: 1,
+        };
+        {
+            let mut dir = fs.fs_dir.write();
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.hsm_put(NS, &pack(&ns)?)?;
+            batch.commit()?;
+            dir.hsm_enabled = true;
+        }
+        let file = fs.create("/source", false)?;
+        fs.complete_file("/source", Some(file.id), 0, vec![], "", false, None)?;
+        let expected = fs.fs_dir.read().hsm_record(file.id)?.unwrap().state;
+        let ctx = OperationContext {
+            operation_id: "query-work".into(),
+            controller_epoch: 1,
+            attempt_epoch: 1,
+        };
+        {
+            let dir = fs.fs_dir.read();
+            let mut batch = dir.get_rocks_store().new_batch();
+            for (class, count) in [("recall", 1000), ("background", 2)] {
+                for index in 0..count {
+                    let intent = LifecycleIntent {
+                        id: format!("{}{index:063x}", if class == "recall" { "0" } else { "1" }),
+                        policy: "policy".into(),
+                        policy_revision: 1,
+                        version: 1,
+                        expected: expected.clone(),
+                        action: if class == "recall" {
+                            ManagedAction::Recall(ArchiveKey {
+                                backend: "local".into(),
+                                object: format!("object-{index}"),
+                            })
+                        } else {
+                            ManagedAction::Release
+                        },
+                        context: ctx.clone(),
+                        status: IntentStatus::Ready,
+                        claim: None,
+                        last_error: None,
+                        result: None,
+                    };
+                    batch.hsm_put(&intent_key(&intent.id)?, &pack(&intent)?)?;
+                    batch.hsm_put(&work_key(&intent), &pack(&intent.id)?)?;
+                }
+            }
+            batch.commit()?;
+        }
+        let before = fs
+            .fs_dir
+            .read()
+            .get_rocks_store()
+            .db
+            .get_db()
+            .latest_sequence_number();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async {
+            let request = serde_json::json!({"op":"intent_list", "ready_only":true, "work_class":"background", "limit":1});
+            let first = fs.hsm_lifecycle(&ns, &ctx, &request).await?;
+            assert_eq!(first["data"]["items"][0]["id"], format!("1{:063x}", 0));
+            assert_eq!(first["data"]["next"], format!("1:1{:063x}", 0));
+            let mut next = request.clone();
+            next["after"] = first["data"]["next"].clone();
+            let second = fs.hsm_lifecycle(&ns, &ctx, &next).await?;
+            assert_eq!(second["data"]["items"][0]["id"], format!("1{:063x}", 1));
+            assert!(second["data"]["next"].is_null());
+            let mut recall = request.clone();
+            recall["work_class"] = Value::String("recall".into());
+            let first_recall = fs.hsm_lifecycle(&ns, &ctx, &recall).await?;
+            assert_eq!(first_recall["data"]["items"][0]["id"], format!("0{:063x}", 0));
+            recall["after"] = first["data"]["next"].clone();
+            assert!(matches!(fs.hsm_lifecycle(&ns, &ctx, &recall).await, Err(HsmError::Invalid(_))));
+            recall["after"] = Value::Null;
+            recall["work_class"] = Value::String("bad-class".into());
+            assert!(matches!(fs.hsm_lifecycle(&ns, &ctx, &recall).await, Err(HsmError::Invalid(_))));
+            let mut all = request.clone();
+            all["work_class"] = Value::Null;
+            assert_eq!(fs.hsm_lifecycle(&ns, &ctx, &all).await?["data"]["items"][0]["id"], format!("0{:063x}", 0));
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        })?;
+        assert_eq!(
+            fs.fs_dir
+                .read()
+                .get_rocks_store()
+                .db
+                .get_db()
+                .latest_sequence_number(),
+            before
+        );
+        Ok(())
+    }
 }
