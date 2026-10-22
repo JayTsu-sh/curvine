@@ -67,3 +67,5 @@ CARGO_TARGET_DIR=/work/cargo-target CXXFLAGS=-g0 cargo test \
 ### 属性结果的确定性编码
 
 紧凑命令由各副本生成结果，不能依赖 HashMap 的进程内迭代顺序。SetAttrResponse 的 xattr 现在按键排序编码，其他 FileStatus 字段与现有 protobuf wire tag/type 保持；公共 DTO 仍是既有类型，已缓存的旧结果按原字节返回。新增回归先稳定复现原实现相同逻辑属性得到不同响应字节，再验证反复重新加载映射得到相同响应。当前 Master 260 项及两个真实集群用例通过；不改变历史 journal DTO 或 checkpoint 格式。
+
+固定 Git `6a60ef60` 的完整 hsm-rs 回归已通过 30 项功能测试及文档测试，含五个 managed 场景与一个 native 场景。重启后原始属性响应逐字节比较也已通过，详见[最终组合验证](optimization-plan.md#最终固定来源组合回归代码-6a60ef60)。

@@ -346,7 +346,7 @@ Resize/AssignWorker 接入 Native owned 命令；操作时间、布局与 Worker
 
 最新 Curvine 回归：Master **259 通过、2 ignored**，两个真实集群用例通过。实际 SDK 验证 13,000 字节文件部分截断为 4,103 字节、截断为零、重新扩展为 8,193 字节全零数据，旧块 ID 不复用；先前的目录、TTL、控制者交接和 Worker 清理回归继续通过。
 
-此前的完整 native-integration 路径验证为 30 项功能及全部文档测试通过；本次 Resize 与删除发布优化的最终组合还需由固定 Git 来源回归确认。本轮没有更新 PVE，没有执行当前版本百万验收或最终原版性能比较。
+此前的完整 native-integration 路径验证为 30 项功能及全部文档测试通过；本次 Resize、删除发布优化及响应规范化的最终组合已由 `6a60ef60` 固定 Git 来源回归确认，结果见下节。本轮没有更新 PVE，没有执行当前版本百万验收或最终原版性能比较。
 
 
 ### 原始属性结果的副本一致性
@@ -354,3 +354,12 @@ Resize/AssignWorker 接入 Native owned 命令；操作时间、布局与 Worker
 复核发现紧凑属性命令在各副本重新编码 protobuf map，逻辑字段相同但响应字节可能因 HashMap 顺序不同。新增回归在修正前明确失败；SetAttr 响应现使用排序后的 xattr 编码，保留公开 wire tag/type 和已有缓存原字节。Master **260 通过、2 ignored**，两个优化集群用例再次通过。进程重启场景同时增加保留原始 Native 属性请求、删除后代改变目录状态、换主后逐字节核对原始响应；固定 Git 组合回归结果另记。
 
 当前仍需处理批量写 API 和其他少数旧式 RPC、完整业务优先级/后台最低进度调度，以及网络分区/提交回执丢失等组合故障矩阵；没有将共享 ReadIndex FIFO 当作所有业务已经统一调度。
+
+
+### 最终固定来源组合回归（代码 6a60ef60）
+
+hsm-rs 的八个直接依赖和 lock 的 29 个 Curvine 包固定 `6a60ef60f6dc1b10f0d830a9f265e4a0d20a3b9a`，没有本地路径 patch，也没有改变其他依赖。`CARGO_TARGET_DIR=/work/cargo-target CXXFLAGS=-g0 cargo test --locked --workspace --features hsm-curvine/native-integration -j 6` 完成：**30 项功能测试通过、0 失败、2 ignored**，全部文档测试执行成功。五个 managed 场景和一个 native 搬运场景均通过。
+
+增强的全进程重启用例保留磁盘目录并排除旧 Leader：首次 Exists 正确，部分截断后的保留文件 inode/属性/内容一致，递归删除不复活，Worker 清理得到确认；保存的原始 Native 属性请求在目录后代已经改变、换主和重放后，仍逐字节返回原始响应。Curvine 另有 **260 项 Master 测试、两个 TCP/Raft 集群用例**通过。原始日志为开发环境 `research/hsm-namespace-canonical-result-green.log` 与 `research/hsm-namespace-canonical-git-pinned.log`（相对于 `/work/jay/hsm`）。hsm-rs 的发布记录见 [验证文档](https://github.com/JayTsu-sh/hsm-rs/blob/main/docs/VALIDATION.md)。
+
+此轮没有升级 PVE，也未执行当前代码的百万验收和最终原版性能比较。剩余是批量写 API、少数旧式 RPC 的迁移/保护边界、完整业务优先级和后台最低进度调度、组合故障矩阵；这些没有因资格证明合批而被标为完成。
