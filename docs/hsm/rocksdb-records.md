@@ -304,3 +304,10 @@ HSM 卷冷启动用一个 WriteBatch 的 7 个范围墓碑清除原生 inode/edg
 | `hsm-core/src/managed.rs` | DataKey、EntityState、驻留枚举与归档回执 |
 
 源码路径前缀分别为 Curvine 的 `curvine-master/src/`、`crates/common/`，以及配套 hsm-rs 工作区。生命周期概览见 [lifecycle.md](lifecycle.md)。
+
+
+### Native namespace v5 与格式栅栏 v6
+
+`hsm_native_v6` 是新增的空兼容性 CF，业务数据仍在既有 inode/edge/block/location/common 中。它标识 compact namespace command：原始输入、稳定请求身份、捕获的操作/租约时间以及内部 TTL 条件进入 journal；不把全子树展开数据塞入日志。apply 生成的 inode/edge/HSM/access/candidate/每块退休事实与 session 原始结果同一 WriteBatch。目录移动后加载 FileEntry 对应的完整 inode 并更新 HSM 路径。
+
+历史 Native v1–v4 的 DTO 不改变；v5 单独解码。CF v6 使旧进程不能误开新 checkpoint，仍要求全 Master 支持后启用，不提供混合版本滚动激活。失联 Worker 的派生位置正反索引以 1,024 块为一批同时移除；该位置清理不代表 Worker 磁盘删除确认。

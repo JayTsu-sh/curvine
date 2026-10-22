@@ -161,7 +161,7 @@ impl MasterFilesystem {
     // Max lost-worker block ids inspected under a single fs_dir write lock.
     const LOST_WORKER_INVALIDATION_CHUNK: usize = Self::BLOCK_REPORT_WRITE_CHUNK;
 
-    fn validate_alloc_capacity(
+    pub(crate) fn validate_alloc_capacity(
         current_len: i64,
         replicas: u8,
         opts: &FileAllocOpts,

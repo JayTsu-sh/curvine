@@ -900,24 +900,15 @@ impl FsClient {
             RpcCode::Mkdir | RpcCode::CreateFile | RpcCode::CompleteFile | RpcCode::AddBlock
         ) {
             self.native_rpc(code, header).await
-        } else if code == RpcCode::Delete {
-            let encoded = header.encode_to_vec();
-            let request = DeleteRequest::decode(encoded.as_slice())
-                .map_err(|error| FsError::common(error.to_string()))?;
-            if request.recursive {
-                self.raw_rpc(code, header).await
-            } else {
-                self.native_rpc_encoded(code, encoded).await
-            }
-        } else if code == RpcCode::SetAttr {
-            let encoded = header.encode_to_vec();
-            let request = SetAttrRequest::decode(encoded.as_slice())
-                .map_err(|error| FsError::common(error.to_string()))?;
-            if request.opts.recursive {
-                self.raw_rpc(code, header).await
-            } else {
-                self.native_rpc_encoded(code, encoded).await
-            }
+        } else if matches!(
+            code,
+            RpcCode::Delete
+                | RpcCode::SetAttr
+                | RpcCode::Rename
+                | RpcCode::ResizeFile
+                | RpcCode::AssignWorker
+        ) {
+            self.native_rpc(code, header).await
         } else if code == RpcCode::OpenFile {
             let encoded = header.encode_to_vec();
             let request = OpenFileRequest::decode(encoded.as_slice())

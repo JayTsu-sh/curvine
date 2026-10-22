@@ -62,6 +62,7 @@ impl Drop for OriginTermGuard {
 // Write metadata operation logs.
 pub struct JournalWriter {
     enable: bool,
+    read_cohorts: Arc<super::read_cohorts::ReadCohorts>,
     pub(crate) hsm_ready: bool,
     pub(crate) hsm_waiters: HsmWaiters,
     node_id: u64,
@@ -106,6 +107,7 @@ impl JournalWriter {
 
         Ok(Self {
             enable: conf.enable,
+            read_cohorts: Default::default(),
             hsm_ready: !testing
                 && conf.enable
                 && conf.writer_channel_size == 0
@@ -123,6 +125,15 @@ impl JournalWriter {
             last_snapshot_ms: AtomicCounter::new(0),
             entries_since_snapshot: AtomicCounter::new(0),
         })
+    }
+
+    pub(crate) fn spawn_background_authority(
+        &self,
+        task: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        self.client.spawn_local(async move {
+            crate::master::spawn_authority("background namespace", task);
+        });
     }
 
     pub fn submit_hsm(
@@ -180,7 +191,11 @@ impl JournalWriter {
 
     /// Drain earlier speculative native writes, then prove the local leader's
     /// quorum qualification and applied prefix without appending an empty log.
-    pub(crate) async fn read_committed(&self) -> FsResult<()> {
+    pub(crate) async fn read_committed(self: &Arc<Self>) -> FsResult<()> {
+        self.read_cohorts.qualify(self.clone()).await
+    }
+
+    pub(super) async fn read_committed_once(&self) -> FsResult<()> {
         if !self.hsm_ready {
             return err_box!("read qualification requires the committed HSM journal");
         }

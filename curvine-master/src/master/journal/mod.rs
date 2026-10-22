@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod journal_writer;
+mod read_cohorts;
 pub use self::journal_writer::{JournalMessage, JournalWriter};
 
 mod mutation_batcher;

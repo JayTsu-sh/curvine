@@ -25,6 +25,7 @@ struct Pending {
     input: Option<NativeInput>,
     response: oneshot::Sender<FsResult<NativeMutationResponse>>,
     queued: std::time::Instant,
+    mounts: Option<Arc<crate::master::MountManager>>,
     _slot: OwnedSemaphorePermit,
 }
 #[derive(Default)]
@@ -48,7 +49,7 @@ impl NativeCoordinator {
     pub(super) async fn execute(
         self: &Arc<Self>,
         fs: MasterFilesystem,
-        mount_manager: Arc<crate::master::MountManager>,
+        mount_manager: Option<Arc<crate::master::MountManager>>,
         request: NativeMutationRequest,
         input: NativeInput,
     ) -> FsResult<NativeMutationResponse> {
@@ -67,6 +68,7 @@ impl NativeCoordinator {
                 input: Some(input),
                 response,
                 queued,
+                mounts: mount_manager,
                 _slot: slot,
             });
             let spawn = !queue.running;
@@ -75,10 +77,7 @@ impl NativeCoordinator {
         };
         if spawn {
             let this = self.clone();
-            crate::master::spawn_authority(
-                "native",
-                async move { this.run(fs, mount_manager).await },
-            );
+            crate::master::spawn_authority("native", async move { this.run(fs).await });
         }
         result
             .await
@@ -90,13 +89,17 @@ impl NativeCoordinator {
             queue.running = false;
             return None;
         }
-        let mut batch = vec![];
+        let mut batch: Vec<Pending> = vec![];
         let mut bytes = 0usize;
         while batch.len() < 32 {
             let Some(next) = queue.pending.front() else {
                 break;
             };
-            if !batch.is_empty() && bytes.saturating_add(next.request.header.len()) > 512 * 1024 {
+            if !batch.is_empty()
+                && (bytes.saturating_add(next.request.header.len()) > 512 * 1024
+                    || next.input.as_ref().unwrap().namespace_input()
+                    || batch[0].input.as_ref().unwrap().namespace_input())
+            {
                 break;
             }
             let next = queue.pending.pop_front().unwrap();
@@ -105,18 +108,19 @@ impl NativeCoordinator {
         }
         Some(batch)
     }
-    async fn run(
-        self: Arc<Self>,
-        fs: MasterFilesystem,
-        mount_manager: Arc<crate::master::MountManager>,
-    ) {
+    async fn run(self: Arc<Self>, fs: MasterFilesystem) {
         loop {
             tokio::task::yield_now().await;
+            let Some(mut pending) = self.take() else {
+                return;
+            };
+            let namespace = pending[0].input.as_ref().unwrap().namespace_input();
             let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
             let gate_at = std::time::Instant::now();
-            let _serial = gate.read().await;
-            let Some(pending) = self.take() else {
-                return;
+            let (_shared, _exclusive) = if namespace {
+                (None, Some(gate.write().await))
+            } else {
+                (Some(gate.read().await), None)
             };
             let metrics = Master::get_metrics().expect("Master metrics initialized");
             metrics
@@ -166,6 +170,26 @@ impl NativeCoordinator {
                     continue;
                 }
             };
+            if namespace {
+                let mut item = pending.remove(0);
+                let result = if item.request.incarnation != ns.incarnation {
+                    Ok(transport::basic(
+                        &item.request,
+                        Status::Fenced,
+                        "native namespace incarnation changed",
+                    ))
+                } else {
+                    fs.namespace_mutate(
+                        &item.request,
+                        item.input.take().unwrap(),
+                        item.mounts.as_deref(),
+                        term,
+                    )
+                    .await
+                };
+                let _ = item.response.send(result);
+                continue;
+            }
             let prepare_at = std::time::Instant::now();
             let mut commands = vec![];
             let mut allocations = vec![];
@@ -227,10 +251,14 @@ impl NativeCoordinator {
                             "native session needs committed retirement/admission",
                         ))
                     } else {
-                        item.input
-                            .take()
-                            .unwrap()
-                            .prepare(&fs, &mount_manager, &mut view, time)
+                        item.input.take().unwrap().prepare(
+                            &fs,
+                            item.mounts
+                                .as_deref()
+                                .expect("ordinary native request mount context"),
+                            &mut view,
+                            time,
+                        )
                     };
                     let (edits, reply) = match prepared {
                         Ok(prepared) => {

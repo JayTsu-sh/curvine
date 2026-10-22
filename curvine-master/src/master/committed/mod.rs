@@ -2,11 +2,13 @@
 //! Committed namespace preparation. Transport and activation follow only once
 //! all native mutation families have deterministic preparation/publication.
 mod authority;
+mod background;
 mod commands;
 mod coordinator;
 mod garbage;
 mod input;
 mod legacy;
+mod namespace;
 mod query;
 mod session;
 mod transport;

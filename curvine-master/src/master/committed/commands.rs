@@ -250,7 +250,7 @@ fn block_response(
         Some(locs) => locs.clone(),
         None => view.locations(meta.id)?,
     };
-    if replicas.is_empty() {
+    if replicas.is_empty() && meta.alloc_opts.is_none() {
         return err_box!("File {}, block {} Lost (no worker can read)", path, meta.id);
     }
     fs.create_locate_block(
@@ -390,9 +390,8 @@ pub(super) fn overwrite(
     })
 }
 
-/// Nonrecursive metadata changes touch only the target, regardless of the
-/// number of descendants. The HSM record/candidate and original response are
-/// part of the same conditional publication as the native attributes.
+/// Recursive inputs are expanded only inside committed apply. Child options
+/// retain Curvine's ACL/replica inheritance without propagating timestamps/TTL.
 pub(super) fn set_attr(
     batch: &mut BatchView<'_>,
     path: &str,
@@ -400,27 +399,39 @@ pub(super) fn set_attr(
     time: i64,
 ) -> FsResult<PreparedCommand> {
     batch.guard_path(path)?;
-    if opts.recursive {
-        return err_box!("recursive attributes require a bounded subtree command");
+    if opts.recursive && path == "/" {
+        return err_box!("recursive mutation crosses the reserved HSM namespace");
     }
     let mut view = batch.command();
     let resolved = view.resolve(path)?;
     if resolved.len() != InodeView::path_components(path)?.len() {
         return Err(FsError::file_not_found(path));
     }
-    let id = *resolved.last().unwrap();
-    let mut inode = view
-        .inode(id)?
-        .ok_or_else(|| FsError::file_not_found(path))?;
-    view.guard_write(id)?;
+    let root = *resolved.last().unwrap();
+    let ids = if opts.recursive {
+        view.subtree(root)?
+    } else {
+        vec![root]
+    };
     opts.stamp_ctime(time);
-    inode.set_attr(opts)?;
-    view.put_inode(inode.clone_metadata())?;
-    if inode.is_file() {
-        view.enroll(&inode)?;
+    let child_opts = opts.child_opts();
+    for id in ids {
+        let mut inode = view
+            .inode(id)?
+            .ok_or_else(|| FsError::file_not_found(path))?;
+        view.guard_write(id)?;
+        inode.set_attr(if id == root {
+            opts.clone()
+        } else {
+            child_opts.clone()
+        })?;
+        view.put_inode(inode.clone_metadata())?;
+        if inode.is_file() {
+            view.enroll(&inode)?;
+        }
     }
     let response = curvine_proto::SetAttrResponse {
-        status: ProtoUtils::file_status_to_pb(view.status(path, id)?),
+        status: ProtoUtils::file_status_to_pb(view.status(path, root)?),
     }
     .encode_to_vec();
     Ok(PreparedCommand {
@@ -430,8 +441,63 @@ pub(super) fn set_attr(
     })
 }
 
-/// Remove one file/link or empty directory. Physical deletion is driven by
-/// committed independent retirement facts, never the lifetime of this inode.
+fn unlink(
+    view: &mut CommandView<'_, '_>,
+    id: i64,
+    parent_id: i64,
+    name: &str,
+    time: i64,
+    result: &mut curvine_model::DeleteResult,
+) -> FsResult<()> {
+    let mut inode = view
+        .inode(id)?
+        .ok_or_else(|| FsError::common("unlink inode missing"))?;
+    view.guard_delete(id)?;
+    let mut parent = view
+        .inode(parent_id)?
+        .ok_or_else(|| FsError::common("delete parent missing"))?;
+    match parent.expiration_ms() {
+        Ok(Some(expiry)) if time > expiry => (),
+        _ => parent.update_mtime(time),
+    }
+    if inode.is_dir() {
+        if !view.children(id)?.is_empty() {
+            return err_box!("directory still has children");
+        }
+        parent.dec_nlink(time);
+        view.delete_inode(id)?;
+    } else {
+        let file = inode.as_file_mut()?;
+        if file.nlink() == 0 {
+            return err_box!("cannot unlink a zero-link file");
+        }
+        if file.decrement_nlink(time) == 0 {
+            // Only counts cross the RPC boundary. Retirement facts keep the
+            // physical replica lists; do not also accumulate them for a tree.
+            let mut locations = std::collections::HashMap::new();
+            for block in &file.blocks {
+                locations.insert(
+                    block.id,
+                    match &block.locs {
+                        Some(locations) => locations.clone(),
+                        None => view.locations(block.id)?,
+                    },
+                );
+            }
+            result.inodes += 1;
+            result.bytes += u64::try_from(file.get_locs_bytes(&locations)).unwrap_or(0);
+            view.retire_blocks(file)?;
+            view.delete_inode(id)?;
+        } else {
+            view.put_inode(inode)?;
+        }
+    }
+    view.put_inode(parent)?;
+    view.set_edge(parent_id, name, None)?;
+    Ok(())
+}
+
+/// Last-link cleanup is independent of inode lifetime, including recursion.
 pub(super) fn delete(
     batch: &mut BatchView<'_>,
     path: &str,
@@ -448,54 +514,31 @@ pub(super) fn delete(
     if resolved.len() != parts.len() {
         return Err(FsError::file_not_found(path));
     }
-    let id = *resolved.last().unwrap();
-    let mut inode = view
-        .inode(id)?
-        .ok_or_else(|| FsError::file_not_found(path))?;
-    view.guard_delete(id)?;
-    let parent_id = resolved[resolved.len() - 2];
-    let mut parent = view
-        .inode(parent_id)?
-        .ok_or_else(|| FsError::common("delete parent missing"))?;
-    match parent.expiration_ms() {
-        Ok(Some(expiry)) if time > expiry => (),
-        _ => parent.update_mtime(time),
-    }
+    let root = *resolved.last().unwrap();
+    let mut stack = vec![(
+        root,
+        resolved[resolved.len() - 2],
+        parts.last().unwrap().clone(),
+        false,
+    )];
     let mut result = curvine_model::DeleteResult::default();
-    if inode.is_dir() {
-        if view.status(path, id)?.children_num != 0 {
-            if recursive {
-                return err_box!("recursive delete requires a bounded subtree command");
+    while let Some((id, parent, name, visited)) = stack.pop() {
+        let inode = view
+            .inode(id)?
+            .ok_or_else(|| FsError::common("delete subtree inode missing"))?;
+        if inode.is_dir() && !visited {
+            let children = view.children(id)?;
+            if !recursive && !children.is_empty() {
+                return Err(FsError::dir_not_empty(path));
             }
-            return Err(FsError::dir_not_empty(path));
-        }
-        parent.dec_nlink(time);
-        view.delete_inode(id)?;
-    } else {
-        let file = inode.as_file_mut()?;
-        if file.nlink() == 0 {
-            return err_box!("cannot unlink a zero-link file");
-        }
-        if file.decrement_nlink(time) == 0 {
-            for block in &file.blocks {
-                let locations = match &block.locs {
-                    Some(locations) => locations.clone(),
-                    None => view.locations(block.id)?,
-                };
-                if !locations.is_empty() {
-                    result.blocks.insert(block.id, locations);
-                }
+            stack.push((id, parent, name, true));
+            for (name, child) in children {
+                stack.push((child, id, name, false));
             }
-            result.inodes = 1;
-            result.bytes = u64::try_from(file.get_locs_bytes(&result.blocks)).unwrap_or(0);
-            view.retire_blocks(file)?;
-            view.delete_inode(id)?;
         } else {
-            view.put_inode(inode)?;
+            unlink(&mut view, id, parent, &name, time, &mut result)?;
         }
     }
-    view.put_inode(parent)?;
-    view.set_edge(parent_id, parts.last().unwrap(), None)?;
     let response = curvine_proto::DeleteResponse {
         res: Some(ProtoUtils::delete_res_to_pb(result)),
         ..Default::default()
@@ -505,5 +548,293 @@ pub(super) fn delete(
         edits: view.finish()?,
         response,
         allocation: None,
+    })
+}
+
+pub(super) fn rename(
+    batch: &mut BatchView<'_>,
+    request: curvine_proto::RenameRequest,
+    time: i64,
+) -> FsResult<PreparedCommand> {
+    use curvine_model::RenameFlags;
+    let flags = RenameFlags::new(request.flags);
+    if ![
+        0,
+        RenameFlags::NO_REPLACE.value(),
+        RenameFlags::EXCHANGE.value(),
+        RenameFlags::RESTORE.value(),
+    ]
+    .contains(&request.flags)
+    {
+        return Err(FsError::invalid_argument("unsupported rename flags"));
+    }
+    batch.guard_path(&request.src)?;
+    batch.guard_path(&request.dst)?;
+    let src_parts = InodeView::path_components(&request.src)?;
+    let dst_parts = InodeView::path_components(&request.dst)?;
+    if src_parts.len() == 1 || dst_parts.len() == 1 {
+        return err_box!("Cannot rename root path");
+    }
+    let mut view = batch.command();
+    let src = view.resolve(&request.src)?;
+    let dst = view.resolve(&request.dst)?;
+    if src.len() != src_parts.len() {
+        return Err(FsError::file_not_found(&request.src));
+    }
+    if dst.len() + 1 < dst_parts.len() {
+        return Err(FsError::file_not_found(&request.dst));
+    }
+    let source = *src.last().unwrap();
+    let destination = (dst.len() == dst_parts.len()).then(|| *dst.last().unwrap());
+    let src_parent = src[src.len() - 2];
+    let dst_parent = dst[dst_parts.len() - 2];
+    if request.src == request.dst {
+        let response = curvine_proto::RenameResponse { result: false }.encode_to_vec();
+        return Ok(PreparedCommand {
+            edits: view.finish()?,
+            response,
+            allocation: None,
+        });
+    }
+    if dst[..dst_parts.len() - 1].contains(&source)
+        || flags.exchange_mode() && destination.is_some_and(|id| src[..src.len() - 1].contains(&id))
+    {
+        return Err(FsError::invalid_argument(
+            "rename would create a directory cycle",
+        ));
+    }
+    if destination.is_some() && flags.no_replace() {
+        return Err(FsError::file_exists(&request.dst));
+    }
+    if flags.exchange_mode() && destination.is_none() {
+        return Err(FsError::file_not_found(&request.dst));
+    }
+    let mut moving = view
+        .inode(source)?
+        .ok_or_else(|| FsError::common("rename source missing"))?;
+    // POSIX rename over another hardlink to the same inode is a no-op.
+    if destination == Some(source) {
+        let response = curvine_proto::RenameResponse { result: true }.encode_to_vec();
+        return Ok(PreparedCommand {
+            edits: view.finish()?,
+            response,
+            allocation: None,
+        });
+    }
+    let mut refresh = view.subtree(source)?;
+    if let Some(target) = destination {
+        let other = view
+            .inode(target)?
+            .ok_or_else(|| FsError::common("rename target missing"))?;
+        if !flags.exchange_mode() {
+            if moving.is_file() && other.is_dir() {
+                return Err(FsError::is_a_directory(&request.dst));
+            }
+            if moving.is_dir() && other.is_file() {
+                return Err(FsError::not_a_directory(&request.dst));
+            }
+            if other.is_dir() && !view.children(target)?.is_empty() {
+                return Err(FsError::dir_not_empty(&request.dst));
+            }
+            unlink(
+                &mut view,
+                target,
+                dst_parent,
+                dst_parts.last().unwrap(),
+                time,
+                &mut Default::default(),
+            )?;
+        } else {
+            refresh.extend(view.subtree(target)?);
+        }
+    }
+    for id in &refresh {
+        view.guard_write(*id)?;
+    }
+    let mut parents = std::collections::BTreeMap::new();
+    for id in [src_parent, dst_parent] {
+        parents.insert(
+            id,
+            view.inode(id)?
+                .ok_or_else(|| FsError::common("rename parent missing"))?,
+        );
+    }
+    if flags.exchange_mode() {
+        let target = destination.unwrap();
+        let mut other = view
+            .inode(target)?
+            .ok_or_else(|| FsError::common("exchange target missing"))?;
+        if src_parent != dst_parent && moving.is_dir() != other.is_dir() {
+            if moving.is_dir() {
+                parents.get_mut(&src_parent).unwrap().dec_nlink(time);
+                parents.get_mut(&dst_parent).unwrap().incr_nlink(time);
+            } else {
+                parents.get_mut(&src_parent).unwrap().incr_nlink(time);
+                parents.get_mut(&dst_parent).unwrap().dec_nlink(time);
+            }
+        }
+        other.change_name(src_parts.last().unwrap().clone());
+        other.set_parent_id(src_parent);
+        other.update_ctime(time);
+        view.put_inode(other)?;
+        view.set_edge(src_parent, src_parts.last().unwrap(), Some(target))?;
+    } else {
+        if moving.is_dir() && src_parent != dst_parent {
+            parents.get_mut(&src_parent).unwrap().dec_nlink(time);
+            parents.get_mut(&dst_parent).unwrap().incr_nlink(time);
+        }
+        view.set_edge(src_parent, src_parts.last().unwrap(), None)?;
+    }
+    moving.change_name(dst_parts.last().unwrap().clone());
+    moving.set_parent_id(dst_parent);
+    moving.update_ctime(time);
+    view.put_inode(moving)?;
+    view.set_edge(dst_parent, dst_parts.last().unwrap(), Some(source))?;
+    for (_, mut parent) in parents {
+        parent.update_mtime(time);
+        view.put_inode(parent)?;
+    }
+    refresh.sort_unstable();
+    refresh.dedup();
+    for id in refresh {
+        let inode = view
+            .inode(id)?
+            .ok_or_else(|| FsError::common("moved inode missing"))?;
+        if inode.is_file() {
+            view.put_inode(inode.clone_metadata())?;
+            view.enroll(&inode)?;
+        }
+    }
+    let response = curvine_proto::RenameResponse { result: true }.encode_to_vec();
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response,
+        allocation: None,
+    })
+}
+
+/// Sparse resize carries no Worker choice. Retired whole blocks and the next
+/// logical layout are published atomically; the writer later assigns/commits
+/// unplaced blocks through the same stable native request session.
+pub(super) fn resize(
+    batch: &mut BatchView<'_>,
+    fs: &crate::master::fs::MasterFilesystem,
+    request: curvine_proto::FileResizeRequest,
+    time: i64,
+) -> FsResult<PreparedCommand> {
+    let opts = ProtoUtils::file_alloc_opts_from_pb(request.opts);
+    opts.validate()?;
+    let mut view = batch.command();
+    let mut inode = view.file(&request.path, request.inode_id)?;
+    view.guard_write(inode.id())?;
+    let file = inode.as_file_mut()?;
+    let available = if opts.truncate {
+        i64::MAX
+    } else {
+        fs.worker_manager.read().available_bytes()
+    };
+    crate::master::fs::MasterFilesystem::validate_alloc_capacity(
+        file.len,
+        file.replicas,
+        &opts,
+        available,
+    )?;
+    if file.len != opts.len {
+        let removed = file.resize(opts)?;
+        view.retire_metas(&removed)?;
+        file.complete_at(file.len, &[], "", true, time)?;
+        view.put_inode(inode.clone_metadata())?;
+        view.enroll(&inode)?;
+    }
+    let file = inode.as_file_ref()?;
+    let mut blocks = Vec::with_capacity(file.blocks.len());
+    for (index, meta) in file.blocks.iter().enumerate() {
+        if index + 1 < file.blocks.len() && meta.len() != file.block_size as i64 {
+            return err_box!("block status abnormal, block id {}", meta.id);
+        }
+        blocks.push(block_response(&view, fs, &request.path, file, meta)?);
+    }
+    let response = curvine_proto::FileResizeResponse {
+        file_blocks: ProtoUtils::file_blocks_to_pb(curvine_model::FileBlocks::new(
+            inode.to_file_status(&request.path)?,
+            blocks,
+        )),
+    }
+    .encode_to_vec();
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response,
+        allocation: None,
+    })
+}
+
+pub(super) fn assign_worker(
+    batch: &mut BatchView<'_>,
+    fs: &crate::master::fs::MasterFilesystem,
+    request: curvine_proto::AssignWorkerRequest,
+) -> FsResult<PreparedCommand> {
+    let mut view = batch.command();
+    let mut inode = view.file(&request.path, request.inode_id)?;
+    view.guard_write(inode.id())?;
+    let file = inode.as_file_mut()?;
+    let meta = file.search_block_mut_check(request.block.id)?;
+    if meta.alloc_opts.is_none() || meta.locs.is_some() {
+        let file = inode.as_file_ref()?;
+        let meta = file
+            .blocks
+            .iter()
+            .find(|meta| meta.id == request.block.id)
+            .ok_or_else(|| FsError::common("assignment block missing"))?;
+        let response = curvine_proto::AssignWorkerResponse {
+            block: ProtoUtils::located_block_to_pb(block_response(
+                &view,
+                fs,
+                &request.path,
+                file,
+                meta,
+            )?),
+        }
+        .encode_to_vec();
+        return Ok(PreparedCommand {
+            edits: view.finish()?,
+            response,
+            allocation: None,
+        });
+    }
+    let workers = fs.choose_worker_for_file(
+        file,
+        ProtoUtils::client_address_from_pb(request.client_address),
+        request.exclude_workers,
+    )?;
+    let allocation = Allocation {
+        manager: fs.worker_manager.clone(),
+        workers: workers.clone(),
+        block_size: file.block_size as i64,
+        release: true,
+    };
+    let has_spdk = fs.worker_manager.read().workers_have_spdk(&workers);
+    let meta = file.search_block_mut_check(request.block.id)?;
+    if !meta.assign_worker(&workers) {
+        return err_box!("private assignment did not install selected workers");
+    }
+    let response = curvine_proto::AssignWorkerResponse {
+        block: ProtoUtils::located_block_to_pb(curvine_model::LocatedBlock {
+            block: curvine_model::ExtendedBlock {
+                id: meta.id,
+                len: meta.len(),
+                alloc_opts: meta.alloc_opts.clone(),
+                storage_type: file.storage_policy.storage_type,
+                file_type: file.file_type,
+            },
+            locs: workers,
+            has_spdk,
+        }),
+    }
+    .encode_to_vec();
+    view.put_inode(inode)?;
+    Ok(PreparedCommand {
+        edits: view.finish()?,
+        response,
+        allocation: Some(allocation),
     })
 }

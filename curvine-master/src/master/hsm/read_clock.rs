@@ -10,13 +10,15 @@ use std::time::{Duration, Instant};
 pub(super) const FLOOR: &[u8] = b"\x03hsm:read-clock:v1";
 pub(super) const LEASE_MS: i64 = 120_000;
 
-#[derive(Clone, Copy)]
-pub(super) struct ReadTime {
-    pub(super) now: i64,
+// Field order is frozen by compact namespace journal v5. Add a new journal
+// DTO/version before changing this serialized projection of the lease clock.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ReadTime {
+    pub(crate) now: i64,
     recovering: bool,
 }
 impl ReadTime {
-    pub(super) fn active(self, expiry: i64) -> bool {
+    pub(crate) fn active(self, expiry: i64) -> bool {
         self.recovering || expiry > self.now
     }
 }
@@ -57,7 +59,7 @@ impl ReadClock {
     }
 }
 impl FsDir {
-    pub(super) fn hsm_read_time(&self) -> CommonResult<ReadTime> {
+    pub(crate) fn hsm_read_time(&self) -> CommonResult<ReadTime> {
         self.hsm_read_clock
             .sample(self.journal_writer.current_term(), Instant::now(), || {
                 let floor = self

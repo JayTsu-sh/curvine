@@ -23,6 +23,14 @@ pub(crate) enum NativeInput {
     Reopen(curvine_proto::OpenFileRequest),
     SetAttr(curvine_proto::SetAttrRequest),
     Delete(curvine_proto::DeleteRequest),
+    Resize(curvine_proto::FileResizeRequest),
+    AssignWorker(curvine_proto::AssignWorkerRequest),
+    Rename(curvine_proto::RenameRequest),
+    TtlDelete {
+        path: String,
+        inode: i64,
+        metadata: [u8; 32],
+    },
 }
 impl NativeInput {
     pub(crate) fn parse(request: &NativeMutationRequest) -> FsResult<Self> {
@@ -65,6 +73,21 @@ impl NativeInput {
                     .map(Self::Delete)
                     .map_err(|error| FsError::common(error.to_string()))
             }
+            value if value == RpcCode::Rename as u32 => {
+                curvine_proto::RenameRequest::decode(request.header.as_slice())
+                    .map(Self::Rename)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
+            value if value == RpcCode::ResizeFile as u32 => {
+                curvine_proto::FileResizeRequest::decode(request.header.as_slice())
+                    .map(Self::Resize)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
+            value if value == RpcCode::AssignWorker as u32 => {
+                curvine_proto::AssignWorkerRequest::decode(request.header.as_slice())
+                    .map(Self::AssignWorker)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
             _ => err_box!("unsupported native mutation operation"),
         }
     }
@@ -77,10 +100,49 @@ impl NativeInput {
             Self::Reopen(request) => &request.path,
             Self::SetAttr(request) => &request.path,
             Self::Delete(request) => &request.path,
+            Self::Rename(request) => &request.src,
+            Self::Resize(request) => &request.path,
+            Self::AssignWorker(request) => &request.path,
+            Self::TtlDelete { path, .. } => path,
+        }
+    }
+    pub(super) fn namespace_input(&self) -> bool {
+        match self {
+            Self::Rename(_) | Self::TtlDelete { .. } => true,
+            Self::Delete(request) => request.recursive,
+            Self::SetAttr(request) => request.opts.recursive,
+            _ => false,
         }
     }
     pub(crate) fn legacy(self, fs: &MasterFilesystem) -> FsResult<Vec<u8>> {
         match self {
+            Self::Resize(request) => Ok(curvine_proto::FileResizeResponse {
+                file_blocks: ProtoUtils::file_blocks_to_pb(fs.resize_by_id(
+                    request.path,
+                    request.inode_id,
+                    ProtoUtils::file_alloc_opts_from_pb(request.opts),
+                )?),
+            }
+            .encode_to_vec()),
+            Self::AssignWorker(request) => Ok(curvine_proto::AssignWorkerResponse {
+                block: ProtoUtils::located_block_to_pb(fs.assign_worker_by_id(
+                    request.path,
+                    request.inode_id,
+                    ProtoUtils::extend_block_from_pb(request.block),
+                    ProtoUtils::client_address_from_pb(request.client_address),
+                    request.exclude_workers,
+                )?),
+            }
+            .encode_to_vec()),
+            Self::TtlDelete { .. } => err_box!("TTL input requires committed native authority"),
+            Self::Rename(request) => Ok(curvine_proto::RenameResponse {
+                result: fs.rename(
+                    request.src,
+                    request.dst,
+                    curvine_model::RenameFlags::new(request.flags),
+                )?,
+            }
+            .encode_to_vec()),
             Self::Delete(request) => {
                 let result = fs.delete(request.path, request.recursive)?;
                 Ok(curvine_proto::DeleteResponse {
@@ -194,6 +256,10 @@ impl NativeInput {
             return err_box!("native HSM metadata requires a path outside UFS mounts");
         }
         match self {
+            Self::Resize(request) => commands::resize(view, fs, request, time),
+            Self::AssignWorker(request) => commands::assign_worker(view, fs, request),
+            Self::TtlDelete { .. } => err_box!("TTL input requires compact committed expansion"),
+            Self::Rename(request) => commands::rename(view, request, time),
             Self::Delete(request) => commands::delete(view, &request.path, request.recursive, time),
             Self::SetAttr(request) => commands::set_attr(
                 view,

@@ -45,6 +45,8 @@ impl RocksInodeStore {
     pub(crate) const CF_NATIVE_GC_FORMAT: &'static str = "hsm_native_v4";
     pub(crate) const CF_NATIVE_DELETE_FORMAT: &'static str = "hsm_native_v5";
 
+    pub(crate) const CF_NATIVE_NAMESPACE_FORMAT: &'static str = "hsm_native_v6";
+
     pub const PREFIX_MOUNT: u8 = 0x01;
     pub const PREFIX_LOCK: u8 = 0x02;
     pub(crate) const NATIVE_INODE_FLOOR: &'static [u8] = b"\x03hsm:native-inode-floor:v1";
@@ -322,14 +324,15 @@ impl RocksInodeStore {
     pub fn delete_locations(&self, worker_id: u32) -> CommonResult<Vec<i64>> {
         let block_ids = self.get_block_ids(worker_id)?;
 
-        // delete all worker_id -> block_ids
-        let prefix = RocksUtils::u32_to_bytes(worker_id);
-        self.db.prefix_delete(Self::CF_LOCATION, prefix)?;
-
-        // delete all block_id -> worker_ids
-        for block_id in &block_ids {
-            let key = RocksUtils::i64_u32_to_bytes(*block_id, worker_id);
-            self.db.delete_cf(Self::CF_BLOCK, key)?;
+        // Replica locations are derived from Worker reports. Retire both
+        // directions atomically per bounded chunk instead of one DB write per
+        // block after deleting the entire reverse index first.
+        for chunk in block_ids.chunks(1024) {
+            let mut batch = self.new_batch();
+            for block_id in chunk {
+                batch.delete_location(*block_id, worker_id)?;
+            }
+            batch.commit()?;
         }
 
         Ok(block_ids)
@@ -549,6 +552,31 @@ mod tests {
     use curvine_runtime::common::Utils;
 
     #[test]
+    fn lost_worker_locations_remove_both_indexes_across_chunks_without_touching_other_replicas(
+    ) -> CommonResult<()> {
+        let directory = tempfile::tempdir()?;
+        let store = RocksInodeStore::new(
+            DBConf::new(directory.path().to_string_lossy().into_owned()),
+            true,
+        )?;
+        let mut batch = store.new_batch();
+        for block in 1..=2050 {
+            batch.add_location(block, &curvine_model::BlockLocation::with_id(7))?;
+            batch.add_location(block, &curvine_model::BlockLocation::with_id(8))?;
+        }
+        batch.commit()?;
+        assert_eq!(store.delete_locations(7)?.len(), 2050);
+        assert!(store.get_block_ids(7)?.is_empty());
+        assert_eq!(store.get_block_ids(8)?.len(), 2050);
+        for block in [1, 1024, 1025, 2048, 2050] {
+            let replicas = store.get_locations(block)?;
+            assert_eq!(replicas.len(), 1);
+            assert_eq!(replicas[0].worker_id, 8);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn hsm_schema_fence_survives_checkpoint_and_rejects_legacy_open() -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
         let legacy = DBConf::new(directory.path().to_string_lossy().into_owned());
@@ -559,9 +587,12 @@ mod tests {
         let native_v4 = native_v3
             .clone()
             .add_cf(RocksInodeStore::CF_NATIVE_GC_FORMAT);
-        let upgraded = native_v4
+        let native_v5 = native_v4
             .clone()
             .add_cf(RocksInodeStore::CF_NATIVE_DELETE_FORMAT);
+        let upgraded = native_v5
+            .clone()
+            .add_cf(RocksInodeStore::CF_NATIVE_NAMESPACE_FORMAT);
         let store = RocksInodeStore::new(upgraded.clone(), true)?;
         let checkpoint = store.db.create_checkpoint(1)?;
         drop(store);
@@ -570,6 +601,7 @@ mod tests {
         assert!(RocksInodeStore::new(overlay_only, false).is_err());
         assert!(RocksInodeStore::new(native_v3, false).is_err());
         assert!(RocksInodeStore::new(native_v4, false).is_err());
+        assert!(RocksInodeStore::new(native_v5, false).is_err());
         let mut store = RocksInodeStore::new(upgraded, false)?;
         store.db.restore(checkpoint)?;
         assert!(store.db.cf(RocksInodeStore::CF_HSM_FORMAT).is_ok());

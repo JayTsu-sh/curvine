@@ -57,6 +57,16 @@ impl RaftClient {
         Self::new(rt, &group, conf.new_client_conf())
     }
 
+    /// Dispatch an owned local task from an OS scheduler without creating or
+    /// nesting a runtime. The caller supplies its own completion supervision.
+    pub fn spawn_local<F>(&self, task: F) -> curvine_runtime::runtime::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.rt.spawn(task)
+    }
+
     pub fn add_node(&self, id: u64, addr: &InetAddr) -> RaftResult<()> {
         let node_addr = NodeAddr::new(id, &addr.hostname, addr.port);
         self.connector.add_node(node_addr)?;

@@ -179,3 +179,10 @@ LocalArchive 的数据和 catalog/receipt 都是本地单节点文件。增加�
 普通 Exists 曾在新 Leader 追齐当前任期前缀前返回删除前路径；HSM inspect 取 ReadIndex 后路径即消失。现将文件属性、存在性、列表、块详情及锁/挂载查询接入有界读取批处理，每批最多 64 个请求共用 ReadIndex，资格确认后才执行同步查询，并排除旧式 speculative 修改。查询取消不撤销或生成权威修改，纯查询不写持久 HSM outcome。
 
 增强的真实进程测试在普通删除已确认后重启 Master/Worker 进程组、排除原 Leader，要求第一次 Exists 正确；随后确认 Record 删除、独立退休事实仍可处理和 Worker 删除最终确认。30 项 HSM 功能及文档回归通过。仍需分别执行单节点在线故障、网络分区及数据副本故障矩阵。
+
+
+### 紧凑目录命令与后台条件删除
+
+rename/替换/交换、递归属性/删除在 Native journal v5 记录紧凑输入，由各副本在 committed apply 展开并原子发布；不执行旧式 Leader 提前修改。判断读者有效性的逻辑时钟及恢复宽限位随日志保存。旧结果重试不再展开目录；旧 inode 的后台 TTL 候选也不能删除同名新 inode 或新进入的子项。格式、硬链接、目录所有权转移和 GC 细节见 [目录与后台命令](native-namespace.md)。
+
+所有读取资格统一进入有界 FIFO，仅证明开始前摘出的等待者可共享该证明；新到达请求、不同任期和失败证明不能借用资格。OS 调度的 TTL 删除通过现有运行时提交 Native 命令，等待超时不取消 owned 任务。配额同步扫描/等待位于 blocking 线程，不在 Tokio RPC worker 上阻塞。其他旧式后台修改仍保留独占及自身前缀确认，不能将这些改造视为端到端故障验收完成。

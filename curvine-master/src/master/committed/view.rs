@@ -60,6 +60,7 @@ pub(super) struct BatchView<'a> {
     last_inode: i64,
     bytes: usize,
     budget: usize,
+    protection_time: Option<crate::master::hsm::read_clock::ReadTime>,
 }
 impl<'a> BatchView<'a> {
     pub(super) fn new(authority: &'a FsDir, budget: usize) -> Self {
@@ -75,7 +76,18 @@ impl<'a> BatchView<'a> {
             last_inode: authority.last_inode_id(),
             bytes: 0,
             budget,
+            protection_time: None,
         }
+    }
+    /// Compact namespace inputs are expanded only inside committed apply.
+    /// The captured lease clock makes guards identical on every replica.
+    pub(super) fn for_namespace(
+        authority: &'a FsDir,
+        time: crate::master::hsm::read_clock::ReadTime,
+    ) -> Self {
+        let mut view = Self::new(authority, usize::MAX);
+        view.protection_time = Some(time);
+        view
     }
     pub(super) fn guard_path(&self, path: &str) -> curvine_error::FsResult<()> {
         self.authority.hsm_guard_path(path)
@@ -236,8 +248,30 @@ impl CommandView<'_, '_> {
     }
 
     pub(super) fn guard_write(&mut self, id: i64) -> CommonResult<()> {
-        self.batch.authority.hsm_guard_id(id)?;
-        self.record(id)?;
+        let record = self.record(id)?;
+        if let Some(time) = self.batch.protection_time {
+            if let Some(record) = record {
+                if !record.ordinary
+                    || !record.native_blocks
+                    || record.seal_token.is_some()
+                    || !record.views.is_empty()
+                    || record.pending.is_some()
+                    || record.readers.values().any(|expiry| time.active(*expiry))
+                {
+                    return err_box!("HSM operation or active read protects this generation");
+                }
+            }
+            if self
+                .batch
+                .authority
+                .hsm_namespace()?
+                .is_some_and(|ns| ns.root_inode == id)
+            {
+                return err_box!("managed HSM inode requires the native HSM Interface");
+            }
+        } else {
+            self.batch.authority.hsm_guard_id(id)?;
+        }
         Ok(())
     }
 
@@ -299,12 +333,18 @@ impl CommandView<'_, '_> {
         &mut self,
         file: &crate::master::meta::inode::InodeFile,
     ) -> CommonResult<()> {
+        self.retire_metas(&file.blocks)
+    }
+    pub(super) fn retire_metas(
+        &mut self,
+        blocks: &[crate::master::meta::BlockMeta],
+    ) -> CommonResult<()> {
         let namespace = self
             .batch
             .authority
             .hsm_namespace()?
             .ok_or("GC has no namespace")?;
-        for meta in &file.blocks {
+        for meta in blocks {
             let mut locations: BTreeMap<_, _> = meta
                 .locs
                 .clone()
@@ -484,6 +524,49 @@ impl CommandView<'_, '_> {
         self.edits.edges.insert((parent, name.into()), value);
         Ok(())
     }
+    pub(super) fn children(&mut self, id: i64) -> CommonResult<Vec<(String, i64)>> {
+        let mut children: BTreeMap<String, i64> = self
+            .batch
+            .base_dir(id)?
+            .map(|dir| {
+                dir.as_dir_ref().map(|dir| {
+                    dir.children_iter()
+                        .map(|child| (child.name().to_owned(), child.id()))
+                        .collect()
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        for edges in [&self.batch.edges, &self.edits.edges] {
+            for ((_, name), child) in edges
+                .range((id, String::new())..)
+                .take_while(|((parent, _), _)| *parent == id)
+            {
+                if let Some(child) = child {
+                    children.insert(name.clone(), *child);
+                } else {
+                    children.remove(name);
+                }
+            }
+        }
+        Ok(children.into_iter().collect())
+    }
+    pub(super) fn subtree(&mut self, root: i64) -> CommonResult<Vec<i64>> {
+        let mut stack = vec![root];
+        let mut ids = vec![];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let inode = self.inode(id)?.ok_or("subtree inode is missing")?;
+            if inode.is_dir() {
+                stack.extend(self.children(id)?.into_iter().map(|(_, id)| id));
+            }
+            ids.push(id);
+        }
+        Ok(ids)
+    }
     pub(super) fn status(&mut self, path: &str, id: i64) -> CommonResult<FileStatus> {
         let mut inode = self.inode(id)?.ok_or("prepared status inode is missing")?;
         if id != ROOT_INODE_ID {
@@ -516,6 +599,12 @@ impl CommandView<'_, '_> {
     pub(super) fn finish(self) -> CommonResult<PreparedEdits> {
         if self.poisoned {
             return err_box!("prepared command was rejected by its byte budget");
+        }
+        if self.batch.protection_time.is_some() {
+            // Apply-only namespace expansion has no following speculative
+            // command. Avoid serializing/cloning a whole subtree just to
+            // enforce the transport budget of an already compact input.
+            return Ok(self.edits);
         }
         let size = self.edits.encoded_bytes()?;
         let bytes = self

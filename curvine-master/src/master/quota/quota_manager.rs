@@ -62,7 +62,15 @@ impl QuotaManager {
         if !testing {
             rt.spawn(async move {
                 while let Some(cluster_info) = rx.recv().await {
-                    mgr.handle_trigger(cluster_info);
+                    let manager = mgr.clone();
+                    // Metadata scans and the OS-side completion wait must not
+                    // block RPC workers or call blocking_write from async code.
+                    if let Err(error) =
+                        tokio::task::spawn_blocking(move || manager.handle_trigger(cluster_info))
+                            .await
+                    {
+                        log::error!("quota eviction worker failed: {error}");
+                    }
                 }
             });
         }
@@ -159,25 +167,11 @@ impl QuotaManager {
                 break;
             }
 
-            let total_freed = {
-                let fs_guard = self.fs.fs_dir.read();
-                let freed = inode_ids
-                    .iter()
-                    .filter_map(|&inode_id| fs_guard.store.get_inode(inode_id, None).ok().flatten())
-                    .map(|inode_view| match &inode_view {
-                        InodeView::File(f) => f.len.max(0),
-                        _ => 0,
-                    })
-                    .sum::<i64>();
-                freed
-            };
-
+            let total_freed = self.execute_eviction(self.eviction_conf.eviction_mode, &inode_ids);
             if total_freed <= 0 {
-                log::debug!("cluster-evict: total_freed <= 0, stopping eviction");
+                log::debug!("cluster-evict: candidates made no progress; retain them for later");
                 break;
             }
-
-            self.execute_eviction(self.eviction_conf.eviction_mode, &inode_ids);
 
             plan.target_free_bytes = plan.target_free_bytes.saturating_sub(total_freed);
 
@@ -214,18 +208,18 @@ impl QuotaManager {
         })
     }
 
-    fn execute_eviction(&self, _mode: EvictionMode, inode_ids: &[i64]) {
+    fn execute_eviction(&self, _mode: EvictionMode, inode_ids: &[i64]) -> i64 {
         let ttl_executor_guard = self.ttl_executor.read();
         let Some(ttl_executor) = ttl_executor_guard.as_ref() else {
             log::warn!("cluster-evict: ttl_executor not initialized, skipping eviction");
-            return;
+            return 0;
         };
 
         let metrics = match Master::get_metrics() {
             Ok(metrics) => metrics,
             Err(e) => {
                 log::warn!("cluster-evict: master metrics unavailable: {}", e);
-                return;
+                return 0;
             }
         };
         let mut successfully_evicted = Vec::with_capacity(inode_ids.len());
@@ -254,10 +248,11 @@ impl QuotaManager {
             let res = ttl_executor.execute_by_id(inode_id);
 
             match res {
-                Ok(_) => {
+                Ok((true, _)) => {
                     successfully_evicted.push(inode_id);
                     total_bytes_freed += file_size;
                 }
+                Ok((false, _)) => (),
                 Err(e) => {
                     log::warn!(
                         "cluster-evict: executor failed for inode_id={}, err={}",
@@ -283,5 +278,57 @@ impl QuotaManager {
                 total_bytes_freed
             );
         }
+        total_bytes_freed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::master::journal::JournalSystem;
+    use curvine_core_error::CommonResult;
+    #[test]
+    fn deferred_ttl_candidates_do_not_count_as_evicted_or_advance_capacity_progress(
+    ) -> CommonResult<()> {
+        Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = curvine_config::ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.enable_quota_eviction = true;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let fs = JournalSystem::fs_only_for_test(&conf)?;
+        let status = fs.create("/not-expired", false)?;
+        fs.complete_file("/not-expired", Some(status.id), 0, vec![], "", false, None)?;
+        {
+            let mut dir = fs.fs_dir.write();
+            let mut inode = dir.store.get_inode(status.id, None)?.unwrap();
+            inode.as_file_mut()?.len = 4096;
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.write_inode(&inode)?;
+            batch.commit()?;
+            dir.hsm_enabled = true;
+        }
+        let evictor = fs.fs_dir.read().evictor.clone();
+        evictor.on_access(status.id);
+        let manager = QuotaManager::new(
+            EvictionConf::from_conf(&conf),
+            fs.clone(),
+            evictor.clone(),
+            Arc::new(conf.client_rpc_conf().create_runtime()),
+            true,
+        );
+        manager.set_ttl_executor(InodeTtlExecutor::with_managers(fs.clone()));
+        assert_eq!(
+            manager.execute_eviction(EvictionMode::FreeFile, &[status.id]),
+            0
+        );
+        assert!(fs.exists("/not-expired")?);
+        assert!(
+            evictor.select_victims(16).contains(&status.id),
+            "a deferred candidate was treated as reclaimed"
+        );
+        Ok(())
     }
 }

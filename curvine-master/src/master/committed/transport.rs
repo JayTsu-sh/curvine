@@ -80,6 +80,15 @@ impl FsDir {
         if entry.payload.len() > MAX_ENTRY {
             return err_box!("native entry exceeds byte limit");
         }
+        let version: u32 =
+            SerdeUtils::deserialize(entry.payload.get(..4).ok_or("truncated native version")?)?;
+        if version == super::namespace::VERSION {
+            let result = super::namespace::apply(self, SerdeUtils::deserialize(&entry.payload)?)?;
+            if let Some((_, waiter)) = self.native_local_apply.remove(&entry.ticket) {
+                let _ = waiter.send(vec![result]);
+            }
+            return Ok(());
+        }
         let batch = decode_batch(&entry.payload)?;
         if batch.commands.len() > 32 || (batch.commands.is_empty() == batch.garbage_ack.is_none()) {
             return err_box!("unsupported native batch version or size");
@@ -137,7 +146,7 @@ impl MasterFilesystem {
         }
         let coordinator = self.fs_dir.read().native_coordinator.clone();
         coordinator
-            .execute(self.clone(), mount_manager, request, input)
+            .execute(self.clone(), Some(mount_manager), request, input)
             .await
     }
 

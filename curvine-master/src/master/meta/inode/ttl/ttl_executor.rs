@@ -78,6 +78,19 @@ impl InodeTtlExecutor {
                     if dir.hsm_record(inode_id)?.is_some() || !inode.is_expired()? {
                         return Ok((false, inode));
                     }
+                    if inode.storage_policy()?.ttl_action == TtlAction::Delete
+                        && dir.get_mount_table()?.is_empty()
+                    {
+                        drop(dir);
+                        return self.filesystem.hsm_ttl_delete(inode);
+                    }
+                    if inode.storage_policy()?.ttl_action == TtlAction::Free
+                        && inode.as_file_ref().is_ok_and(|file| !file.ufs_exists())
+                    {
+                        // Native-only bytes have no UFS copy to free. Their
+                        // lifecycle belongs to explicit HSM Release policies.
+                        return Ok((false, inode));
+                    }
                 }
             }
         }
@@ -126,9 +139,9 @@ impl InodeTtlExecutor {
                 Ok((true, inode))
             }
             TtlAction::Free => {
-                self.filesystem.free(&path, true)?;
+                let freed = self.filesystem.free(&path, true)?;
                 debug!("ttl free {} {:?}", path, inode);
-                Ok((true, inode))
+                Ok((freed.inodes > 0, inode))
             }
 
             _ => Ok((true, inode)),

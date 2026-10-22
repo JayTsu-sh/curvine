@@ -647,6 +647,89 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             assert!(std::time::Instant::now() < deadline, "deleted inode's GC did not finish");
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
+        // Compact namespace inputs: normal SDK writes, inherited policy
+        // metadata, protected subtree rejection and physical Worker cleanup.
+        let tree = Path::from_str("/compact-tree/sub")?;
+        fs.mkdir(&tree, true).await?;
+        for name in ["a", "b"] {
+            let path = Path::from_str(format!("/compact-tree/sub/{name}"))?;
+            let mut writer = fs.create(&path, false).await?;
+            writer.write(b"namespace payload").await?;
+            writer.complete().await?;
+        }
+        let tree_a = Path::from_str("/compact-tree/sub/a")?;
+        let file_id = fs.get_status(&tree_a).await?.id;
+        let tree_b = Path::from_str("/compact-tree/sub/b")?;
+        let old_target = fs.get_status(&tree_b).await?.id;
+        let before_namespace = metrics.hsm_test_commit_stats()["namespace_commands"].as_f64().unwrap();
+        fs.rename(&Path::from_str("/compact-tree")?, &Path::from_str("/compact-moved")?).await?;
+        let moved_a = Path::from_str("/compact-moved/sub/a")?;
+        let moved_b = Path::from_str("/compact-moved/sub/b")?;
+        assert_eq!(fs.get_status(&moved_a).await?.id, file_id);
+        assert_eq!(active.fs_dir().read().hsm_record(file_id)?.unwrap().path, "/compact-moved/sub/a");
+        fs.set_attr(&Path::from_str("/compact-moved")?, curvine_model::SetAttrOpts {
+            recursive: true, owner: Some("tree-policy-owner".into()), mode: Some(0o755),
+            ..Default::default()
+        }).await?;
+        assert_eq!(active.fs_dir().read().hsm_record(file_id)?.unwrap().owner, "tree-policy-owner");
+        // Replacing an allocated file persists its cleanup before the source
+        // is published at that edge.
+        fs.rename(&moved_a, &moved_b).await?;
+        assert_eq!(fs.get_status(&moved_b).await?.id, file_id);
+        assert!(active.fs_dir().read().hsm_record(old_target)?.is_none());
+        let mut held = fs.open(&moved_b).await?;
+        let mut data = vec![0; 17];
+        assert_eq!(held.read(&mut data).await?, 17);
+        assert_eq!(data, b"namespace payload");
+        assert!(fs.delete(&Path::from_str("/compact-moved")?, true).await.is_err());
+        assert_eq!(fs.get_status(&moved_b).await?.id, file_id);
+        held.complete().await?;
+        let deleted = fs.delete(&Path::from_str("/compact-moved")?, true).await?;
+        assert_eq!(deleted.inodes, 1);
+        assert!(!fs.exists(&Path::from_str("/compact-moved")?).await?);
+        assert!(active.fs_dir().read().hsm_record(file_id)?.is_none());
+        assert!(metrics.hsm_test_commit_stats()["namespace_commands"].as_f64().unwrap() >= before_namespace + 5.0);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !active.fs_dir().read().get_rocks_store().hsm_scan(b"\x03hsm:native-gc:v1:", None, 1)?.is_empty() {
+            assert!(std::time::Instant::now() < deadline, "compact namespace GC did not finish");
+            assert_eq!(control(&fs, &json!({"op":"gc_batch"})).await?["kind"], "gc");
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        // An OS TTL worker joins the same native queue. Namespace init was
+        // already completed by ordinary SDK traffic; no nested runtime is used.
+        let ttl_dir = Path::from_str("/native-ttl-empty")?;
+        fs.mkdir(&ttl_dir, false).await?;
+        let ttl_status = fs.get_status(&ttl_dir).await?;
+        fs.set_attr(&ttl_dir, curvine_model::SetAttrOpts { mtime: Some(1), ttl_ms: Some(1),
+            ttl_action: Some(curvine_model::TtlAction::Delete), ..Default::default() }).await?;
+        let ttl = curvine_master::master::meta::inode::ttl::InodeTtlExecutor::with_managers(active.clone());
+        let outcome = tokio::task::spawn_blocking(move || ttl.execute_by_id(ttl_status.id)).await??;
+        assert!(outcome.0);
+        assert!(!fs.exists(&ttl_dir).await?);
+        // Native resize/assignment: partial truncation, whole-block retirement
+        // and extending an empty layout through real Worker allocation.
+        let resize_path = Path::from_str("/native-resize")?;
+        let resize_bytes: Vec<u8> = (0..13000).map(|i| (i % 251) as u8).collect();
+        let mut writer = fs.create(&resize_path, false).await?;
+        writer.write(&resize_bytes).await?; writer.complete().await?;
+        let original_resize_layout = fs.fs_client().get_block_locations(&resize_path).await?;
+        fs.resize(&resize_path, curvine_model::FileAllocOpts::with_truncate(4103)).await?;
+        let mut reader = fs.open(&resize_path).await?;
+        let mut truncated = vec![];
+        while reader.has_remaining() { truncated.extend_from_slice(reader.async_read(None).await?.as_slice()); }
+        reader.complete().await?;
+        assert_eq!(truncated, resize_bytes[..4103]);
+        assert_eq!(fs.get_status(&resize_path).await?.len, 4103);
+        fs.resize(&resize_path, curvine_model::FileAllocOpts::with_truncate(0)).await?;
+        assert_eq!(fs.get_status(&resize_path).await?.len, 0);
+        fs.resize(&resize_path, curvine_model::FileAllocOpts::with_truncate(8193)).await?;
+        let expanded = fs.fs_client().get_block_locations(&resize_path).await?;
+        assert!(expanded.block_locs.iter().all(|new| original_resize_layout.block_locs.iter().all(|old| old.block.id != new.block.id)));
+        let mut reader = fs.open(&resize_path).await?;
+        let mut zeros = vec![];
+        while reader.has_remaining() { zeros.extend_from_slice(reader.async_read(None).await?.as_slice()); }
+        reader.complete().await?;
+        assert_eq!(zeros, vec![0; 8193]);
         // Proxy one Worker endpoint and pause a real Seal response. This
         // tests the complete operation, not a synthetic lock-only callback.
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};

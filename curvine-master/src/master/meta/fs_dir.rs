@@ -128,7 +128,8 @@ impl FsDir {
                 .add_cf(RocksInodeStore::CF_HSM_FORMAT)
                 .add_cf(RocksInodeStore::CF_NATIVE_FORMAT)
                 .add_cf(RocksInodeStore::CF_NATIVE_GC_FORMAT)
-                .add_cf(RocksInodeStore::CF_NATIVE_DELETE_FORMAT);
+                .add_cf(RocksInodeStore::CF_NATIVE_DELETE_FORMAT)
+                .add_cf(RocksInodeStore::CF_NATIVE_NAMESPACE_FORMAT);
         }
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;
