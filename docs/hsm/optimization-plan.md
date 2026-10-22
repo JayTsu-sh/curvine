@@ -410,6 +410,12 @@ Curvine **270 项 Master 测试通过、2 ignored**，两个 TCP/Raft 优化集�
 
 以上日志相对 `/work/jay/hsm`，没有运行百万规模和最终性能比较。固定 Git 的 hsm-rs 组合验证另记。
 
+### 条件提交的固定 Git 组合验证（代码 ad3391bd）
+
+hsm-rs 的八个直接依赖及 lock 的 29 个 Curvine 包固定 `ad3391bd3cc21cf6ab6f721026c3cc069bbfa3f1`，其他依赖不变，无本地路径覆盖。完整 `--locked --workspace --features hsm-curvine/native-integration -j 6` 回归 **32 项功能通过、0 失败、3 ignored，四个 crate 的全部文档测试执行成功**；日志 `research/hsm-conditional-fixed-git.log`。七个 managed 场景通过（86.71 秒），包含全进程冷恢复、两次独立 Master 在线选主/恢复、后台暂停期间自动 Recall；单独 native 搬运用例通过（17.81 秒）。配套 hsm-rs 提交为 [70853a1](https://github.com/JayTsu-sh/hsm-rs/commit/70853a11edb10a009a8995def243916fbc8f8572)。
+
+Root 的 276 项 Master 与两个 TCP/Raft 用例为同一生产代码的验证；最后仅补充文档。两个仓库格式/差异检查通过，已推送 Jay fork/main 及 hsm-rs/main。未执行新版本百万负载、最终性能对比或 PVE 升级，未将物理 HA 能力计为已完成。
+
 ### 当前剩余边界
 
 已完成公开批量写、目录共享等待、加权资格、外部执行通道、文件级控制共享提交与两次在线选主验证；**没有将全部性能优化标为完成**。

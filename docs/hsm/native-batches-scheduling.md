@@ -59,3 +59,6 @@ Master 回归覆盖批量同父目录、遇错停止与原始错误重试、重�
 
 
 最终固定来源组合：Curvine Master 270 项及两个 TCP/Raft 用例通过；hsm-rs 固定 `222a3254` 的 32 项功能及全部文档测试通过。真实 CLI 的后台执行轮次暂停时，普通读取仍自动 Recall 并校验 1 MiB+37 字节；恢复后台后 Archive 完成。独立 Master 进程的两次在线选主、旧 Leader 恢复与结果不变也通过。日志和剩余边界见[优化方案](optimization-plan.md#执行通道组合验收代码-222a3254)。
+
+
+后续文件级控制、Seal、inode 统一预留及 namespace 共享绑定的生产代码 `ad3391bd` 已完成新的固定来源组合回归：276 项 Master、两个 TCP/Raft 用例、hsm-rs 32 项功能及全部文档测试通过。上一段 `222a3254` 是此前里程碑；当前边界以[条件提交组合验证](optimization-plan.md#条件提交的固定-git-组合验证代码-ad3391bd)为准。

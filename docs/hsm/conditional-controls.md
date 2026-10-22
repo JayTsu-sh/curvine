@@ -38,3 +38,6 @@ GC 使用相同条件封装确认最新 Record 中的退休事实。Worker 删�
 controller epoch 修改、策略修改/筛查入队及任务 claim/finish、显式批量 GC 和旧式 RPC/后台副作用继续独占。策略容量预算等跨记录条件需要单独的提交检查，不能只因为 Record 已支持 CAS 就一并移除隔离。普通读取合批和 owned Native 路径沿用此前的共享实现。
 
 本页描述实现与约束；回归结果、提交号及尚未执行的规模验收见[优化方案](optimization-plan.md)。没有以本轮改动推算最终性能收益。
+
+
+生产代码 `ad3391bd` 已通过 276 项 Master、两个真实 TCP/Raft 用例及固定 Git 来源的 hsm-rs 32 项功能/全部文档测试。后者包含两次独立 Master 在线选主、原始结果冷恢复及后台暂停时自动 Recall；完整来源和日志见[组合验证](optimization-plan.md#条件提交的固定-git-组合验证代码-ad3391bd)。

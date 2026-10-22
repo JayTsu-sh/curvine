@@ -59,3 +59,6 @@
 
 
 文件级 HSM 控制、Seal 和已有 namespace 的 SDK 绑定已改为共享等待；统一 Native/Import 的 inode 预留，以新条件封装区分可重试的过期计划与持久业务拒绝。**276 项 Master 与两个真实 TCP/Raft 用例通过**，见[文件级条件提交](conditional-controls.md)。策略/任务的跨记录条件和少数旧后台路径仍在收敛，尚未执行本轮百万及最终性能对照。
+
+
+配套 hsm-rs 已固定生产代码 `ad3391bd` 并完成完整回归：**32 项功能与全部文档测试通过**，包括冷恢复、两次在线选主和后台暂停时自动 Recall。Root 的 276 项 Master 与两个 TCP/Raft 用例也通过；固定来源、原始日志和剩余工作见[组合验证](optimization-plan.md#条件提交的固定-git-组合验证代码-ad3391bd)。
