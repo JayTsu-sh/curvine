@@ -144,6 +144,69 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             payload: br#"{"op":"namespace"}"#.to_vec(),
         })
         .await?;
+        // A lost Worker's synthetic derived inventory spans three pages.
+        // Pause the actual cleanup between pages, then commit and read real
+        // foreground data through TCP/Raft while cleanup remains unfinished.
+        {
+            let master = cluster.get_active_master_fs();
+            let worker_id = u32::MAX - 10;
+            master.add_test_worker(curvine_model::WorkerInfo {
+                address: curvine_model::WorkerAddress { worker_id, ..Default::default() },
+                ..Default::default()
+            });
+            {
+                let directory = master.fs_dir();
+                let directory = directory.read();
+                let mut batch = directory.get_rocks_store().new_batch();
+                for id in 1..=2050 {
+                    batch.add_location(i64::MAX - id, &curvine_model::BlockLocation::with_id(worker_id))?;
+                }
+                batch.commit()?;
+            }
+            let started = std::sync::Arc::new(tokio::sync::Notify::new());
+            let paused = started.clone();
+            let (resume, wait) = std::sync::mpsc::channel();
+            struct CleanupResumeOnDrop(Option<std::sync::mpsc::Sender<()>>);
+            impl Drop for CleanupResumeOnDrop {
+                fn drop(&mut self) {
+                    if let Some(sender) = self.0.take() { let _ = sender.send(()); }
+                }
+            }
+            let resume = CleanupResumeOnDrop(Some(resume));
+            let cleanup_master = master.clone();
+            let cleanup = tokio::task::spawn_blocking(move || {
+                let mut pages = Vec::new();
+                let count = cleanup_master.hsm_test_delete_lost_worker_locations(worker_id, |rows| {
+                    pages.push(rows);
+                    if pages.len() == 1 {
+                        paused.notify_one();
+                        wait.recv_timeout(std::time::Duration::from_secs(20)).unwrap();
+                    }
+                })?;
+                Ok::<_, curvine_error::FsError>((count, pages))
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(15), started.notified()).await?;
+            assert_eq!(master.fs_dir().read().get_worker_block_ids(worker_id)?.len(), 1026);
+            tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                let path = Path::from_str("/foreground-during-worker-cleanup")?;
+                let mut writer = fs.create(&path, false).await?;
+                writer.write(b"foreground during cleanup").await?;
+                writer.complete().await?;
+                let mut reader = fs.open(&path).await?;
+                let mut bytes = vec![0; 25];
+                assert_eq!(reader.read(&mut bytes).await?, 25);
+                assert_eq!(bytes, b"foreground during cleanup");
+                reader.complete().await?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+            }).await??;
+            // The cleanup really is still paused at the first page.
+            assert!(!cleanup.is_finished());
+            drop(resume);
+            let (count, pages) = tokio::time::timeout(std::time::Duration::from_secs(15), cleanup).await???;
+            assert_eq!(count, 2050);
+            assert_eq!(pages, [1024, 1024, 2]);
+            assert!(master.fs_dir().read().get_worker_block_ids(worker_id)?.is_empty());
+        }
         // A real HSM Import and native namespace creation must both finish
         // while another shared authority turn remains held. The previous
         // exclusive control path could not pass this boundary. Their IDs

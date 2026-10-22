@@ -20,7 +20,7 @@
 | 容量预算 | `budget:online:v1` 与 Ready/Running/终态 reservation 同批增减；正常读取 O(1)；旧 checkpoint 缺项时有界分页重建 | 并发规则与换主压力测试；不是 Recall 硬容量预留 |
 | 冷恢复 | HSM 卷用一个 WriteBatch 的 7 个 range tombstone 清除原生 inode/edge/block/location、HSM、mount、lock 投影，随后从 checkpoint/尾日志重建；保留无关 common 事实；restore 排空快照读租约 | 完整百万恢复验收；namespace 构建和日志重放仍随实际恢复内容增长 |
 | 格式与分配 | `hsm_native_v2/v3/v4/v5/v6` 空 CF 标记访问增量、Native journal 及持久 GC 格式；单条 access/progress 也用版本封装；Native variant 只追加，不改变历史编号；持久推进 inode 分配上限 | 旧 checkpoint 未记录过的历史已删除最大 ID 无法凭空恢复；P2 全路径接入仍待完成 |
-| 后台写入排序 | TTL/配额回收与失联 Worker 清理的 namespace 修改取得相同 gate，并在 OS 线程等待自身 journal 前缀确认；换主后 TTL 重新入桶；HSM 文件与未过期 inode 的纯延期判断不争提交 gate | 后台修改也迁移为 owned 命令；旧路径的 Worker 删除还需全部改为持久 outbox |
+| 后台写入排序 | TTL/配额回收的 namespace 修改保留相同 gate；失联 Worker 清理按 1024 项分页，页间重新排队并逐页交接副本修复；原始任期/失联 token 检查防止旧任务删除新位置；UFS 缓存失效在页内确认后安排 Worker 删除；换主后 TTL 重新入桶 | 后台修改也迁移为 owned 命令；旧路径的 Worker 删除还需全部改为持久 outbox |
 | 覆盖写清理 | inode、HSM generation、候选索引、每块 GC 事实及副本位置同批提交；Worker 删除由已提交事实驱动；实际删除确认后提交幂等 GC ack，原子移除事实与旧位置；分页游标持久化 | rename 替换、递归 delete 与无 UFS 的 TTL Delete 已使用同一持久退休事实；其他旧路径和真实故障注入、百万负载验收仍待完成 |
 | 读历史 | 时间身份 + 持久 floor 拒绝过期请求，每次最多回收 8 对普通读结果/索引；工作流原始成功结果不清理 | 旧 checkpoint 中无历史索引的 legacy outcome 不会被猜测删除 |
 | Worker 等待 | Allocate/Seal/Delete 网络等待释放协调 gate，返回后重新 ReadIndex 与 namespace 资格检查；GC 合并最新记录；控制者切换后可接续原逻辑步骤 | 真实 Raft Leader 故障和网络分区验收；保留旧 namespace 写入的过渡 gate |
@@ -437,6 +437,17 @@ hsm-rs 八个直接依赖及 lock 的 29 个 Curvine 包固定 `d5e88f1d03f399ff
 已完成公开批量写、目录共享等待、加权资格、外部执行通道、文件级控制共享提交与两次在线选主验证；**没有将全部性能优化标为完成**。
 
 1. 文件级 HSM、Seal、策略/任务和 GC 的共享提交已完成；namespace 创建/升级、controller epoch 变更及业务拒绝重新确认的独占是保留的全局协调边界。兼容原始 RPC 仍通过旧投影隔离，不能将它们描述为 owned 命令。
-2. 旧后台收敛仍需处理：失联 Worker 的位置清理和 UFS 缓存失效共用 committed_background 独占路径，部分 TTL/UFS 动作也保留它。普通无 UFS、已纳管文件的 TTL 旁路与原生目录 TTL 删除已在 owned 路径；仍不能把旧式 Worker 副作用全部描述为持久 outbox。
+2. 旧后台收敛仍需处理：失联 Worker 已改为最多 1024 项一页、页间重新排队，并按本次失联 token 和原始 Leader 任期取消旧任务；UFS 缓存失效仍在该页独占资格下确认，部分 TTL/UFS 动作也保留旧路径。普通无 UFS、已纳管文件的 TTL 旁路与原生目录 TTL 删除已在 owned 路径；仍不能把旧式 Worker 副作用全部描述为持久 outbox。
 3. 网络选择性分区、Worker/磁盘丢失、归档冗余和控制者自动接管不因 Master 暂停/恢复通过而完成。尤其单副本私有 Recall 的物理 HA 保持原限制。
 4. 本轮没有升级 PVE，没有执行新版本百万规模持续负载验收或最终原版性能比较。完成剩余优化后再进行统一对照，不复用历史性能数字。
+
+
+## 失联 Worker 的分页清理
+
+生产 heartbeat 清理已接入按字节游标读取/删除双向位置索引，每页最多 1024 项且不填充 block cache。副本修复逐页交接，不再预先聚合整个 Worker 的块清单；页间释放 authority gate，下一页按 Background 类重新排队。普通 Curvine 文件不会触发空缓存失效 WriteBatch，也不等待没有日志的 journal 回执；UFS 修改与可能已有部分效果的错误仍保留确认。详细顺序、重连取消及单个大 UFS 文件仍有成本的边界见[分页清理设计](lost-worker-cleanup.md)。
+
+每次失联使用新 token，Start/Running/End 或新位置报告使旧任务失效；检查与删除之间由 WorkerManager 读锁保护。所有页绑定最初 Leader 任期，不能在同进程再次当选后继续旧任务。token 是本地取消身份，不新增外部镜像，也不是持久 HSM 状态。UFS 缓存判断排除所有该 Worker 的位置，包括后续页，以免边界处误判缓存可读。
+
+这次没有把 legacy UFS namespace 失效改为 owned 条件命令，Worker 删除也尚未全部具备持久 outbox；1024 项不是单个大文件解码或 UFS 失效的时间硬上限。全部优化完成前，继续暂缓新版百万验收和最终原版性能对照。
+
+最终 Source 回归通过：**290 项 Master、2 项真实 TCP/Raft、64 项文件系统与 6 项 inode 测试，0 失败**。纯位置清理无需 journal 回执的专项测试、清理暂停时真实 SDK 写入/读回、原有 UFS 缓存失效与 Follower journal 重放均通过。原始日志为开发环境 `research/hsm-worker-cleanup-root-final.log`（相对 `/work/jay/hsm`）；匹配外部组件的固定 Git 回归另行记录。

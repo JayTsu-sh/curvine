@@ -68,3 +68,6 @@
 
 
 生命周期生产代码 `d5e88f1d` 的固定来源组合验证已通过：**283 项 Master、两个真实 TCP/Raft 用例、32 项 hsm-rs 功能及全部文档测试**。在线 HA 新增策略/Running claim 跨选主、读取后的重选与 Release/Done、再次选主及 Recall 后原 finish 结果不变，见[组合验收](optimization-plan.md#生命周期的固定-git-与在线任务恢复验收代码-d5e88f1d)。仍未执行本轮百万及最终原版性能比较。
+
+
+失联 Worker 清理已改为最多 1024 项分页、页间释放资格并交接副本修复；原始 Leader 任期与每次失联 token 共同取消旧任务，新位置报告早于 Running 心跳时也受保护。UFS 缓存按整个失联 Worker 不可用判断，旧式失效仍保留页内提交保护。实现、回归范围与剩余成本见[分页清理设计](lost-worker-cleanup.md)。

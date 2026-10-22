@@ -324,19 +324,66 @@ impl RocksInodeStore {
     }
 
     pub fn delete_locations(&self, worker_id: u32) -> CommonResult<Vec<i64>> {
-        let block_ids = self.get_block_ids(worker_id)?;
+        let mut block_ids = Vec::new();
+        let mut after = None;
+        loop {
+            let page = self.delete_locations_page(worker_id, after, 1024)?;
+            let Some(last) = page.last().copied() else {
+                break;
+            };
+            after = Some(last);
+            block_ids.extend(page);
+        }
+        Ok(block_ids)
+    }
 
-        // Replica locations are derived from Worker reports. Retire both
-        // directions atomically per bounded chunk instead of one DB write per
-        // block after deleting the entire reverse index first.
-        for chunk in block_ids.chunks(1024) {
+    /// Delete one bounded page in byte-key order, excluding the previous key.
+    /// The caller serializes location writers and checks the Worker incarnation.
+    /// No iterator or full Worker inventory survives this call.
+    pub(crate) fn delete_locations_page(
+        &self,
+        worker_id: u32,
+        after: Option<i64>,
+        limit: usize,
+    ) -> CommonResult<Vec<i64>> {
+        if limit == 0 || limit > 1024 {
+            return Err("lost Worker location page limit must be in 1..=1024".into());
+        }
+        let prefix = RocksUtils::u32_to_bytes(worker_id);
+        let start = after
+            .map(|id| RocksUtils::u32_i64_to_bytes(worker_id, id).to_vec())
+            .unwrap_or_else(|| prefix.to_vec());
+        let mut options = ReadOptions::default();
+        options.fill_cache(false);
+        options.set_iterate_lower_bound(start.clone());
+        let end = RocksUtils::calculate_end_bytes(&prefix);
+        if !end.is_empty() {
+            options.set_iterate_upper_bound(end);
+        }
+        let mut iter = self
+            .db
+            .get_db()
+            .raw_iterator_cf_opt(self.db.cf(Self::CF_LOCATION)?, options);
+        iter.seek(&start);
+        let mut block_ids = Vec::with_capacity(limit);
+        while let Some((key, value)) = iter.item() {
+            if !key.starts_with(&prefix) || block_ids.len() == limit {
+                break;
+            }
+            if after.is_none() || key != start.as_slice() {
+                block_ids.push(Serde::deserialize::<i64>(value)?);
+            }
+            iter.next();
+        }
+        iter.status()?;
+        drop(iter);
+        if !block_ids.is_empty() {
             let mut batch = self.new_batch();
-            for block_id in chunk {
-                batch.delete_location(*block_id, worker_id)?;
+            for id in &block_ids {
+                batch.delete_location(*id, worker_id)?;
             }
             batch.commit()?;
         }
-
         Ok(block_ids)
     }
 
@@ -552,6 +599,64 @@ mod tests {
     use curvine_model::StorageType;
     use curvine_rocksdb::perf::{set_perf_stats, PerfContext, PerfMetric, PerfStatsLevel};
     use curvine_runtime::common::Utils;
+
+    #[test]
+    fn lost_worker_location_pages_follow_byte_order_and_bound_the_last_worker_prefix(
+    ) -> CommonResult<()> {
+        let directory = tempfile::tempdir()?;
+        let store = RocksInodeStore::new(
+            DBConf::new(directory.path().to_string_lossy().into_owned()),
+            true,
+        )?;
+        let ids = [0, 1, i64::MAX, i64::MIN, -2, -1];
+        let mut batch = store.new_batch();
+        for id in ids {
+            batch.add_location(id, &BlockLocation::with_id(u32::MAX))?;
+            batch.add_location(id, &BlockLocation::with_id(u32::MAX - 1))?;
+        }
+        batch.commit()?;
+        let sequence = store.db.get_db().latest_sequence_number();
+        assert!(store.delete_locations_page(u32::MAX, None, 0).is_err());
+        assert!(store.delete_locations_page(u32::MAX, None, 1025).is_err());
+        assert_eq!(store.db.get_db().latest_sequence_number(), sequence);
+        assert_eq!(store.delete_locations_page(u32::MAX, None, 2)?, ids[..2]);
+        // Cursor exclusion must also work when a duplicate report put the
+        // last key back. It is not an offset into the changing inventory.
+        let mut batch = store.new_batch();
+        batch.add_location(1, &BlockLocation::with_id(u32::MAX))?;
+        batch.commit()?;
+        assert_eq!(
+            store.delete_locations_page(u32::MAX, Some(1), 2)?,
+            ids[2..4]
+        );
+        assert_eq!(
+            store.delete_locations_page(u32::MAX, Some(i64::MIN), 2)?,
+            ids[4..]
+        );
+        assert!(store
+            .delete_locations_page(u32::MAX, Some(-1), 2)?
+            .is_empty());
+        for id in ids {
+            assert!(store
+                .db
+                .get_cf(
+                    RocksInodeStore::CF_BLOCK,
+                    RocksUtils::i64_u32_to_bytes(id, u32::MAX - 1)
+                )?
+                .is_some());
+            assert_eq!(
+                store
+                    .db
+                    .get_cf(
+                        RocksInodeStore::CF_BLOCK,
+                        RocksUtils::i64_u32_to_bytes(id, u32::MAX)
+                    )?
+                    .is_some(),
+                id == 1
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn lost_worker_locations_remove_both_indexes_across_chunks_without_touching_other_replicas(

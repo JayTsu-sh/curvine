@@ -25,8 +25,14 @@ use curvine_model::{
 use curvine_proto::ComponentInfoProto;
 use curvine_runtime::common::{ByteUnit, LocalTime};
 use log::{info, warn};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
+
+/// Local cancellation identity, not a durable file or HSM authority fact.
+/// A fresh identity is created for every observed loss, including an ABA loss.
+#[derive(Clone)]
+pub(crate) struct WorkerLossToken(Arc<()>);
 
 pub struct WorkerManager {
     pub(crate) worker_map: WorkerMap,
@@ -34,6 +40,7 @@ pub struct WorkerManager {
     pub(crate) worker_policy: WorkerPolicyAdapter,
     pub(crate) cluster_id: String,
     pub(crate) conf: ClusterConf,
+    lost_worker_tokens: HashMap<u32, WorkerLossToken>,
 }
 
 impl WorkerManager {
@@ -46,6 +53,7 @@ impl WorkerManager {
             worker_policy,
             cluster_id: conf.cluster_id.to_string(),
             conf: conf.clone(),
+            lost_worker_tokens: HashMap::new(),
         })
     }
 
@@ -78,7 +86,9 @@ impl WorkerManager {
                 // Enforce the same worker_id ↔ address rule as insert() before remove(): a Start
                 // from a conflicting address must not evict the live registration.
                 self.worker_map.ensure_worker_id_addr(&addr)?;
+                self.lost_worker_tokens.remove(&addr.worker_id);
                 for stale in self.worker_map.remove_same_endpoint(&addr) {
+                    self.lost_worker_tokens.remove(&stale.worker_id());
                     warn!(
                         "Remove stale worker {} on restart endpoint {}",
                         stale.simple_debug(),
@@ -95,11 +105,13 @@ impl WorkerManager {
 
             HeartbeatStatus::End => {
                 info!("Worker unregister: {}", addr);
+                self.lost_worker_tokens.remove(&addr.worker_id);
                 let _ = self.worker_map.remove_offline(addr.worker_id);
                 return Ok(vec![]);
             }
         };
 
+        let worker_id = addr.worker_id;
         self.worker_map.insert(
             addr,
             weight,
@@ -110,6 +122,7 @@ impl WorkerManager {
             storages,
             component_info,
         )?;
+        self.lost_worker_tokens.remove(&worker_id);
         self.expire_scheduled_bytes();
         Ok(cmds)
     }
@@ -206,7 +219,27 @@ impl WorkerManager {
     }
 
     pub fn remove_expired_worker(&mut self, id: u32) -> Option<WorkerInfo> {
-        self.worker_map.remove_expired(id)
+        let worker = self.worker_map.remove_expired(id)?;
+        self.lost_worker_tokens
+            .insert(id, WorkerLossToken(Arc::new(())));
+        Some(worker)
+    }
+
+    pub(crate) fn lost_worker_token(&self, id: u32) -> Option<WorkerLossToken> {
+        self.lost_worker_tokens.get(&id).cloned()
+    }
+
+    pub(crate) fn worker_loss_is_current(&self, id: u32, token: &WorkerLossToken) -> bool {
+        !self.worker_map.workers.contains_key(&id)
+            && self.worker_map.lost_workers.contains_key(&id)
+            && self
+                .lost_worker_tokens
+                .get(&id)
+                .is_some_and(|current| Arc::ptr_eq(&current.0, &token.0))
+    }
+
+    pub(crate) fn cancel_worker_loss(&mut self, id: u32) {
+        self.lost_worker_tokens.remove(&id);
     }
 
     pub fn add_blacklist_worker(&mut self, id: u32) -> Option<WorkerInfo> {
@@ -312,6 +345,7 @@ impl WorkerManager {
     }
 
     pub fn add_test_worker(&mut self, worker: WorkerInfo) {
+        self.lost_worker_tokens.remove(&worker.worker_id());
         self.worker_map.workers.insert(worker.worker_id(), worker);
     }
 
@@ -387,6 +421,48 @@ impl Display for WorkerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_loss_tokens_survive_invalid_heartbeats_but_never_a_rejoin_or_aba_loss() -> FsResult<()>
+    {
+        let mut manager = WorkerManager::new(&ClusterConf::default())?;
+        let address = WorkerAddress {
+            worker_id: 7,
+            ..Default::default()
+        };
+        manager.add_test_worker(WorkerInfo::new(address.clone(), 1));
+        manager.remove_expired_worker(7).unwrap();
+        let first = manager.lost_worker_token(7).unwrap();
+        assert!(manager.worker_loss_is_current(7, &first));
+        let beat = |manager: &mut WorkerManager, cluster: &str, status| {
+            manager.heartbeat(
+                cluster,
+                status,
+                address.clone(),
+                1,
+                String::new(),
+                TransferWorkerCapabilities::default(),
+                String::new(),
+                0,
+                vec![],
+                None,
+            )
+        };
+        assert!(beat(&mut manager, "wrong-cluster", HeartbeatStatus::Running).is_err());
+        assert!(manager.worker_loss_is_current(7, &first));
+        let cluster = manager.cluster_id.clone();
+        beat(&mut manager, &cluster, HeartbeatStatus::Start)?;
+        assert!(!manager.worker_loss_is_current(7, &first));
+        beat(&mut manager, &cluster, HeartbeatStatus::Running)?;
+        manager.remove_expired_worker(7).unwrap();
+        let second = manager.lost_worker_token(7).unwrap();
+        assert!(!manager.worker_loss_is_current(7, &first));
+        assert!(manager.worker_loss_is_current(7, &second));
+        // Running can re-register a lost Worker without a Start heartbeat.
+        beat(&mut manager, &cluster, HeartbeatStatus::Running)?;
+        assert!(!manager.worker_loss_is_current(7, &second));
+        Ok(())
+    }
 
     fn worker_with_available(worker_id: u32, available: i64) -> WorkerInfo {
         WorkerInfo {

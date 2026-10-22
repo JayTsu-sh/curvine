@@ -15,6 +15,7 @@
 use crate::master::fs::context::ValidateAddBlock;
 use crate::master::fs::full_block_report::{FullReportProgress, FullReportTracker};
 use crate::master::fs::policy::ChooseContext;
+use crate::master::fs::worker_manager::WorkerLossToken;
 use crate::master::journal::JournalSystem;
 use crate::master::meta::inode::{InodeFile, InodePath, InodePtr, InodeView, PATH_SEPARATOR};
 use crate::master::meta::{CacheInvalidationResult, FsDir};
@@ -120,6 +121,16 @@ impl MasterFilesystem {
         &self,
         action: impl FnOnce() -> FsResult<T>,
     ) -> FsResult<T> {
+        self.committed_background_in_term(None, action, |_| true, |_| {})
+    }
+
+    fn committed_background_in_term<T>(
+        &self,
+        originating_term: Option<u64>,
+        action: impl FnOnce() -> FsResult<T>,
+        needs_confirmation: impl FnOnce(&T) -> bool,
+        after_commit: impl FnOnce(&T),
+    ) -> FsResult<T> {
         let (enabled, gate, writer) = {
             let dir = self.fs_dir.read();
             (
@@ -129,14 +140,30 @@ impl MasterFilesystem {
             )
         };
         if !enabled {
-            return action();
+            if let Some(term) = originating_term {
+                if !self.master_monitor.is_active()
+                    || self
+                        .master_monitor
+                        .journal_term
+                        .load(std::sync::atomic::Ordering::Acquire)
+                        != term
+                {
+                    return Err(FsError::not_leader("lost Worker cleanup leader changed"));
+                }
+            }
+            let result = action()?;
+            after_commit(&result);
+            return Ok(result);
         }
         let _serial = gate.blocking_write();
         let term = self
             .master_monitor
             .journal_term
             .load(std::sync::atomic::Ordering::Acquire);
-        if !self.master_monitor.is_active() || term == 0 {
+        if !self.master_monitor.is_active()
+            || term == 0
+            || originating_term.is_some_and(|expected| term != expected)
+        {
             return Err(FsError::not_leader(
                 "background mutation has no active leader",
             ));
@@ -148,18 +175,26 @@ impl MasterFilesystem {
             log::error!("background mutation panicked after admission; aborting master");
             std::process::abort();
         });
-        // Even an error can follow partial legacy effects. Keep the gate until
-        // that prefix is confirmed or recovery discards its speculative tail.
-        if let Err(error) = writer.commit_pending_blocking() {
-            log::error!("background mutation commit uncertain: {error}; aborting master");
-            std::process::abort();
+        // Pure derived location retirement does not emit a journal prefix.
+        // Errors can follow partial legacy effects, so they always confirm.
+        if result.as_ref().map(needs_confirmation).unwrap_or(true) {
+            if let Err(error) = writer.commit_pending_blocking() {
+                log::error!("background mutation commit uncertain: {error}; aborting master");
+                std::process::abort();
+            }
+        }
+        if let Ok(value) = &result {
+            // Keep legacy block identities protected until deletion commands
+            // have been scheduled. This is still not a durable outbox.
+            after_commit(value);
         }
         result
     }
     // Max block-report location updates applied under a single fs_dir write lock.
     const BLOCK_REPORT_WRITE_CHUNK: usize = 4096;
-    // Max lost-worker block ids inspected under a single fs_dir write lock.
-    const LOST_WORKER_INVALIDATION_CHUNK: usize = Self::BLOCK_REPORT_WRITE_CHUNK;
+    // Re-enter the background authority queue between pages, not after the
+    // complete inventory of a potentially very large Worker.
+    const LOST_WORKER_LOCATION_PAGE: usize = 1024;
 
     pub(crate) fn validate_alloc_capacity(
         current_len: i64,
@@ -1538,6 +1573,17 @@ impl MasterFilesystem {
                 break;
             }
             let mut fs_dir = self.fs_dir.write();
+            // A successful new location report supersedes the old loss even
+            // if its Running heartbeat has not been processed yet. Serialize
+            // cancellation with the location publication under fs_dir.
+            {
+                let mut wm = self.worker_manager.write();
+                for (add, _, location) in &chunk {
+                    if *add {
+                        wm.cancel_worker_loss(location.worker_id);
+                    }
+                }
+            }
             fs_dir.block_report(chunk)?;
         }
         Ok(())
@@ -1552,49 +1598,104 @@ impl MasterFilesystem {
     }
 
     pub fn delete_locations(&self, worker_id: u32) -> FsResult<LostWorkerLocationCleanup> {
-        self.committed_background(|| self.delete_locations0(worker_id))
+        let term = self.fs_dir.read().hsm_enabled.then(|| {
+            self.master_monitor
+                .journal_term
+                .load(std::sync::atomic::Ordering::Acquire)
+        });
+        let mut result = LostWorkerLocationCleanup::default();
+        self.delete_location_pages(worker_id, None, term, |page| {
+            result.removed_block_ids.extend(page.removed_block_ids);
+            result
+                .replication_block_ids
+                .extend(page.replication_block_ids);
+        })?;
+        Ok(result)
     }
 
-    fn delete_locations0(&self, worker_id: u32) -> FsResult<LostWorkerLocationCleanup> {
-        let removed_block_ids = {
-            let fs_dir = self.fs_dir.write();
-            fs_dir.delete_locations(worker_id)?
+    pub(crate) fn delete_lost_worker_locations(
+        &self,
+        worker_id: u32,
+        token: &WorkerLossToken,
+        originating_term: u64,
+        on_page: impl FnMut(LostWorkerLocationCleanup),
+    ) -> FsResult<usize> {
+        self.delete_location_pages(worker_id, Some(token), Some(originating_term), on_page)
+    }
+
+    /// Fault-test entry into the real loss-token/term-checked cleanup pipeline.
+    #[cfg(feature = "hsm-scale-test")]
+    pub fn hsm_test_delete_lost_worker_locations(
+        &self,
+        worker_id: u32,
+        mut on_page: impl FnMut(usize),
+    ) -> FsResult<usize> {
+        let token = {
+            let mut wm = self.worker_manager.write();
+            wm.remove_expired_worker(worker_id)
+                .ok_or_else(|| FsError::common("test Worker is not registered"))?;
+            wm.lost_worker_token(worker_id).unwrap()
         };
-        let mut invalidated = CacheInvalidationResult::default();
-
-        for chunk in removed_block_ids.chunks(Self::LOST_WORKER_INVALIDATION_CHUNK) {
-            let result = {
-                let mut fs_dir = self.fs_dir.write();
-                fs_dir.invalidate_lost_cache_files(chunk)
-            };
-            match result {
-                Ok(result) => invalidated.extend(result),
-                Err(e) => warn!(
-                    "failed to invalidate lost cache files for worker {} ({} block ids); \\
-                     continuing with normal replica recovery: {}",
-                    worker_id,
-                    chunk.len(),
-                    e
-                ),
-            }
-        }
-
-        let replication_block_ids = removed_block_ids
-            .iter()
-            .copied()
-            .filter(|block_id| !invalidated.invalidated_block_ids.contains(block_id))
-            .collect();
-
-        if !invalidated.delete_result.blocks.is_empty() {
-            self.worker_manager
-                .write()
-                .remove_blocks(&invalidated.delete_result);
-        }
-
-        Ok(LostWorkerLocationCleanup {
-            removed_block_ids,
-            replication_block_ids,
+        let term = self
+            .master_monitor
+            .journal_term
+            .load(std::sync::atomic::Ordering::Acquire);
+        self.delete_lost_worker_locations(worker_id, &token, term, |page| {
+            on_page(page.removed_block_ids.len());
         })
+    }
+
+    fn delete_location_pages(
+        &self,
+        worker_id: u32,
+        loss: Option<&WorkerLossToken>,
+        originating_term: Option<u64>,
+        mut on_page: impl FnMut(LostWorkerLocationCleanup),
+    ) -> FsResult<usize> {
+        let mut after = None;
+        let mut removed = 0;
+        loop {
+            let page = self.committed_background_in_term(originating_term, || {
+                let mut fs_dir = self.fs_dir.write();
+                // Keep the normal fs_dir -> WorkerManager lock order. Heartbeat
+                // registration cannot invalidate the loss between this check
+                // and deletion. The guard never spans journal confirmation.
+                let wm = self.worker_manager.read();
+                if loss.is_some_and(|token| !wm.worker_loss_is_current(worker_id, token)) {
+                    return Ok((LostWorkerLocationCleanup::default(), CacheInvalidationResult::default()));
+                }
+                let removed_block_ids = fs_dir.get_rocks_store().delete_locations_page(
+                    worker_id, after, Self::LOST_WORKER_LOCATION_PAGE,
+                )?;
+                let invalidated = if removed_block_ids.is_empty() {
+                    CacheInvalidationResult::default()
+                } else {
+                    match fs_dir.invalidate_lost_cache_files(worker_id, &removed_block_ids) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            warn!("failed to invalidate lost cache files for worker {worker_id}; continuing with replica recovery: {error}");
+                            CacheInvalidationResult { journal_dirty: true, ..Default::default() }
+                        }
+                    }
+                };
+                let replication_block_ids = removed_block_ids.iter().copied()
+                    .filter(|id| !invalidated.invalidated_block_ids.contains(id)).collect();
+                Ok((LostWorkerLocationCleanup { removed_block_ids, replication_block_ids }, invalidated))
+            }, |(_, invalidated)| invalidated.journal_dirty, |(_, invalidated)| {
+                if !invalidated.delete_result.blocks.is_empty() {
+                    self.worker_manager.write().remove_blocks(&invalidated.delete_result);
+                }
+            })?;
+            let (page, _) = page;
+            let Some(last) = page.removed_block_ids.last().copied() else {
+                return Ok(removed);
+            };
+            // Replica-manager handoff is outside the authority turn. It does
+            // its own current-inode/location checks before scheduling work.
+            after = Some(last);
+            removed += page.removed_block_ids.len();
+            on_page(page);
+        }
     }
 
     pub fn set_attr<T: AsRef<str>>(&self, path: T, opts: SetAttrOpts) -> FsResult<FileStatus> {
@@ -1778,6 +1879,175 @@ mod tests {
             Utils::rand_str(6)
         ));
         JournalSystem::fs_only_for_test(&conf).unwrap()
+    }
+
+    fn lost_worker_fixture(name: &str, blocks: usize) -> (MasterFilesystem, i64, Vec<i64>) {
+        use crate::master::meta::{BlockMeta, InodeId};
+        let fs = test_fs(name);
+        fs.master_monitor
+            .journal_ctl
+            .set_state(curvine_raft::raft::RoleState::Leader);
+        fs.master_monitor
+            .journal_term
+            .store(7, std::sync::atomic::Ordering::Release);
+        let status = fs.create("/payload", false).unwrap();
+        fs.add_test_worker(worker_with_status(7, WorkerStatus::Live, 10000, 10000));
+        let ids: Vec<_> = (0..blocks)
+            .map(|index| InodeId::create_block_id(status.id, index as i64).unwrap())
+            .collect();
+        {
+            let dir = fs.fs_dir.write();
+            let mut inode = dir.store.get_inode(status.id, None).unwrap().unwrap();
+            inode.as_file_mut().unwrap().blocks =
+                ids.iter().map(|id| BlockMeta::new(*id, 0)).collect();
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.write_inode(&inode).unwrap();
+            for id in &ids {
+                batch.add_location(*id, &BlockLocation::with_id(7)).unwrap();
+                batch.add_location(*id, &BlockLocation::with_id(8)).unwrap();
+            }
+            batch.commit().unwrap();
+        }
+        (fs, status.id, ids)
+    }
+
+    fn lose_worker(fs: &MasterFilesystem) -> WorkerLossToken {
+        let mut wm = fs.worker_manager.write();
+        wm.remove_expired_worker(7).unwrap();
+        wm.lost_worker_token(7).unwrap()
+    }
+
+    #[test]
+    fn lost_worker_cleanup_streams_pages_without_holding_namespace_locks() -> FsResult<()> {
+        let (fs, _, ids) = lost_worker_fixture("lost-worker-streaming", 2050);
+        let token = lose_worker(&fs);
+        let mut pages = Vec::new();
+        let removed = fs.delete_lost_worker_locations(7, &token, 7, |page| {
+            pages.push(page.removed_block_ids.len());
+            assert_eq!(page.replication_block_ids, page.removed_block_ids);
+            // This used to happen only after the whole Worker inventory. Each
+            // callback runs with neither namespace nor WorkerManager locked.
+            fs.create(format!("/during-cleanup-{}", pages.len()), false)
+                .unwrap();
+            assert_eq!(
+                fs.fs_dir
+                    .read()
+                    .get_block_locations(ids[2049])
+                    .unwrap()
+                    .len(),
+                if pages.len() < 3 { 2 } else { 1 }
+            );
+        })?;
+        assert_eq!(removed, 2050);
+        assert_eq!(pages, [1024, 1024, 2]);
+        assert!(fs.fs_dir.read().get_worker_block_ids(7)?.is_empty());
+        assert_eq!(fs.fs_dir.read().get_worker_block_ids(8)?.len(), 2050);
+        Ok(())
+    }
+
+    #[test]
+    fn lost_worker_pure_locations_do_not_require_a_journal_receipt() -> FsResult<()> {
+        let (fs, _, _) = lost_worker_fixture("lost-worker-no-journal", 1025);
+        let token = lose_worker(&fs);
+        // Exercise the HSM gate with a test-only writer that cannot produce
+        // committed receipts. A namespace mutation would still require one;
+        // retiring derived positions has no journal to confirm.
+        fs.fs_dir.write().hsm_enabled = true;
+        let mut pages = Vec::new();
+        assert_eq!(
+            fs.delete_lost_worker_locations(7, &token, 7, |page| {
+                pages.push(page.removed_block_ids.len());
+            })?,
+            1025
+        );
+        assert_eq!(pages, [1024, 1]);
+        assert!(fs.fs_dir.read().get_worker_block_ids(7)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn lost_worker_cleanup_cancels_after_new_report_before_running_heartbeat() -> FsResult<()> {
+        let (fs, _, ids) = lost_worker_fixture("lost-worker-new-report", 1025);
+        let token = lose_worker(&fs);
+        let removed = fs.delete_lost_worker_locations(7, &token, 7, |_| {
+            fs.block_report(
+                BlockReportList {
+                    cluster_id: "test".into(),
+                    worker_id: 7,
+                    full_report: false,
+                    total_len: 2,
+                    report_id: 0,
+                    blocks: vec![
+                        BlockReportInfo::new(
+                            ids[0],
+                            BlockReportStatus::Finalized,
+                            StorageType::Disk,
+                            0,
+                        ),
+                        BlockReportInfo::new(
+                            ids[1024],
+                            BlockReportStatus::Finalized,
+                            StorageType::Disk,
+                            0,
+                        ),
+                    ],
+                },
+                None,
+            )
+            .unwrap();
+        })?;
+        assert_eq!(removed, 1024);
+        assert!(!fs.worker_manager.read().worker_loss_is_current(7, &token));
+        assert_eq!(fs.fs_dir.read().get_worker_block_ids(7)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn lost_worker_cleanup_does_not_continue_in_a_new_leader_term() -> FsResult<()> {
+        let (fs, _, ids) = lost_worker_fixture("lost-worker-new-term", 1025);
+        let token = lose_worker(&fs);
+        let result = fs.delete_lost_worker_locations(7, &token, 7, |_| {
+            fs.master_monitor
+                .journal_term
+                .store(8, std::sync::atomic::Ordering::Release);
+        });
+        assert!(result.is_err());
+        assert_eq!(fs.fs_dir.read().get_worker_block_ids(7)?, vec![ids[1024]]);
+        Ok(())
+    }
+
+    #[test]
+    fn lost_worker_cache_invalidation_ignores_locations_in_later_pages() -> FsResult<()> {
+        let (fs, inode_id, ids) = lost_worker_fixture("lost-worker-cache-pages", 1025);
+        {
+            let dir = fs.fs_dir.write();
+            let mut inode = dir.store.get_inode(inode_id, None)?.unwrap();
+            let file = inode.as_file_mut()?;
+            file.storage_policy.state = StorageState::Both;
+            file.storage_policy.ttl_action = TtlAction::Delete;
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.write_inode(&inode)?;
+            // The first page has surviving replicas; only the last page has
+            // an unreadable block. Invalidate on the first visit nonetheless.
+            batch.delete_location(ids[1024], 8)?;
+            batch.commit()?;
+        }
+        let token = lose_worker(&fs);
+        let mut pages = 0;
+        assert_eq!(
+            fs.delete_lost_worker_locations(7, &token, 7, |page| {
+                pages += 1;
+                assert!(page.replication_block_ids.is_empty());
+                assert!(fs
+                    .file_status("/payload")
+                    .unwrap()
+                    .storage_policy
+                    .ufs_only());
+            })?,
+            1025
+        );
+        assert_eq!(pages, 2);
+        Ok(())
     }
 
     #[test]

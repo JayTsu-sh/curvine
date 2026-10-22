@@ -220,3 +220,10 @@ rename/替换/交换、递归属性/删除在 Native journal v5 记录紧凑输�
 
 
 固定 `d5e88f1d` 的独立进程在线 HA 已加入生命周期状态：策略与 Running claim 在首次换主后保留原成功/claim token；普通读取后 Superseded，重新筛选并实际 Release/finish Done；再次换主及真实 Recall 后，原 finish 仍返回原 Offline 结果。它验证 Source 任务权威，不需要外部元数据镜像。七个 managed 场景和 native 场景、完整 workspace 共 32 项功能/全部文档测试通过；完整来源与测试边界见[组合验收](optimization-plan.md#生命周期的固定-git-与在线任务恢复验收代码-d5e88f1d)。
+
+
+### 失联 Worker 清理的本地任务资格
+
+Heartbeat 清理逐页取得 Background 独占资格，每页最多 1024 个位置；页间可提交前台/Recall。每次失联创建新的本地 token，接受重连心跳或新位置报告时取消；检查与本页删除按 fs_dir → WorkerManager 的锁顺序串行化。各页还必须属于最初 Leader 任期，角色恢复不会自动恢复旧本地清理任务。
+
+UFS 缓存失效确认后才安排 Worker 删除，安排完成后释放该页资格；副本修复在资格外逐页交接。该路径没有新增持久 outbox，因此不承诺提交后进程退出时旧缓存删除安排必然保留；本地 token 也不能代替物理 Worker fencing 或磁盘冗余。范围和回归证据见[分页清理设计](lost-worker-cleanup.md)。

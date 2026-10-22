@@ -76,21 +76,7 @@ pub struct FsDir {
 pub(crate) struct CacheInvalidationResult {
     pub delete_result: DeleteResult,
     pub invalidated_block_ids: HashSet<i64>,
-}
-
-impl CacheInvalidationResult {
-    pub(crate) fn extend(&mut self, other: Self) {
-        self.delete_result.inodes += other.delete_result.inodes;
-        for (block_id, locations) in other.delete_result.blocks {
-            self.delete_result
-                .blocks
-                .entry(block_id)
-                .or_default()
-                .extend(locations);
-        }
-        self.invalidated_block_ids
-            .extend(other.invalidated_block_ids);
-    }
+    pub journal_dirty: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1254,13 +1240,20 @@ impl FsDir {
     /// be scheduled for deletion from any surviving workers.
     pub(crate) fn invalidate_lost_cache_files(
         &mut self,
+        lost_worker: u32,
         block_ids: &[i64],
     ) -> FsResult<CacheInvalidationResult> {
-        let inode_ids: HashSet<_> = block_ids.iter().map(|id| InodeId::get_id(*id)).collect();
+        let mut inode_blocks: HashMap<i64, Vec<i64>> = HashMap::new();
+        for id in block_ids {
+            inode_blocks
+                .entry(InodeId::get_id(*id))
+                .or_default()
+                .push(*id);
+        }
         let mut result = CacheInvalidationResult::default();
         let mut changed_inodes = Vec::new();
 
-        for inode_id in inode_ids {
+        for (inode_id, page_blocks) in inode_blocks {
             let Some(mut inode) = self.store.get_inode(inode_id, None)? else {
                 continue;
             };
@@ -1270,9 +1263,16 @@ impl FsDir {
 
             // Cache-mode load jobs use the Delete TTL action. Files in fs-mode
             // use Free instead and retain their normal replica-recovery path.
-            if !file.storage_policy.both_exists()
+            if !file.storage_policy.ufs_exists()
                 || file.storage_policy.ttl_action != TtlAction::Delete
             {
+                continue;
+            }
+
+            // An earlier page may have invalidated this entire cache copy.
+            // Remaining old locations must not start normal replication.
+            if !file.storage_policy.cv_exists() {
+                result.invalidated_block_ids.extend(page_blocks);
                 continue;
             }
 
@@ -1280,7 +1280,14 @@ impl FsDir {
             // each file block directly to find cache blocks with no replicas.
             let mut cache_unreadable = false;
             for block in &file.blocks {
-                if self.store.get_block_locations(block.id)?.is_empty() {
+                // Other pages still contain this lost Worker's old facts.
+                // Evaluate readability as if its entire inventory were gone.
+                if self
+                    .store
+                    .get_block_locations(block.id)?
+                    .iter()
+                    .all(|loc| loc.worker_id == lost_worker)
+                {
                     cache_unreadable = true;
                     break;
                 }
@@ -1289,20 +1296,25 @@ impl FsDir {
                 continue;
             }
 
-            let locations = file.get_locs(&self.store)?;
-            result
-                .invalidated_block_ids
-                .extend(file.blocks.iter().map(|block| block.id));
+            let mut locations = file.get_locs(&self.store)?;
+            locations.retain(|_, locs| {
+                locs.retain(|loc| loc.worker_id != lost_worker);
+                !locs.is_empty()
+            });
+            result.invalidated_block_ids.extend(page_blocks);
             if file.invalidate_cache() {
                 result.delete_result.blocks.extend(locations);
                 changed_inodes.push(inode);
             }
         }
 
-        let journal_inodes = changed_inodes.clone();
-        self.store.apply_cache_invalidations(changed_inodes)?;
-        self.journal_writer
-            .log_cache_invalidations(self, journal_inodes)?;
+        if !changed_inodes.is_empty() {
+            result.journal_dirty = true;
+            let journal_inodes = changed_inodes.clone();
+            self.store.apply_cache_invalidations(changed_inodes)?;
+            self.journal_writer
+                .log_cache_invalidations(self, journal_inodes)?;
+        }
         Ok(result)
     }
 

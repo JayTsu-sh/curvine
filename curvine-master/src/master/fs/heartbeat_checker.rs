@@ -62,6 +62,10 @@ impl LoopTask for HeartbeatChecker {
         if !self.monitor.is_active() {
             return Ok(());
         }
+        let originating_term = self
+            .monitor
+            .journal_term
+            .load(std::sync::atomic::Ordering::Acquire);
 
         let mut blacklisted_workers = Vec::new();
         let mut removed_workers = Vec::new();
@@ -81,7 +85,10 @@ impl LoopTask for HeartbeatChecker {
                 if now > last_update + self.worker_lost_ms {
                     // Heartbeat timeout
                     if let Some(worker) = wm.remove_expired_worker(id) {
-                        removed_workers.push((id, worker.address, worker.last_update));
+                        let token = wm
+                            .lost_worker_token(id)
+                            .expect("removed Worker has a loss token");
+                        removed_workers.push((id, worker.address, worker.last_update, token));
                     }
                 }
             }
@@ -94,7 +101,7 @@ impl LoopTask for HeartbeatChecker {
             );
         }
 
-        for (id, address, last_update) in removed_workers {
+        for (id, address, last_update, token) in removed_workers {
             warn!(
                 "Worker {} ({}) last heartbeat {} has exceeded lost timeout {} ms and will be removed",
                 id, address, last_update, self.worker_lost_ms
@@ -104,26 +111,21 @@ impl LoopTask for HeartbeatChecker {
             let rm = self.replication_manager.clone();
             let res = self.executor.spawn(move || {
                 let spend = TimeSpent::new();
-                let cleanup = match fs.delete_locations(id) {
-                    Err(e) => {
-                        warn!("{}", curvine_core_error::err_msg!(e));
-                        Default::default()
-                    }
-                    Ok(res) => res,
-                };
-                let replication_block_num = cleanup.replication_block_ids.len();
-                if let Err(e) = rm.report_under_replicated_blocks(id, cleanup.replication_block_ids)
-                {
-                    error!(
-                        "Errors on reporting under-replicated {} blocks. err: {:?}",
-                        replication_block_num, e
-                    );
+                let cleanup =
+                    fs.delete_lost_worker_locations(id, &token, originating_term, |page| {
+                        let count = page.replication_block_ids.len();
+                        if let Err(error) =
+                            rm.report_under_replicated_blocks(id, page.replication_block_ids)
+                        {
+                            error!(
+                                "Errors on reporting under-replicated {count} blocks: {error:?}"
+                            );
+                        }
+                    });
+                if let Err(error) = cleanup {
+                    warn!("lost Worker {id} cleanup stopped: {error}");
                 }
-                info!(
-                    "Delete worker {} all locations used {} ms",
-                    id,
-                    spend.used_ms()
-                );
+                info!("Worker {} location cleanup used {} ms", id, spend.used_ms());
             });
             if let Err(e) = &res {
                 warn!("{}", e);
