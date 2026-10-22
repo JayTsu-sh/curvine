@@ -460,3 +460,12 @@ hsm-rs 八个直接依赖及 lock 的 29 个 Curvine 包固定 `d5e88f1d03f399ff
 当前生产 HSM 的清理 job、pending 页面、cursor 与修复需求已经写入 Curvine 的复制元数据。删除前同批提交 pending 与最多 1024 项修复需求；真正删除重新检查本地 token / 原始任期；共享提交推进进度，页内位置删除不等待空回执。每个新任期按 worker_lost_interval 重新确认失联，保留 pending 并重新检查该节点的位置清单。持久需求不能仅因交给内存副本队列就删除，确认还检查当前 inode、需求 observation 与新任期 Live 联系。
 
 恢复每轮最多发现 8 个 job、8 个有位置的 Worker，后者按前缀 seek 跳过整份块清单；每轮最多回放 32 页修复，每页 64 项独立检查和提交，避免默认 10 秒周期只回放一页；到尾即停止，不在本轮重绕。调度使用 try_spawn，队列满立即退让并释放 running/busy guard。新增日志 envelope hsm-worker-cleanup-v1 与 checkpoint 栅栏 hsm_native_v9；全部 Master 必须匹配。Source 最终回归 **298 项 Master、2 项真实 TCP/Raft、64 项文件系统与 6 项 inode 测试通过**。设计与剩余 UFS 删除 outbox / 大文件成本见[持久接续设计](worker-cleanup-recovery.md)。固定来源在线 HA 测试另行记录。
+
+
+### 持久接续的固定来源与在线故障验收（代码 dcea3446）
+
+最终 Source 回归 **298 项 Master、2 项真实 TCP/Raft、64 项文件系统及 6 项 inode 通过**，日志 research/hsm-cleanup-recovery-root-final-v3.log。hsm-rs 八个直接依赖和 29 个锁定 Curvine 包固定 dcea3446，其他依赖字节不变，完整 native-integration workspace **32 项功能通过、0 失败、3 ignored**；四个 crate 文档测试流程成功。七个 managed 场景 93.68 秒、native 搬运场景 26.82 秒，日志 research/hsm-cleanup-recovery-fixed-git-final.log；配套 [hsm-rs 8326d83](https://github.com/JayTsu-sh/hsm-rs/commit/8326d8329cfbb701a221fd0e07c3c16a224bb357)。
+
+在线场景用三个独立 Master 进程，在 2050 项派生位置的首批删除后/确认前暂停旧 Leader，验证 Follower 不因工作记录删位置、新 Leader 自动接续、旧节点恢复后第二次换主仍保留未满足需求。真实普通文件参与需求，并在当前副本目标满足后自动确认；策略任务、实际 Release/Recall 和原始结果断言同时通过。Worker 位置为 fixture 注入，未算作物理 Worker 或第二份物理副本验收。修复回放已从每轮一页改为最多 32 页，每页保持 64 项边界；等待 Raft 不占心跳恢复 mutex。
+
+剩余的 UFS 旧缓存删除 outbox、完整报告/大布局解码及原始 inode 确认的字节预算仍在详细设计中列明；未宣称整体性能优化完成，未运行新版百万验收、最终原版比较或 PVE 升级。

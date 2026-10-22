@@ -59,9 +59,15 @@ Source 回归已通过：**298 项 Master、2 项真实 TCP/Raft、64 项文件�
 
 新增测试覆盖 pending 与需求同批发布、两份投影重放、删除后检查点仍保留、新位置阻止旧页面删除、新 observation 阻止旧确认、namespace 与副本策略变化拒绝旧确认、最大 payload、恢复等待窗口、队列满后的 guard 释放、稠密 Worker 前缀发现、2050 条需求的有界批次接续/保留与页间任期取消，以及 v9 checkpoint 栅栏。
 
+固定 Git 组合验证也已通过：hsm-rs 的 8 个直接依赖与 lock 的 29 个 Curvine 包固定生产代码 `dcea3446e80448093f08a986cc398cb260e202d3`，其他 lock 字节不变，无 path patch。完整 native-integration workspace **32 项功能通过、0 失败、3 ignored，四个 crate 的文档测试流程成功**；日志 `research/hsm-cleanup-recovery-fixed-git-final.log`。配套提交 [8326d83](https://github.com/JayTsu-sh/hsm-rs/commit/8326d8329cfbb701a221fd0e07c3c16a224bb357)。
+
+七个 managed 场景通过（93.68 秒）。增强的三 Master 独立进程测试注入 2050 项 Worker 派生位置，在首批 1024 项删除后、游标确认前暂停旧 Leader；两个 Follower 保存 pending，但不删除本地位置。SIGSTOP 旧 Leader并选主后，生产恢复扫描器自动接续；恢复旧节点、再次暂停替代 Leader并选主后，未满足需求仍保留。另有真实 1 MiB+53 字节文件的块参与需求，当前目标为两个副本而实际只有一个 Worker；改为当前单副本目标后需求自动确认，内容始终完整。策略/任务原始结果、实际 Release/Recall 与冷恢复继续通过；native 搬运单用例 26.82 秒通过。
+
+这验证真实 Master 停止/恢复与选举，Worker inventory 为测试注入，未验证物理磁盘损失或实际生成第二份副本。fixture 反序列化后重新初始化 DurationUnit，确保 8 秒失联窗口生效；此前的块数假设和配置缓存失败保留在 hsm-rs 验证记录，没有放宽自动接续断言。
+
 当前仍有以下边界：
 
 - UFS namespace 失效和旧缓存 Worker 删除仍使用旧路径；本次持久修复需求不是完整的旧缓存删除 outbox，不能声称覆盖所有 UFS 删除副作用。
-- 一个大 UFS 文件的解码和完整可读性检查仍随其块数增长，完整块报告 reconciliation 仍有整份清单成本。
+- 一个大 UFS 文件的解码和完整可读性检查仍随其块数增长，完整块报告 reconciliation 仍有整份清单成本。修复确认还携带 inode 原始字节，稠密布局或多个大 inode 可能超过 2 MiB payload 上限；此时保留需求并返回错误，尚未做摘要检查或按字节拆分确认。
 - 此处修复需求持久化不代替 Worker 数据协议 fencing、物理磁盘冗余、私有 Recall 多副本或归档后端 HA。
 - 新版百万持续负载、最终原版 Curvine 对比及 PVE 更新尚未执行。
