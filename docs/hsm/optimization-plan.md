@@ -446,8 +446,8 @@ hsm-rs 八个直接依赖及 lock 的 29 个 Curvine 包固定 `d5e88f1d03f399ff
 
 生产 heartbeat 清理已接入按字节游标读取/删除双向位置索引，每页最多 1024 项且不填充 block cache。副本修复逐页交接，不再预先聚合整个 Worker 的块清单；页间释放 authority gate，下一页按 Background 类重新排队。普通 Curvine 文件不会触发空缓存失效 WriteBatch，也不等待没有日志的 journal 回执；UFS 修改与可能已有部分效果的错误仍保留确认。详细顺序、重连取消及单个大 UFS 文件仍有成本的边界见[分页清理设计](lost-worker-cleanup.md)。
 
-每次失联使用新 token，Start/Running/End 或新位置报告使旧任务失效；检查与删除之间由 WorkerManager 读锁保护。所有页绑定最初 Leader 任期，不能在同进程再次当选后继续旧任务。token 是本地取消身份，不新增外部镜像，也不是持久 HSM 状态。UFS 缓存判断排除所有该 Worker 的位置，包括后续页，以免边界处误判缓存可读。
+每次失联使用新 token，Start/Running 或新位置报告使旧任务失效；已失联 Worker 的 End 心跳保留其清理任务；检查与删除之间由 WorkerManager 读锁保护。所有页绑定最初 Leader 任期，不能在同进程再次当选后继续旧任务。token 是本地取消身份，不新增外部镜像，也不是持久 HSM 状态。UFS 缓存判断排除所有该 Worker 的位置，包括后续页，以免边界处误判缓存可读。
 
 这次没有把 legacy UFS namespace 失效改为 owned 条件命令，Worker 删除也尚未全部具备持久 outbox；1024 项不是单个大文件解码或 UFS 失效的时间硬上限。全部优化完成前，继续暂缓新版百万验收和最终原版性能对照。
 
-最终 Source 回归通过：**290 项 Master、2 项真实 TCP/Raft、64 项文件系统与 6 项 inode 测试，0 失败**。纯位置清理无需 journal 回执的专项测试、清理暂停时真实 SDK 写入/读回、原有 UFS 缓存失效与 Follower journal 重放均通过。原始日志为开发环境 `research/hsm-worker-cleanup-root-final.log`（相对 `/work/jay/hsm`）；匹配外部组件的固定 Git 回归另行记录。
+最终 Source 回归通过：**290 项 Master、2 项真实 TCP/Raft、64 项文件系统与 6 项 inode 测试，0 失败**。纯位置清理无需 journal 回执的专项测试、清理暂停时真实 SDK 写入/读回、原有 UFS 缓存失效与 Follower journal 重放均通过。原始日志为开发环境 `research/hsm-worker-cleanup-end-final.log`（相对 `/work/jay/hsm`）；匹配外部组件的固定 Git 回归另行记录。

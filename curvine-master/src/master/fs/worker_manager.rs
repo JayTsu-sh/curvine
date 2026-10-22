@@ -105,7 +105,8 @@ impl WorkerManager {
 
             HeartbeatStatus::End => {
                 info!("Worker unregister: {}", addr);
-                self.lost_worker_tokens.remove(&addr.worker_id);
+                // End does not publish fresh positions or revive a lost
+                // Worker. Its already scheduled loss cleanup must continue.
                 let _ = self.worker_map.remove_offline(addr.worker_id);
                 return Ok(vec![]);
             }
@@ -451,6 +452,8 @@ mod tests {
         assert!(beat(&mut manager, "wrong-cluster", HeartbeatStatus::Running).is_err());
         assert!(manager.worker_loss_is_current(7, &first));
         let cluster = manager.cluster_id.clone();
+        beat(&mut manager, &cluster, HeartbeatStatus::End)?;
+        assert!(manager.worker_loss_is_current(7, &first));
         beat(&mut manager, &cluster, HeartbeatStatus::Start)?;
         assert!(!manager.worker_loss_is_current(7, &first));
         beat(&mut manager, &cluster, HeartbeatStatus::Running)?;

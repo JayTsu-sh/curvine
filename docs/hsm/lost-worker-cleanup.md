@@ -20,7 +20,7 @@
 
 失联 token 是每次失联新建的 `Arc` 身份，不使用毫秒时间戳或可重复的 Worker session 字符串。Worker 再次失联会获得不同 token，旧任务不会误认为是同一次失联。
 
-接受 Start、Running 或 End 心跳时取消旧 token。新位置报告在 `fs_dir` 锁内取消旧 token 并发布位置；因此，即使 Running 心跳还没到达，旧清理也不能在下一页删除刚上报的位置。失败的 cluster 校验不取消 token。每页的 token 检查与位置删除由 WorkerManager 读锁保护，注册不能穿过二者之间。
+接受 Start 或 Running 心跳时取消旧 token。已失联 Worker 的 End 心跳不提供新位置，因此保留旧 token，让已有清理继续。新位置报告在 `fs_dir` 锁内取消旧 token 并发布位置；因此，即使 Running 心跳还没到达，旧清理也不能在下一页删除刚上报的位置。失败的 cluster 校验不取消 token。每页的 token 检查与位置删除由 WorkerManager 读锁保护，注册不能穿过二者之间。
 
 token 只是本地后台任务的取消资格，不是文件权威事实，不写入 RocksDB、Raft 或外部元数据镜像。它与 Leader 原始任期检查共同阻止旧本地任务继续执行。角色变化不能撤销已经提交的前缀；UFS 旧式 speculative 修改提交不确定时仍保留原有故障退出保护，不能以“当前已是 Follower”为由放行。
 
@@ -51,4 +51,4 @@ CARGO_TARGET_DIR=/work/cargo-target CXXFLAGS=-g0 cargo test \
 
 结果：**290 项 Master、2 项真实 TCP/Raft、64 项文件系统和 6 项 inode 测试通过，0 失败**；2 项 Master 规模测试及 1 项手工文件系统基准保持 ignored。纯位置清理专项用例启用 HSM gate，但使用无法提供提交回执的测试 writer；两页清理成功，证明其不依赖无日志确认。真实集群在首个 1024 项页面后暂停，剩余 1026 项未删除时仍完成 SDK 数据写入、关闭、读取及读取关闭；恢复后 2050 项全部清理，页大小为 1024/1024/2。
 
-最终日志：开发环境 `/work/jay/hsm/research/hsm-worker-cleanup-root-final.log`。前一版完整回归为 `research/hsm-worker-cleanup-root.log`，最终新增的无日志确认优化以 final 日志为准。
+最终日志：开发环境 `/work/jay/hsm/research/hsm-worker-cleanup-end-final.log`。前一版完整回归为 `research/hsm-worker-cleanup-root.log`，最终新增的无日志确认优化以 final 日志为准。
