@@ -31,7 +31,7 @@
 
 ## 换主后如何自动发现和接续
 
-恢复扫描器每轮最多读取 8 个 job，并发现最多 8 个有位置的 Worker。发现 Worker 使用反向索引前缀 seek，一次跳过一个 Worker 的全部块清单，不逐块枚举 Worker ID。调度器还有独立 busy RAII guard，队列满或任务结束后可以再次进入。
+恢复扫描器每轮最多读取 8 个 job，并发现最多 8 个有位置的 Worker。发现 Worker 使用反向索引前缀 seek，一次跳过一个 Worker 的全部块清单，不逐块枚举 Worker ID。调度器还有独立 busy RAII guard，队列满或任务结束后可以再次进入。扫描使用当前任期的本地游标副本；等待 Raft 时不持有心跳检测器的 recovery mutex。结束时只向相同任期、相同恢复窗口合并游标，晚到的旧扫描不能覆盖新任期的重置，也不能替换新任期的失联 token。
 
 两条发现路径都需要：当前任期恢复窗口已过、Worker 没有当前注册、最近联系也已经超时。已在本任期重新注册并有新联系的 Worker 会使旧 job 取消；独立修复需求仍需检查当前状态。
 
@@ -41,7 +41,7 @@
 
 ## 修复需求何时可以删除
 
-每轮最多读取 64 条修复记录；尚不健康的块重复交给现有 MasterReplicationManager，其自身继续去重和重试。**放进内存执行队列不算完成**，需求仍保留在 Raft / RocksDB。
+每轮最多回放 32 页、每页 64 条修复记录（最多 2048 条）；每页分别检查任期、读取当前状态并提交条件确认，不扩大单次锁或 inode 检查范围。遇到尾页即返回，不在同一轮绕回队首重复报告；满轮后由下一次调度从保留游标继续。这样避免默认 10 秒心跳周期下每次仅处理 64 条的调度瓶颈；2048 条是轮次预算，不是吞吐保证。尚不健康的块重复交给现有 MasterReplicationManager，其自身继续去重和重试。**放进内存执行队列不算完成**，需求仍保留在 Raft / RocksDB。
 
 满足以下之一才准备确认：当前 inode 已不存在、该块已不属于当前文件，或当前布局中本任期有新联系的 Live Worker 数量达到当前副本策略。旧任期留下的 Live 标记和旧位置不能单独作为健康依据。这个判断使用当前的存储元数据与 Worker 上报，不升级为独立的物理副本证明。
 
@@ -55,9 +55,9 @@
 
 ## 验证与剩余范围
 
-Source 回归已通过：**297 项 Master、2 项真实 TCP/Raft、64 项文件系统和 6 项 inode 测试，0 失败**。规模与手工基准保持 ignored。最终日志：开发环境 `research/hsm-cleanup-recovery-root-final.log`，相对 `/work/jay/hsm`。
+Source 回归已通过：**298 项 Master、2 项真实 TCP/Raft、64 项文件系统和 6 项 inode 测试，0 失败**。规模与手工基准保持 ignored。最终日志：开发环境 `research/hsm-cleanup-recovery-root-final-v3.log`，相对 `/work/jay/hsm`。
 
-新增测试覆盖 pending 与需求同批发布、两份投影重放、删除后检查点仍保留、新位置阻止旧页面删除、新 observation 阻止旧确认、namespace 与副本策略变化拒绝旧确认、最大 payload、恢复等待窗口、队列满后的 guard 释放、稠密 Worker 前缀发现及 v9 checkpoint 栅栏。
+新增测试覆盖 pending 与需求同批发布、两份投影重放、删除后检查点仍保留、新位置阻止旧页面删除、新 observation 阻止旧确认、namespace 与副本策略变化拒绝旧确认、最大 payload、恢复等待窗口、队列满后的 guard 释放、稠密 Worker 前缀发现、2050 条需求的有界批次接续/保留与页间任期取消，以及 v9 checkpoint 栅栏。
 
 当前仍有以下边界：
 

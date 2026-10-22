@@ -459,4 +459,4 @@ hsm-rs 八个直接依赖及 lock 的 29 个 Curvine 包固定 `d5e88f1d03f399ff
 
 当前生产 HSM 的清理 job、pending 页面、cursor 与修复需求已经写入 Curvine 的复制元数据。删除前同批提交 pending 与最多 1024 项修复需求；真正删除重新检查本地 token / 原始任期；共享提交推进进度，页内位置删除不等待空回执。每个新任期按 worker_lost_interval 重新确认失联，保留 pending 并重新检查该节点的位置清单。持久需求不能仅因交给内存副本队列就删除，确认还检查当前 inode、需求 observation 与新任期 Live 联系。
 
-恢复每轮最多发现 8 个 job、8 个有位置的 Worker，后者按前缀 seek 跳过整份块清单；每轮分发/确认最多 64 项修复。调度使用 try_spawn，队列满立即退让并释放 running/busy guard。新增日志 envelope hsm-worker-cleanup-v1 与 checkpoint 栅栏 hsm_native_v9；全部 Master 必须匹配。Source 最终回归 **297 项 Master、2 项真实 TCP/Raft、64 项文件系统与 6 项 inode 测试通过**。设计与剩余 UFS 删除 outbox / 大文件成本见[持久接续设计](worker-cleanup-recovery.md)。固定来源在线 HA 测试另行记录。
+恢复每轮最多发现 8 个 job、8 个有位置的 Worker，后者按前缀 seek 跳过整份块清单；每轮最多回放 32 页修复，每页 64 项独立检查和提交，避免默认 10 秒周期只回放一页；到尾即停止，不在本轮重绕。调度使用 try_spawn，队列满立即退让并释放 running/busy guard。新增日志 envelope hsm-worker-cleanup-v1 与 checkpoint 栅栏 hsm_native_v9；全部 Master 必须匹配。Source 最终回归 **298 项 Master、2 项真实 TCP/Raft、64 项文件系统与 6 项 inode 测试通过**。设计与剩余 UFS 删除 outbox / 大文件成本见[持久接续设计](worker-cleanup-recovery.md)。固定来源在线 HA 测试另行记录。

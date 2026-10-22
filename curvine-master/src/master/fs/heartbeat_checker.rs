@@ -172,14 +172,14 @@ impl LoopTask for HeartbeatChecker {
             {
                 let permit = MaintenanceRun(busy);
                 let recovery = self.recovery.clone();
+                let mut scan = self.recovery.lock().clone();
                 let fs = self.fs.clone();
                 let executor = self.executor.clone();
                 let rm = self.replication_manager.clone();
                 let result = self.executor.try_spawn(move || {
                     let _permit = permit;
-                    let mut recovery = recovery.lock();
                     let result = fs.recover_worker_cleanups(
-                        &mut recovery,
+                        &mut scan,
                         originating_term,
                         absence,
                         |worker, loss| {
@@ -203,12 +203,15 @@ impl LoopTask for HeartbeatChecker {
                         warn!("Worker cleanup recovery deferred: {error}");
                     }
                     if let Err(error) =
-                        fs.replay_worker_repairs(&mut recovery, originating_term, |ids| {
+                        fs.replay_worker_repairs(&mut scan, originating_term, |ids| {
                             rm.report_under_replicated_blocks(0, ids)
                         })
                     {
                         warn!("durable Worker repair replay deferred: {error}");
                     }
+                    // Journal waits never hold the heartbeat checker's recovery
+                    // mutex. A new term may reset its grace/cursors meanwhile.
+                    recovery.lock().merge_cursors(&scan);
                 });
                 if let Err(error) = result {
                     warn!("queue Worker cleanup recovery: {error}");

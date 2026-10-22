@@ -304,6 +304,9 @@ impl WorkerManager {
         }
         if let Some(token) = self.lost_worker_tokens.get(&id) {
             let previous = token.0.term.load(Ordering::Acquire);
+            if previous > term {
+                return None;
+            }
             if token.id() == loss && (previous == 0 || previous == term) {
                 token.0.term.store(term, Ordering::Release);
                 return Some(token.clone());

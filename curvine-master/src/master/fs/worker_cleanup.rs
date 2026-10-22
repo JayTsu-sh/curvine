@@ -31,6 +31,7 @@ const PAGE: usize = 1024;
 const MAX_ROWS: usize = PAGE + 1;
 const MAX_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RUN_TURNS: usize = 32;
+const REPAIR_PAGE: usize = 64;
 
 fn job_key(worker: u32) -> Vec<u8> {
     format!("\u{3}hsm:worker-loss:v1:{worker:08x}").into_bytes()
@@ -496,6 +497,7 @@ impl MasterFilesystem {
 
 /// Per-process scan cursors are only scheduling hints. Persisted jobs and
 /// repair rows are scanned again after a term change or process restart.
+#[derive(Clone)]
 pub(crate) struct Recovery {
     term: u64,
     since: Instant,
@@ -517,6 +519,13 @@ impl Default for Recovery {
     }
 }
 impl Recovery {
+    pub(crate) fn merge_cursors(&mut self, completed: &Self) {
+        if self.term == completed.term && self.since == completed.since {
+            self.job_cursor = completed.job_cursor.clone();
+            self.repair_cursor = completed.repair_cursor.clone();
+            self.worker_cursor = completed.worker_cursor;
+        }
+    }
     pub(crate) fn ready(&mut self, term: u64, absence: Duration) -> bool {
         if self.term != term {
             self.term = term;
@@ -536,6 +545,15 @@ impl Drop for MaintenanceRun {
 }
 
 impl MasterFilesystem {
+    fn cleanup_term_current(&self, term: u64) -> FsResult<()> {
+        if !self.master_monitor.is_active()
+            || self.master_monitor.journal_term.load(Ordering::Acquire) != term
+        {
+            return Err(FsError::not_leader("Worker cleanup recovery term changed"));
+        }
+        Ok(())
+    }
+
     pub(crate) fn recover_worker_cleanups(
         &self,
         recovery: &mut Recovery,
@@ -543,6 +561,7 @@ impl MasterFilesystem {
         absence: Duration,
         mut dispatch: impl FnMut(u32, WorkerLossToken),
     ) -> FsResult<()> {
+        self.cleanup_term_current(term)?;
         let (jobs, workers) = {
             let dir = self.fs_dir.read();
             (
@@ -564,6 +583,7 @@ impl MasterFilesystem {
         };
         let mut seen = BTreeSet::new();
         for (key, raw) in jobs {
+            self.cleanup_term_current(term)?;
             validate_value(&key, &raw)?;
             let job: Job = decode(&raw)?;
             seen.insert(job.worker);
@@ -587,6 +607,7 @@ impl MasterFilesystem {
             }
         }
         for worker in workers {
+            self.cleanup_term_current(term)?;
             if seen.contains(&worker) {
                 continue;
             }
@@ -617,12 +638,33 @@ impl MasterFilesystem {
         term: u64,
         mut report: impl FnMut(Vec<i64>) -> CommonResult<()>,
     ) -> FsResult<usize> {
+        let mut processed = 0;
+        // Amortize the heartbeat scheduling interval without making any lock or
+        // conditional commit larger. Never wrap and requeue a small outbox in
+        // the same burst. Next tick resumes after a full bounded burst.
+        for _ in 0..MAX_RUN_TURNS {
+            let count = self.replay_worker_repairs_page(recovery, term, &mut report)?;
+            processed += count;
+            if count < REPAIR_PAGE {
+                break;
+            }
+        }
+        Ok(processed)
+    }
+
+    fn replay_worker_repairs_page(
+        &self,
+        recovery: &mut Recovery,
+        term: u64,
+        mut report: impl FnMut(Vec<i64>) -> CommonResult<()>,
+    ) -> FsResult<usize> {
+        self.cleanup_term_current(term)?;
         let rows = self.fs_dir.read().get_rocks_store().hsm_scan(
             REPAIRS,
             recovery.repair_cursor.as_deref(),
-            64,
+            REPAIR_PAGE,
         )?;
-        recovery.repair_cursor = if rows.len() == 64 {
+        recovery.repair_cursor = if rows.len() == REPAIR_PAGE {
             rows.last().map(|(key, _)| key.clone())
         } else {
             None
@@ -1003,13 +1045,93 @@ mod tests {
     }
 
     #[test]
+    fn durable_repair_burst_resumes_pages_retains_demand_and_stops_on_term_change(
+    ) -> CommonResult<()> {
+        let (_root, fs) = fixture();
+        let file = fs.create("/repair-burst", false)?;
+        let ids: Vec<_> = (0..MAX_RUN_TURNS * REPAIR_PAGE + 2)
+            .map(|seq| InodeId::create_block_id(file.id, seq as i64).unwrap())
+            .collect();
+        {
+            let dir = fs.fs_dir.write();
+            let mut inode = dir.store.get_inode(file.id, None)?.unwrap();
+            let file = inode.as_file_mut()?;
+            file.replicas = 2;
+            file.blocks = ids
+                .iter()
+                .map(|id| crate::master::meta::BlockMeta::new(*id, 1))
+                .collect();
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.write_inode(&inode)?;
+            for id in &ids {
+                batch.hsm_put(
+                    &repair_key(*id),
+                    &encode(&Repair {
+                        block: *id,
+                        observation: token(),
+                    })?,
+                )?;
+            }
+            batch.commit()?;
+        }
+        let mut recovery = Recovery::default();
+        recovery.ready(7, Duration::ZERO);
+        let mut reported = vec![];
+        let count = fs.replay_worker_repairs(&mut recovery, 7, |page| {
+            assert_eq!(page.len(), REPAIR_PAGE);
+            reported.extend(page);
+            Ok(())
+        })?;
+        assert_eq!(count, MAX_RUN_TURNS * REPAIR_PAGE);
+        assert_eq!(reported, ids[..count]);
+        assert!(recovery.repair_cursor.is_some());
+        let count = fs.replay_worker_repairs(&mut recovery, 7, |page| {
+            assert_eq!(page.len(), 2);
+            reported.extend(page);
+            Ok(())
+        })?;
+        assert_eq!(count, 2);
+        assert_eq!(
+            reported, ids,
+            "cursor resumes rather than requeueing earlier pages"
+        );
+        assert!(recovery.repair_cursor.is_none());
+        assert_eq!(
+            fs.fs_dir
+                .read()
+                .get_rocks_store()
+                .hsm_scan(REPAIRS, None, 4096)?
+                .len(),
+            ids.len(),
+            "queue admission must never retire durable demand"
+        );
+        let mut pages = 0;
+        assert!(fs
+            .replay_worker_repairs(&mut recovery, 7, |_| {
+                pages += 1;
+                fs.master_monitor.journal_term.store(8, Ordering::Release);
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(pages, 1, "term change stops before the next page");
+        Ok(())
+    }
+
+    #[test]
     fn durable_cleanup_qualification_waits_for_fresh_absence_and_releases_failed_runs() {
         let (_root, fs) = fixture();
         let mut recovery = Recovery::default();
         assert!(!recovery.ready(7, Duration::from_secs(60)));
         recovery.since -= Duration::from_secs(61);
         assert!(recovery.ready(7, Duration::from_secs(60)));
+        let mut previous_scan = recovery.clone();
+        previous_scan.worker_cursor = Some(9);
         assert!(!recovery.ready(8, Duration::from_secs(60)));
+        recovery.merge_cursors(&previous_scan);
+        assert_eq!(
+            recovery.worker_cursor, None,
+            "an old scan cannot restore a cursor after the new term rewound it"
+        );
         let id = token();
         let mut wm = fs.worker_manager.write();
         wm.add_test_worker(WorkerInfo::new(
@@ -1035,6 +1157,10 @@ mod tests {
         let renewed = wm.qualify_worker_loss(7, &id, 9, Duration::ZERO).unwrap();
         assert!(!wm.worker_loss_is_current(7, &first));
         assert!(wm.worker_loss_is_current(7, &renewed));
+        assert!(
+            wm.qualify_worker_loss(7, &id, 8, Duration::ZERO).is_none(),
+            "late old-term discovery cannot replace a new term's active token"
+        );
     }
 
     #[test]
