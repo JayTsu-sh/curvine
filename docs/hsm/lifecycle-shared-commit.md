@@ -55,3 +55,6 @@ Worker 容量本身仍是异步遥测。这里没有把它改造成线性一致�
 新增空兼容性 CF `hsm_native_v8`，业务记录仍在原 CF 中。旧二进制不能打开含新语义的 checkpoint，全部 Master 必须使用匹配代码；没有新增混合版本滚动激活协议。
 
 namespace 创建/升级、controller epoch 修改、文件动作业务拒绝的独占重新确认、兼容 RPC 和旧后台副作用仍保留独占边界。共享 GC 不代表所有旧式 Worker 删除已迁移持久 outbox。当前剩余项及验证结果见[优化方案](optimization-plan.md)。
+
+
+生产代码 `d5e88f1d` 已通过 283 项 Master、两个 TCP/Raft 用例及固定 Git 的 hsm-rs 32 项功能/全部文档测试。独立 Master 两次在线选主覆盖策略、原 Running claim、重选后的真实 Release/Done，以及 Recall 后原 finish 仍返回 Offline；冷恢复和自动 Recall 也通过。来源、原始日志及剩余边界见[组合验收](optimization-plan.md#生命周期的固定-git-与在线任务恢复验收代码-d5e88f1d)。

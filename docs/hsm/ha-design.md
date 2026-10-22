@@ -217,3 +217,6 @@ rename/替换/交换、递归属性/删除在 Native journal v5 记录紧凑输�
 新的生命周期封装将 namespace 原始值、候选合并版本/路径/副本数、动作 outcome（含不存在）和容量逻辑预算作为提交前检查。originating term 固定准备所属任期；follower 只应用已捕获输入，不用其本地容量遥测重新计算策略。任务、工作索引、活动标记、预算与成功结果仍同批提交。过期计划不发布 binding/outcome，原身份可重试；旧日志语义不变，新增 hsm_native_v8 栅栏要求全 Master 匹配。
 
 真实 TCP/Raft 测试暂停已准备的 claim，插入普通读取，恢复后旧 claim 返回 Busy，原请求重试 Superseded；Source 未固化暂态失败。Recall claim/finish/get 的类别由任务 action 决定，后台 128 个接入名额占满不消耗 Recall 名额。设计、预算采样边界与回归记录见[生命周期共享提交](lifecycle-shared-commit.md)。这不替代 Worker/磁盘故障和归档冗余验收。
+
+
+固定 `d5e88f1d` 的独立进程在线 HA 已加入生命周期状态：策略与 Running claim 在首次换主后保留原成功/claim token；普通读取后 Superseded，重新筛选并实际 Release/finish Done；再次换主及真实 Recall 后，原 finish 仍返回原 Offline 结果。它验证 Source 任务权威，不需要外部元数据镜像。七个 managed 场景和 native 场景、完整 workspace 共 32 项功能/全部文档测试通过；完整来源与测试边界见[组合验收](optimization-plan.md#生命周期的固定-git-与在线任务恢复验收代码-d5e88f1d)。

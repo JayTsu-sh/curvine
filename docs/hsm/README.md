@@ -65,3 +65,6 @@
 
 
 后续生命周期优化已将策略更新/扫描入队、任务 claim/finish 和 GC 接入共享条件提交；候选路径/副本数、动作结果和逻辑容量预算均有提交检查，Recall 认领/完成也按实际任务动作进入独立类别。**283 项 Master 与两个 TCP/Raft 用例通过**；资源边界和当前剩余项见[生命周期共享提交](lifecycle-shared-commit.md)及[优化方案](optimization-plan.md)。完整固定来源验证另记，未运行本轮百万或最终性能对照。
+
+
+生命周期生产代码 `d5e88f1d` 的固定来源组合验证已通过：**283 项 Master、两个真实 TCP/Raft 用例、32 项 hsm-rs 功能及全部文档测试**。在线 HA 新增策略/Running claim 跨选主、读取后的重选与 Release/Done、再次选主及 Recall 后原 finish 结果不变，见[组合验收](optimization-plan.md#生命周期的固定-git-与在线任务恢复验收代码-d5e88f1d)。仍未执行本轮百万及最终原版性能比较。

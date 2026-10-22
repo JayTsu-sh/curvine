@@ -424,6 +424,14 @@ Root 的 276 项 Master 与两个 TCP/Raft 用例为同一生产代码的验证�
 
 初始 Root 回归 `research/hsm-lifecycle-readset-regression.log` 为 282 项 Master 和两个 TCP/Raft 用例通过；追加实际 Source claim 暂停/读取插入的回归 `research/hsm-lifecycle-claim-race.log` 也通过。最终增加按任务 action 的 Recall 接入测试，日志 `research/hsm-lifecycle-priority-final.log`：**283 项 Master 通过、0 失败、2 ignored，两个 TCP/Raft 用例通过（36.80 秒）**。真实集群在持有另一共享资格时执行 Seal、policy_put、policy_scan、claim、finish、GC；暂停实际 claim 的准备后让普通读取提交，旧请求返回 Busy，原身份重试得到 Superseded。暂停 hook 只在 hsm-scale-test 编译。固定 Git 的完整 hsm-rs 组合验证另记。
 
+### 生命周期的固定 Git 与在线任务恢复验收（代码 d5e88f1d）
+
+hsm-rs 八个直接依赖及 lock 的 29 个 Curvine 包固定 `d5e88f1d03f399ffd31099b8a4887ecfea2fbc7e`，其余锁文件内容不变，没有路径覆盖。最终完整命令 `CARGO_TARGET_DIR=/work/cargo-target CXXFLAGS=-g0 cargo test --locked --workspace --features hsm-curvine/native-integration -j 6`：**32 项功能通过、0 失败、3 ignored，四个 crate 的全部文档测试执行成功**；日志 `research/hsm-lifecycle-fixed-git-final.log`。七个 managed 用例 88.49 秒，单独 native 用例 23.80 秒。配套提交 [0c94b86](https://github.com/JayTsu-sh/hsm-rs/commit/0c94b869a9026efcfec0a0b17d7846b6a8dfbea2)。Root 283 项 Master 和两个 TCP/Raft 用例是相同生产代码的验收。
+
+增强的在线 HA 先写入约 2 MiB 并实际归档，在 Source 保存策略、入队和 Running claim，再暂停 Leader。两个存活节点选主后，原 claim 请求返回原 token，原 policy_put 返回原成功结果；普通读取废弃旧 Release 观察，执行器报告 Superseded 后，由策略重选当前观察，真实 Release 并以 Source 成功结果 finish 为 Done/Offline。恢复旧 Master、暂停替代 Leader并再次选主后，任务 Done 与原 finish 保留；真实 Recall 和完整内容/inode 校验后，重试旧 finish 仍返回原 Offline 结果，不能重新生成当前 Dual 状态。
+
+该用例不在外部重建任务镜像，也不把 Master term 当作 controller epoch。已有冷恢复、策略 CLI、后台暂停期间自动 Recall 等用例继续通过。两个仓库格式/差异检查通过，代码已推送 Jay fork/main 与 hsm-rs/main。未升级 PVE，未执行新版本百万负载和最终原版比较，未将 Worker/磁盘丢失或归档冗余算作通过。
+
 ### 当前剩余边界
 
 已完成公开批量写、目录共享等待、加权资格、外部执行通道、文件级控制共享提交与两次在线选主验证；**没有将全部性能优化标为完成**。
