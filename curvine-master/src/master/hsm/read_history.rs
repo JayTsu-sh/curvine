@@ -124,7 +124,7 @@ impl HistoryBatch {
             .floor
             .max(now.saturating_sub(RETENTION_MS).max(0) / 60_000 * 60_000);
         if next != self.floor {
-            batch.hsm_put(FLOOR, &pack(&next)?)?;
+            batch.hsm_put(FLOOR, &pack(next)?)?;
             self.floor = next;
         }
         let result = outcome_key(outcome);
@@ -248,10 +248,7 @@ mod tests {
         dir.apply_hsm(&pack(&workflow)?)?;
         let next_time = RETENTION_MS + 61_000;
         let new_id = format!("{:016x}{}", next_time, "b".repeat(32));
-        dir.apply_hsm(&pack(&make(
-            format!("{OUTCOME_PREFIX}{new_id}"),
-            next_time,
-        ))?)?;
+        dir.apply_hsm(&pack(make(format!("{OUTCOME_PREFIX}{new_id}"), next_time))?)?;
         assert!(dir.hsm_outcome(&old.outcome)?.is_none());
         assert!(dir.hsm_outcome(&workflow.outcome)?.is_some());
         assert!(matches!(

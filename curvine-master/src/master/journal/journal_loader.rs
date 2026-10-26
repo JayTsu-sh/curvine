@@ -234,6 +234,13 @@ impl JournalLoader {
         self.set_applied(is_leader, applied, false)
     }
 
+    fn apply_hsm_authority(&self, entry: &HsmEntry) -> CommonResult<()> {
+        if let Some(result) = self.fs_dir.read().try_apply_access_checkpoint_entry(entry) {
+            return result;
+        }
+        self.fs_dir.write().apply_hsm_entry(entry)
+    }
+
     async fn replay_entry(&self, is_leader: bool, entry: &JournalEntry) -> CommonResult<()> {
         {
             let fs_dir = self.fs_dir.read();
@@ -244,7 +251,7 @@ impl JournalLoader {
         }
 
         if let JournalEntry::Hsm(e) = entry {
-            return self.fs_dir.write().apply_hsm_entry(e);
+            return self.apply_hsm_authority(e);
         }
         if let JournalEntry::Native(e) = entry {
             return self.fs_dir.write().apply_native_entry(e);
@@ -683,7 +690,7 @@ impl JournalLoader {
         debug!("replay entry: {:?}", entry);
 
         match entry {
-            JournalEntry::Hsm(e) => self.fs_dir.write().apply_hsm_entry(&e),
+            JournalEntry::Hsm(e) => self.apply_hsm_authority(&e),
             JournalEntry::Native(e) => self.fs_dir.write().apply_native_entry(&e),
             JournalEntry::Mkdir(e) => self.mkdir(e),
 
@@ -1184,6 +1191,73 @@ mod tests {
             data,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn access_checkpoint_apply_can_complete_while_namespace_read_is_held() -> CommonResult<()> {
+        use curvine_model::hsm::native::Namespace;
+        Master::init_test_metrics();
+        let (conf, root) = ignore_reply_error_conf("shared-access-apply", false);
+        let js = JournalSystem::from_conf(&conf)?;
+        let fs = js.fs();
+        let status = fs.create("/protected", false)?;
+        fs.complete_file("/protected", Some(status.id), 0, vec![], "", false, None)?;
+        let payload = {
+            let mut dir = fs.fs_dir.write();
+            let namespace = Namespace {
+                ordinary_format: 2,
+                root_inode: 9999,
+                storage: "s".into(),
+                incarnation: "n".into(),
+                epoch: 1,
+            };
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.hsm_put(b"\x03hsm:namespace:v1", &serde_json::to_vec(&namespace)?)?;
+            batch.commit()?;
+            dir.hsm_enabled = true;
+            let input = InodePath::resolve(dir.root_ptr(), "/protected", &dir.store)?;
+            dir.hsm_track_file("/protected", input.get_last_inode().unwrap().as_file_ref()?)?;
+            let record = dir.hsm_record(status.id)?.unwrap();
+            let checkpoint = serde_json::json!({
+                "incarnation": "n", "epoch": 1, "expected_frontier": null,
+                "producer": "shared-test", "sequence": 1,
+                "rows": [{ "inode": status.id, "expected_version": record.version,
+                    "access": { "clock_ms": 1000, "data": record.state.data,
+                        "base_version": record.version, "version": record.version + 1,
+                        "revision": record.state.revision + 1,
+                        "atime_ms": record.atime_ms + 100, "readers": {} } }],
+            });
+            [
+                b"hsm-access-checkpoint-v1\n".as_slice(),
+                serde_json::to_vec(&checkpoint)?.as_slice(),
+            ]
+            .concat()
+        };
+        let loader = js.journal_loader();
+        let held_reader = fs.fs_dir.read();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = loader.apply_entry(JournalEntry::Hsm(HsmEntry {
+                op_id: 1,
+                ticket: "shared-access".into(),
+                payload,
+            }));
+            let _ = send.send(result);
+        });
+        let completed = receive.recv_timeout(Duration::from_millis(500));
+        drop(held_reader);
+        worker.join().unwrap();
+        // Release and join even on the old blocking implementation.
+        let while_reading = completed.is_ok();
+        let applied = completed.unwrap_or_else(|_| receive.recv().unwrap());
+        applied?;
+        js.shutdown();
+        let _ = std::fs::remove_dir_all(root);
+        assert!(
+            while_reading,
+            "access-only apply waited for the namespace reader to leave"
+        );
+        Ok(())
     }
 
     #[test]

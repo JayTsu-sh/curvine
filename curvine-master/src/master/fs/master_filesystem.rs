@@ -101,6 +101,11 @@ fn snapshot_token_in_subtree(token: &str, subtree_path: &str) -> bool {
                 .unwrap_or(false))
 }
 
+pub(super) enum BackgroundScope {
+    Namespace,
+    Locations,
+}
+
 struct FullBlockReconcileState {
     running: bool,
     generation: u64,
@@ -122,12 +127,19 @@ impl MasterFilesystem {
         &self,
         action: impl FnOnce() -> FsResult<T>,
     ) -> FsResult<T> {
-        self.committed_background_in_term(None, action, |_| true, |_| {})
+        self.committed_background_in_term(
+            None,
+            BackgroundScope::Namespace,
+            action,
+            |_| true,
+            |_| {},
+        )
     }
 
     pub(super) fn committed_background_in_term<T>(
         &self,
         originating_term: Option<u64>,
+        scope: BackgroundScope,
         action: impl FnOnce() -> FsResult<T>,
         needs_confirmation: impl FnOnce(&T) -> bool,
         after_commit: impl FnOnce(&T),
@@ -168,6 +180,32 @@ impl MasterFilesystem {
             return Err(FsError::not_leader(
                 "background mutation has no active leader",
             ));
+        }
+        // A legacy store with neither a committed HSM writer nor a managed
+        // namespace cannot have issued protected read grants. Keep pure
+        // location retirement usable there; real HSM stores and all namespace
+        // mutations still establish the committed prefix and drain accesses.
+        let unconfigured_locations = matches!(scope, BackgroundScope::Locations)
+            && !writer.hsm_ready
+            && self.fs_dir.read().hsm_namespace()?.is_none();
+        if !unconfigured_locations {
+            let (qualified, qualification) = std::sync::mpsc::channel();
+            let owned = self.clone();
+            writer.spawn_background_authority(async move {
+                let result = async {
+                    owned.hsm_read_barrier().await?;
+                    owned.hsm_before_stable_underheld().await
+                }
+                .await;
+                let _ = qualified.send(result);
+            });
+            qualification
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .unwrap_or_else(|error| {
+                    log::error!("background access fence lost: {error}; aborting master");
+                    std::process::abort();
+                })
+                .map_err(|error| FsError::common(error.to_string()))?;
         }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             writer.in_origin_term_at(term, action)
@@ -560,7 +598,9 @@ impl MasterFilesystem {
         let path = path.as_ref();
         let fs_dir = self.fs_dir.read();
         let inode = Self::resolve_file_inode(&fs_dir, path, inode_id)?;
-        Ok(inode.to_file_status(path)?)
+        Ok(fs_dir
+            .hsm_read_protection
+            .status(inode.to_file_status(path)?))
     }
 
     pub fn exists<T: AsRef<str>>(&self, path: T) -> FsResult<bool> {
@@ -577,12 +617,20 @@ impl MasterFilesystem {
             let mut all_statuses = Vec::new();
             for path in &paths {
                 let statuses = fs_dir.list_status(path)?;
-                all_statuses.extend(statuses);
+                all_statuses.extend(
+                    statuses
+                        .into_iter()
+                        .map(|status| fs_dir.hsm_read_protection.status(status)),
+                );
             }
             Ok(all_statuses)
         } else {
             let inp = Self::resolve_path(&fs_dir, path.as_ref())?;
-            fs_dir.list_status(&inp)
+            Ok(fs_dir
+                .list_status(&inp)?
+                .into_iter()
+                .map(|status| fs_dir.hsm_read_protection.status(status))
+                .collect())
         }
     }
 
@@ -598,7 +646,11 @@ impl MasterFilesystem {
             err_box!("list_options does not support glob pattern, path {}", path)
         } else {
             let inp = Self::resolve_path(&fs_dir, path)?;
-            fs_dir.list_options(&inp, &opts)
+            Ok(fs_dir
+                .list_options(&inp, &opts)?
+                .into_iter()
+                .map(|status| fs_dir.hsm_read_protection.status(status))
+                .collect())
         }
     }
 
@@ -867,6 +919,42 @@ impl MasterFilesystem {
         file: &InodeFile,
     ) -> FsResult<Vec<LocatedBlock>> {
         let file_locs = fs_dir.get_file_locations(file)?;
+        self.locate_blocks(path, file, file_locs)
+    }
+
+    /// The caller holds projection authority and has qualified this exact
+    /// managed generation. Avoid looking up that same HSM record again.
+    pub(crate) fn get_protected_file_blocks(
+        &self,
+        path: &str,
+        fs_dir: &FsDir,
+        inp: &InodePath,
+        record: &curvine_model::hsm::native::Record,
+    ) -> FsResult<FileBlocks> {
+        let inode = try_option!(inp.get_last_inode(), "File {} not exists", path);
+        let file = inode.as_file_ref()?;
+        if !record.native_blocks
+            || record.writing
+            || record.state.residency == curvine_model::hsm::native::Residency::Offline
+            || record.state.data.entity.entity.parse::<i64>().ok() != Some(file.id)
+            || record.state.length != file.len.max(0) as u64
+        {
+            return err_box!("qualified managed layout no longer matches inode");
+        }
+        let locations = fs_dir.store.get_file_locations_cached(file)?;
+        fs_dir.evictor.on_access(file.id);
+        Ok(FileBlocks::new(
+            inode.to_file_status(path)?,
+            self.locate_blocks(path, file, locations)?,
+        ))
+    }
+
+    fn locate_blocks(
+        &self,
+        path: &str,
+        file: &InodeFile,
+        file_locs: HashMap<i64, Vec<BlockLocation>>,
+    ) -> FsResult<Vec<LocatedBlock>> {
         // Location reads only need the caller's namespace guard. Acquire worker
         // state afterwards so RocksDB lookups do not delay heartbeats.
         let wm = self.worker_manager.read();
@@ -1666,7 +1754,7 @@ impl MasterFilesystem {
         let mut after = None;
         let mut removed = 0;
         loop {
-            let page = self.committed_background_in_term(originating_term, || {
+            let page = self.committed_background_in_term(originating_term, BackgroundScope::Locations, || {
                 let mut fs_dir = self.fs_dir.write();
                 // Keep the normal fs_dir -> WorkerManager lock order. Heartbeat
                 // registration cannot invalidate the loss between this check
@@ -1973,6 +2061,48 @@ mod tests {
         );
         assert_eq!(pages, [1024, 1]);
         assert!(fs.fs_dir.read().get_worker_block_ids(7)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn background_namespace_work_still_requires_a_committed_prefix_without_namespace() {
+        let (fs, _, _) = lost_worker_fixture("background-needs-prefix", 1);
+        fs.fs_dir.write().hsm_enabled = true;
+        let called = std::cell::Cell::new(false);
+        let result = fs.committed_background(|| {
+            called.set(true);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(
+            !called.get(),
+            "namespace work ran without committed qualification"
+        );
+    }
+
+    #[test]
+    fn location_cleanup_with_managed_namespace_still_requires_qualification() -> FsResult<()> {
+        use curvine_model::hsm::native::Namespace;
+        let (fs, _, _) = lost_worker_fixture("locations-managed-prefix", 1);
+        let loss = lose_worker(&fs);
+        {
+            let mut dir = fs.fs_dir.write();
+            dir.hsm_enabled = true;
+            let ns = Namespace {
+                ordinary_format: 2,
+                root_inode: 9999,
+                storage: "s".into(),
+                incarnation: "n".into(),
+                epoch: 1,
+            };
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.hsm_put(b"\x03hsm:namespace:v1", &serde_json::to_vec(&ns).unwrap())?;
+            batch.commit()?;
+        }
+        assert!(fs
+            .delete_lost_worker_locations(7, &loss, 7, |_| {})
+            .is_err());
+        assert_eq!(fs.fs_dir.read().get_worker_block_ids(7)?.len(), 1);
         Ok(())
     }
 

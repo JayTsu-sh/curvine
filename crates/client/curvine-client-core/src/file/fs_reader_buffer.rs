@@ -198,18 +198,28 @@ impl FsReaderBuffer {
         file_blocks: FileBlocks,
         read_detector: ReadDetector,
     ) -> FsResult<Self> {
+        Self::new_with_policy(path, fs_context, file_blocks, read_detector, false)
+    }
+
+    pub(crate) fn new_with_policy(
+        path: Path,
+        fs_context: Arc<FsContext>,
+        file_blocks: FileBlocks,
+        read_detector: ReadDetector,
+        managed_fast: bool,
+    ) -> FsResult<Self> {
         let rt = fs_context.clone_runtime();
         let err_monitor = Arc::new(ErrorMonitor::new());
 
         let conf = &fs_context.conf.client;
-        let chunk_num = conf.read_chunk_num;
+        let chunk_num = if managed_fast { 1 } else { conf.read_chunk_num };
         let chunk_size = conf.read_chunk_size;
         let slice_size = conf.read_slice_size;
 
         let pos = 0;
         let len = file_blocks.status.len;
 
-        let base = FsReaderParallel::from_base(
+        let mut base = FsReaderParallel::from_base(
             FsReaderBase::new(path.clone(), fs_context.clone(), file_blocks.clone()),
             read_detector.read_parallel() as usize,
             slice_size,
@@ -217,7 +227,7 @@ impl FsReaderBuffer {
             file_blocks.status.id,
         );
 
-        let all = FsReaderParallel::create_all(
+        let mut all = FsReaderParallel::create_all(
             path.clone(),
             fs_context,
             file_blocks,
@@ -225,6 +235,13 @@ impl FsReaderBuffer {
             slice_size,
             chunk_size,
         )?;
+
+        if managed_fast {
+            base.disable_short_circuit();
+            for reader in &mut all {
+                reader.disable_short_circuit();
+            }
+        }
 
         let mut readers = Vec::with_capacity(all.len() + 1);
         for reader in all {
@@ -389,10 +406,16 @@ impl FsReaderBuffer {
     }
 
     pub async fn complete(&mut self) -> FsResult<()> {
+        let mut error = None;
         for reader in &mut self.readers {
-            reader.complete().await?;
+            if let Err(e) = reader.complete().await {
+                error.get_or_insert(e);
+            }
         }
-        Ok(())
+        match error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     async fn read_future(
@@ -480,6 +503,42 @@ mod tests {
             },
             vec![],
         )
+    }
+
+    #[test]
+    fn fast_managed_reader_owns_no_prefetch_tasks_without_changing_context() {
+        let mut conf = ClusterConf::default();
+        conf.client.read_chunk_num = 4;
+        conf.client.short_circuit = true;
+        conf.client.init().unwrap();
+        let context = Arc::new(FsContext::new(conf).unwrap());
+        let blocks = sparse_file_blocks(4096);
+        let path = Path::from_str("/managed").unwrap();
+        let fast = FsReaderBuffer::new_with_policy(
+            path.clone(),
+            context.clone(),
+            blocks.clone(),
+            ReadDetector::with_conf(&context.conf.client, blocks.status.len),
+            true,
+        )
+        .unwrap();
+        let normal = FsReaderBuffer::new(
+            path,
+            context.clone(),
+            blocks.clone(),
+            ReadDetector::with_conf(&context.conf.client, blocks.status.len),
+        )
+        .unwrap();
+        assert!(fast
+            .readers
+            .iter()
+            .all(|reader| matches!(reader, ReaderAdapter::Base(_))));
+        assert!(normal
+            .readers
+            .iter()
+            .any(|reader| matches!(reader, ReaderAdapter::Buffer(_))));
+        assert!(context.conf.client.short_circuit);
+        assert_eq!(context.conf.client.read_chunk_num, 4);
     }
 
     #[test]

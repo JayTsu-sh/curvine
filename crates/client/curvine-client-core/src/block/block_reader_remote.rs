@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::block::BlockClient;
+use crate::block::{BlockClient, BlockClientPool};
 use crate::file::FsContext;
 use curvine_core_error::err_box;
 use curvine_error::FsResult;
@@ -20,8 +20,11 @@ use curvine_io::DataSlice;
 use curvine_model::{ExtendedBlock, WorkerAddress};
 use curvine_proto::DataHeaderProto;
 use curvine_runtime::common::Utils;
+use std::sync::Arc;
 
 pub struct BlockReaderRemote {
+    return_pool: Option<Arc<BlockClientPool>>,
+    completed: bool,
     client: BlockClient,
     block: ExtendedBlock,
     worker_address: WorkerAddress,
@@ -43,7 +46,11 @@ impl BlockReaderRemote {
         let req_id = Utils::req_id();
         let seq_id = 0;
 
-        let client = fs_context.acquire_read(&worker_address).await?;
+        let mut client = fs_context.acquire_read(&worker_address).await?;
+        // A streaming session is not reusable until its completion reply.
+        // Cancellation at any await must drop, rather than pool, this client.
+        let return_pool = client.pool().clone();
+        client.clear_pool();
         let _ = client
             .open_block(
                 &fs_context.conf.client,
@@ -56,19 +63,13 @@ impl BlockReaderRemote {
             )
             .await?;
 
-        Ok(Self::from_opened(
-            client,
-            block,
-            worker_address,
-            off,
-            len,
-            req_id,
-            seq_id,
-        ))
+        let mut reader = Self::from_opened(client, block, worker_address, off, len, req_id, seq_id);
+        reader.return_pool = return_pool;
+        Ok(reader)
     }
 
     pub(crate) fn from_opened(
-        client: BlockClient,
+        mut client: BlockClient,
         block: ExtendedBlock,
         worker_address: WorkerAddress,
         off: i64,
@@ -76,7 +77,11 @@ impl BlockReaderRemote {
         req_id: i64,
         seq_id: i32,
     ) -> Self {
+        let return_pool = client.pool().clone();
+        client.clear_pool();
         Self {
+            return_pool,
+            completed: false,
             client,
             block,
             worker_address,
@@ -133,10 +138,18 @@ impl BlockReaderRemote {
     }
 
     pub async fn complete(&mut self) -> FsResult<()> {
+        if self.completed {
+            return Ok(());
+        }
         let next_seq_id = self.next_seq_id();
         self.client
             .read_commit(&self.block, self.req_id, next_seq_id)
-            .await
+            .await?;
+        self.completed = true;
+        if let Some(pool) = self.return_pool.take() {
+            self.client.set_pool(pool);
+        }
+        Ok(())
     }
 
     pub fn block_id(&self) -> i64 {

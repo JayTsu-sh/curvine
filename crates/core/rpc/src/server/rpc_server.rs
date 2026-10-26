@@ -12,17 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::handler::{HandlerService, MessageHandler, RpcFrame};
+use crate::handler::{ConcurrentHandler, Frame, HandlerService, MessageHandler, RpcFrame};
 use crate::server::{ServerConf, ServerMonitor, ServerStateListener};
 use curvine_core_error::CommonResult;
 use curvine_net::net::{InetAddr, NetUtils};
 use curvine_runtime::runtime::{RpcRuntime, Runtime};
 use curvine_runtime::sync::StateCtl;
+use futures::future::Either;
 use log::*;
 use socket2::SockRef;
 use std::sync::{Arc, Mutex};
 use std::{env, thread};
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
+
+// Independent of ordinary admission so slow client replies cannot starve
+// heartbeats. Liveness responses retain these permits until fully transmitted.
+const LIVENESS_LIMIT: usize = 8;
 
 pub struct RpcServer<S> {
     rt: Arc<Runtime>,
@@ -160,6 +166,7 @@ where
         );
         self.monitor.advance_running();
 
+        let liveness_limit = Arc::new(Semaphore::new(LIVENESS_LIMIT));
         loop {
             let (stream, client_addr) = match listener.accept().await {
                 Ok(conn) => conn,
@@ -182,11 +189,31 @@ where
 
             let frame = RpcFrame::with_server(stream, &self.conf);
             let bind_addr = self.bind_addr().clone();
-            let mut handler = self
-                .service
-                .get_stream_handler(self.rt.clone(), frame, &self.conf);
+            let connection = if self.service.is_stream() {
+                let mut handler =
+                    self.service
+                        .get_stream_handler(self.rt.clone(), frame, &self.conf);
+                Either::Left(async move { handler.run().await })
+            } else {
+                let state = self
+                    .service
+                    .has_conn_state()
+                    .then(|| frame.new_conn_state());
+                let handler = self.service.get_message_handler(state);
+                Either::Right(
+                    ConcurrentHandler::new(
+                        self.rt.clone(),
+                        frame,
+                        handler,
+                        self.service.get_limit(),
+                        &self.conf,
+                        liveness_limit.clone(),
+                    )
+                    .run(),
+                )
+            };
             self.rt.spawn(async move {
-                if let Err(e) = handler.run().await {
+                if let Err(e) = connection.await {
                     error!("Connection[{} -> {}]: {}", bind_addr, client_addr, e);
                 }
             });

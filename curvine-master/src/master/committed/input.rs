@@ -214,7 +214,6 @@ impl NativeInput {
                 let result = fs.delete(request.path, request.recursive)?;
                 Ok(curvine_proto::DeleteResponse {
                     res: Some(ProtoUtils::delete_res_to_pb(result)),
-                    ..Default::default()
                 }
                 .encode_to_vec())
             }

@@ -46,6 +46,8 @@ static CLIENT_METRICS: OnceCell<ClientMetrics> = OnceCell::new();
 // 2. Create client.
 // 3. Perceive master switching.
 pub struct FsContext {
+    hsm_read_cleanup: std::sync::OnceLock<super::hsm_read_cleanup::ReadCleanup>,
+    fast_read_issuer: FastRwLock<Option<String>>,
     pub(crate) conf: ClusterConf,
     pub(crate) connector: Arc<ClusterConnector>,
     pub(crate) client_addr: ClientAddress,
@@ -127,6 +129,8 @@ impl FsContext {
         ));
 
         let context = Self {
+            hsm_read_cleanup: std::sync::OnceLock::new(),
+            fast_read_issuer: FastRwLock::new(None),
             conf,
             connector: Arc::new(connector),
             client_addr,
@@ -145,6 +149,50 @@ impl FsContext {
 
     pub fn clone_client_name(&self) -> String {
         self.client_addr.client_name.clone()
+    }
+
+    pub(crate) fn fast_read_issuer(&self) -> Option<String> {
+        self.fast_read_issuer.read().clone()
+    }
+
+    pub(crate) fn set_fast_read_issuer(&self, issuer: String) {
+        *self.fast_read_issuer.write() = Some(issuer);
+    }
+
+    pub(crate) async fn enqueue_hsm_read_close(
+        self: &Arc<Self>,
+        data: curvine_model::hsm::native::DataKey,
+        reader: String,
+    ) -> FsResult<()> {
+        self.hsm_read_cleanup
+            .get_or_init(|| super::hsm_read_cleanup::ReadCleanup::new(self))
+            .enqueue(super::hsm_read_cleanup::CloseKey { data, reader })
+            .await
+    }
+
+    pub(crate) fn try_enqueue_hsm_read_close(
+        self: &Arc<Self>,
+        data: curvine_model::hsm::native::DataKey,
+        reader: String,
+    ) {
+        self.hsm_read_cleanup
+            .get_or_init(|| super::hsm_read_cleanup::ReadCleanup::new(self))
+            .try_enqueue(super::hsm_read_cleanup::CloseKey { data, reader });
+    }
+
+    /// Wait for acknowledgement of every advisory close queued before this call.
+    pub async fn flush_hsm_read_closes(&self) -> FsResult<()> {
+        match self.hsm_read_cleanup.get() {
+            Some(cleanup) => cleanup.flush().await,
+            None => Ok(()),
+        }
+    }
+
+    /// Number of locally queued or in-flight advisory read closes.
+    pub fn pending_hsm_read_closes(&self) -> usize {
+        self.hsm_read_cleanup
+            .get()
+            .map_or(0, |cleanup| cleanup.pending())
     }
 
     /// Cache the master's advertised version / protocol / capabilities from

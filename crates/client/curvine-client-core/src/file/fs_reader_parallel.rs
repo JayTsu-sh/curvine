@@ -128,6 +128,10 @@ impl FsReaderParallel {
         self.parallel_id
     }
 
+    pub(crate) fn disable_short_circuit(&mut self) {
+        self.inner.disable_short_circuit();
+    }
+
     pub async fn read(&mut self) -> FsResult<FileChunk> {
         match self.cur_idx {
             None => {

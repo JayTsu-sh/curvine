@@ -265,11 +265,11 @@ fn record(id: usize) -> Record {
     serde_json::from_value(json!({
         "ordinary":true,"native_blocks":true,"sealed":true,
         "version":1,"atime_ms":1000 + id as i64,"mtime_ms":1000,"state_since_ms":1000,
-        "owner":if id % 100 == 0 {"selected"} else {"other"},"group":"users",
+        "owner":if id.is_multiple_of(100) {"selected"} else {"other"},"group":"users",
         "state":{"data":{"entity":{"storage":"scale","namespace":"metadata-only","entity":id.to_string()},"generation":1},
-            "revision":1,"residency":"Online","length":if id % 1000 == 0 {8*1024*1024} else {1024},
+            "revision":1,"residency":"Online","length":if id.is_multiple_of(1000) {8*1024*1024} else {1024},
             "digest":{"algorithm":"blake3","value":vec![1;32]},"anchors":[]},
-        "path":format!("/{}/{id}",if id % 10 == 0 {"selected"} else {"other"}),
+        "path":format!("/{}/{id}",if id.is_multiple_of(10) {"selected"} else {"other"}),
         "published":null,"pending":null,"views":{},"garbage":[]
     })).unwrap()
 }
@@ -281,7 +281,7 @@ fn policy() -> LifecyclePolicy {
     .unwrap()
 }
 fn open_store(dir: &std::path::Path) -> CommonResult<RocksInodeStore> {
-    RocksInodeStore::new(DBConf::new(dir.to_string_lossy().into_owned()), true)
+    RocksInodeStore::new(DBConf::new(dir.to_string_lossy()), true)
 }
 fn persist(store: &RocksInodeStore, old: Option<&Record>, new: &Record) -> CommonResult<u64> {
     let before = store.db.get_db().latest_sequence_number();

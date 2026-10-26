@@ -246,6 +246,9 @@ message CompleteFileResponse {
 // Get the block of the file.
 message GetBlockLocationsRequest {
     required string path = 1;
+    // Inspection grants no permission to read managed data. HSM-aware SDKs
+    // obtain a protected handle through HsmControl before data I/O.
+    optional bool metadata_only = 2 [default = false];
 }
 
 message GetBlockLocationsResponse {

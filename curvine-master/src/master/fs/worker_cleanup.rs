@@ -1,7 +1,9 @@
 // Copyright 2026 OPPO. Licensed under the Apache License, Version 2.0.
 //! Replicated cleanup checkpoints and repair demand. These are advisory work
 //! records: only a newly qualified local loss token permits location deletion.
-use super::{worker_manager::WorkerLossToken, MasterFilesystem};
+use super::{
+    master_filesystem::BackgroundScope, worker_manager::WorkerLossToken, MasterFilesystem,
+};
 use crate::master::{
     authority_gate::Class,
     meta::{CacheInvalidationResult, FsDir, InodeId},
@@ -466,6 +468,7 @@ impl MasterFilesystem {
     ) -> FsResult<bool> {
         self.committed_background_in_term(
             Some(term),
+            BackgroundScope::Locations,
             || {
                 let mut dir = self.fs_dir.write();
                 let wm = self.worker_manager.read();

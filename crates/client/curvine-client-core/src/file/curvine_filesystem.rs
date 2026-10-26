@@ -85,6 +85,15 @@ impl CurvineFileSystem {
         self.fs_context.rpc_conf()
     }
 
+    /// Flush advisory read closes before graceful shutdown or external mutation.
+    pub async fn flush_hsm_read_closes(&self) -> FsResult<()> {
+        self.fs_context.flush_hsm_read_closes().await
+    }
+
+    pub fn pending_hsm_read_closes(&self) -> usize {
+        self.fs_context.pending_hsm_read_closes()
+    }
+
     pub async fn hsm_control(
         &self,
         request: curvine_proto::HsmControlRequest,
@@ -149,6 +158,14 @@ impl CurvineFileSystem {
 
     pub async fn open(&self, path: &Path) -> FsResult<FsReader> {
         let file_blocks = match super::hsm_io::open_managed(self, path).await? {
+            super::hsm_io::OpenedFile::ManagedFast(handle, deadline) => {
+                return FsReader::new_managed_fast(
+                    path.clone(),
+                    self.fs_context.clone(),
+                    handle,
+                    deadline,
+                );
+            }
             super::hsm_io::OpenedFile::Managed(handle, deadline) => {
                 return FsReader::new_managed(
                     path.clone(),

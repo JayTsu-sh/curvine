@@ -464,14 +464,32 @@ impl MasterHandler {
         let req: GetBlockLocationsRequest = ctx.parse_header()?;
         ctx.set_audit(Some(req.path.to_string()), None);
 
-        let blocks = Self::process_get_block_locations(self.fs.clone(), req.path)?;
+        let blocks = Self::process_get_block_locations(
+            self.fs.clone(),
+            req.path,
+            req.metadata_only.unwrap_or(false),
+        )?;
         let rep_header = GetBlockLocationsResponse {
             blocks: ProtoUtils::file_blocks_to_pb(blocks),
         };
         ctx.response(rep_header)
     }
 
-    fn process_get_block_locations(fs: MasterFilesystem, path: String) -> FsResult<FileBlocks> {
+    fn process_get_block_locations(
+        fs: MasterFilesystem,
+        path: String,
+        metadata_only: bool,
+    ) -> FsResult<FileBlocks> {
+        if fs.conf.hsm_enabled && !metadata_only {
+            let dir = fs.fs_dir.read();
+            let input =
+                crate::master::meta::inode::InodePath::resolve(dir.root_ptr(), &path, &dir.store)?;
+            if let Some(inode) = input.get_last_inode() {
+                if dir.hsm_record(inode.id())?.is_some() {
+                    return err_box!("managed reads require an HSM-aware SDK and a read grant");
+                }
+            }
+        }
         fs.get_block_locations(path)
     }
 
@@ -1026,6 +1044,15 @@ impl Drop for MasterHandler {
 impl MessageHandler for MasterHandler {
     type Error = FsError;
 
+    fn is_liveness(&self, msg: &Message) -> bool {
+        // The Worker sends incremental reports synchronously after a heartbeat.
+        // Both must progress before its next heartbeat can run. Replication
+        // results share that client's connection too. Keep their admission
+        // bounded independently of ordinary traffic without changing runtimes.
+        let code = RpcCode::from(msg.code());
+        Self::uses_actor_rt(code) || code == RpcCode::ReportBlockReplicationResult
+    }
+
     fn is_sync(&self, msg: &Message) -> bool {
         let code = RpcCode::from(msg.code());
         if self.fs.conf.hsm_enabled && (hsm_mutating_rpc(code) || hsm_metadata_read_rpc(code)) {
@@ -1190,14 +1217,9 @@ impl MessageHandler for MasterHandler {
                 RpcCode::HsmControl => {
                     let request: HsmControlRequest = ctx.parse_header()?;
                     let fs = self.fs.clone();
-                    // Keep the shared gate owned by this task even if the
-                    // client disconnects while an HSM command is in flight.
-                    let response = tokio::spawn(async move { fs.hsm_control(request).await })
-                        .await
-                        .unwrap_or_else(|error| {
-                            log::error!("HSM control task vanished: {error}; aborting master");
-                            std::process::abort();
-                        });
+                    // ConcurrentHandler retains accepted futures through disconnect;
+                    // durable controls additionally own their coordinator tasks.
+                    let response = fs.hsm_control(request).await;
                     ctx.response(response)
                 }
                 v if self.fs.conf.hsm_enabled && hsm_metadata_read_rpc(v) => {
@@ -1230,6 +1252,7 @@ impl MessageHandler for MasterHandler {
                                 gate,
                                 writer.clone(),
                                 self.fs.master_monitor.clone(),
+                                Some(self.fs.clone()),
                             )
                             .await?;
                         let term = ticket.admitted().await?;
@@ -1277,6 +1300,51 @@ impl MessageHandler for MasterHandler {
             None
         }
     }
+}
+
+/// HSM volume mutations are serialized through committed publication.
+/// Metadata queries separately share bounded ReadIndex qualification.
+fn hsm_mutating_rpc(code: RpcCode) -> bool {
+    matches!(
+        code,
+        RpcCode::Mkdir
+            | RpcCode::CreateFile
+            | RpcCode::OpenFile
+            | RpcCode::AddBlock
+            | RpcCode::CompleteFile
+            | RpcCode::CreateFilesBatch
+            | RpcCode::AddBlocksBatch
+            | RpcCode::CompleteFilesBatch
+            | RpcCode::Delete
+            | RpcCode::Free
+            | RpcCode::Rename
+            | RpcCode::SetAttr
+            | RpcCode::Symlink
+            | RpcCode::Link
+            | RpcCode::ResizeFile
+            | RpcCode::AssignWorker
+            | RpcCode::SetLock
+            | RpcCode::Mount
+            | RpcCode::UnMount
+    )
+}
+
+/// Logical namespace reads must not observe a leader before its committed
+/// prefix applies, nor a speculative legacy mutation. Capacity/heartbeats keep
+/// their derived-state paths and do not recursively join this coordinator.
+fn hsm_metadata_read_rpc(code: RpcCode) -> bool {
+    matches!(
+        code,
+        RpcCode::FileStatus
+            | RpcCode::Exists
+            | RpcCode::ListStatus
+            | RpcCode::ListOptions
+            | RpcCode::GetBlockLocations
+            | RpcCode::GetFileBlockDetails
+            | RpcCode::GetLock
+            | RpcCode::GetMountInfo
+            | RpcCode::GetMountTable
+    )
 }
 
 #[cfg(test)]
@@ -1689,49 +1757,4 @@ mod tests {
         Master::init_test_metrics();
         Master::get_metrics().unwrap()
     }
-}
-
-/// HSM volume mutations are serialized through committed publication.
-/// Metadata queries separately share bounded ReadIndex qualification.
-fn hsm_mutating_rpc(code: RpcCode) -> bool {
-    matches!(
-        code,
-        RpcCode::Mkdir
-            | RpcCode::CreateFile
-            | RpcCode::OpenFile
-            | RpcCode::AddBlock
-            | RpcCode::CompleteFile
-            | RpcCode::CreateFilesBatch
-            | RpcCode::AddBlocksBatch
-            | RpcCode::CompleteFilesBatch
-            | RpcCode::Delete
-            | RpcCode::Free
-            | RpcCode::Rename
-            | RpcCode::SetAttr
-            | RpcCode::Symlink
-            | RpcCode::Link
-            | RpcCode::ResizeFile
-            | RpcCode::AssignWorker
-            | RpcCode::SetLock
-            | RpcCode::Mount
-            | RpcCode::UnMount
-    )
-}
-
-/// Logical namespace reads must not observe a leader before its committed
-/// prefix applies, nor a speculative legacy mutation. Capacity/heartbeats keep
-/// their derived-state paths and do not recursively join this coordinator.
-fn hsm_metadata_read_rpc(code: RpcCode) -> bool {
-    matches!(
-        code,
-        RpcCode::FileStatus
-            | RpcCode::Exists
-            | RpcCode::ListStatus
-            | RpcCode::ListOptions
-            | RpcCode::GetBlockLocations
-            | RpcCode::GetFileBlockDetails
-            | RpcCode::GetLock
-            | RpcCode::GetMountInfo
-            | RpcCode::GetMountTable
-    )
 }

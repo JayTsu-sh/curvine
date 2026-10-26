@@ -1,8 +1,14 @@
 # HSM 性能优化方案
 
-状态：继续实施，**尚未完成全部优化，也未开始本轮原版对比**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open、非递归 SetAttr 和非递归 Delete 接入真实 committed 命令与 SDK 会话去重，rename/替换/交换、递归 SetAttr/Delete 和无 UFS 的 TTL Delete 已接入紧凑 committed 命令；少数其他 RPC 仍走过渡微批。owned 路径共享投影资格，相邻 prepared Native/HSM 条目可共用 proposal；各类请求共用 ReadIndex 资格队列，投影资格已增加 Recall/前台/后台加权调度；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+2026-10-26 95% 目标补充：进一步减少已提交 file inode / HSM 条件头部的读取和解析，保留 follower 的已知空 access 投影，并将关闭历史改为前台/后台有界回收。相同条件三轮配对中，空文件/4KiB、首次遍历（含完整尾部落盘）/持续负载、C1/C16 八项中位数全部超过 upstream 的 95%，合入前复审版本最低 100.6%；单轮仍有波动，单并发 P99 仍较高。426 项测试通过；读保护时长、约一秒观察 RPO、换主等待和持久确认条件保持。见[95% 验收报告](open-close-performance.md)。下面 10 月 23 日的数字保留为历史记录。
 
-## 当前实现与完成门槛（2026-10-22）
+2026-10-23 第二阶段补充：已实现受保护的 `fast_v1` 普通 SDK 读取。在线关闭文件的打开不逐次提交 Raft；正向 ReadIndex 资格、任期绑定的限时授权、换主全局等待及稳定变更前的访问尾部排空共同保护数据。按本次确认，atime/访问 revision 改为健康运行时约一秒内的批量持久化；数据代际、发布和回收仍保持已提交语义。协议、升级要求及验证边界见[受保护快速读取](fast-read-protection.md)。三轮配对中持续负载（含最终排空）达到原版的 101%–168%；首次遍历且全落盘的 4KiB 单并发仍为 88.8%，详见[本轮报告](open-close-performance.md#historical-measurements-2026-10-23)，下面的历史阶段说明不代表本轮最终验收。
+
+2026-10-23 补充：RPC 服务层已接通 Master 的连接内有界并发，并合并缓冲 RPC 帧的写入。默认单连接、16 并发打开并关闭空文件的三轮配对诊断中位数由 152.4 提至 578.3 ops/s，P99 由 113.98 降至 35.69 ms；原有持久读取授权与关闭语义保持。24 项 RPC 测试及两项集群回归通过，三 Master/一 Worker 回归已固定单连接以防再次依赖大连接池掩盖串行分派。实现、普通路径检查与测量口径见[连接内并发修复](rpc-concurrency.md)。
+
+状态：**普通在线打开/关闭的本机三轮中位数已通过上述八项 95% 目标；尚未完成其他全部优化和规模验收**。P1 普通日志自身回执、originating term 约束和单 RPC 普通 open 已实现；P2 已将 `mkdir`、创建/覆盖、块分配、flush/close、可写 open、非递归 SetAttr 和非递归 Delete 接入真实 committed 命令与 SDK 会话去重，rename/替换/交换、递归 SetAttr/Delete 和无 UFS 的 TTL Delete 已接入紧凑 committed 命令；少数其他 RPC 仍走过渡微批。owned 路径共享投影资格，相邻 prepared Native/HSM 条目可共用 proposal；各类请求共用 ReadIndex 资格队列，投影资格已增加 Recall/前台/后台加权调度；读取资格已改为 Raft ReadIndex，等待本地 apply 而不追加空日志。P3 读取保护批处理、基准记录/高频访问状态拆分及在线读增量原子写批已经实现；P4 已实现后台快照筛查、版本/当前路径复核、小批入队及共享预算汇总；P5 已实现范围清理、读结果有界保留和二进制 Worker 通道/连接复用。其余边界及验收状态见下表。
+
+## 当前实现与完成门槛（2026-10-23）
 
 | 项目 | 本轮代码行为 | 仍需完成或验收 |
 |---|---|---|
@@ -10,10 +16,10 @@
 | 普通 open | `open_path` 在关闭 HSM 时直接返回普通块布局；不缓存“关闭”判断，避免换主后使用过期能力 | 全部优化结束后统一基准 |
 | 原生写入链路 | SDK 使用 `NativeMutation` 稳定身份；mkdir/create/overwrite/add-block/flush/close/write-open/Resize/AssignWorker/非递归 SetAttr/Delete 及三个公开批量写 API，最多 32 条 owned 命令一次 Native journal 提交；Leader/Follower 同样条件应用、保存并返回原始响应；关闭 HSM 的卷一 RPC 执行普通路径 | 其余原生 RPC 及混合排序、去掉过渡 gate；当前 HSM 卷的此入口支持无 UFS namespace，UFS 挂载内返回持久失败，不跳过 UFS 同步后伪装成功 |
 | 非递归属性 | 只检查和修改目标 inode，不遍历/刷新后代；文件属性与稳定 HSM 记录、候选索引、ctime、原始结果同批发布；最多 32 条 Native 命令合批 | 递归属性使用紧凑 committed 输入和整批原子发布；大子树内存/时延仍需验收 |
-| 读取保护 | 最多 32 个条件读命令合并一次日志；普通在线读增量再合并为一次 RocksDB WriteBatch；批内读者/版本按顺序合并；原生 atime 每 inode 只写最终值 | 混合原生/HSM 统一提交；真实故障注入 |
+| 读取保护 | 新 SDK 在线读取使用受保护 fast_v1；每次打开/关闭立即更新服务 Leader 的观察，聚合检查点最多 2048 行/1 MiB 原子持久化；旧客户端和离线读取保留最多 32 命令的持久读批次 | 见快速读取协议及本轮换主/重放测试；百万规模未验收 |
 | 大文件读结果 | 超过 32 块时，持久化原始授权、原始 FileStatus 和逻辑布局摘要；即时回复仍返回完整块位置，重试在有效保护下重建位置，不延长授权 | 大布局/复制位置变化及故障重试验收；此项减少结果编码量，不等同于吞吐收益 |
 | 高频状态 | `record:{inode}` 保存稳定实体；`access:{inode}` 保存 base/version、revision、atime、readers；稳定变更原子合并并删除 overlay | 精确 atime 仍迁移候选索引、仍更新原生 inode，语义保持 |
-| 租约 | 任期内单调时间；`read-clock:v1` 持久时间下界；新任期/恢复时对既有读者保守等待 120 秒；SDK 截止期从发请求时计算 | 节点暂停、墙钟跳变与换主的端到端组合故障测试；无日志 delegation 未启用 |
+| 租约 | fast_v1 的正向读资格最多缓存一秒，授权不晚于资格采样后 119 秒到期；既有 namespace 换主/恢复全局等待 120 秒，含持久读者表为空的情况；SDK 使用包含 suspend 的 CLOCK_BOOTTIME，并在实际读前后检查 | 全集群升级 v10 格式及配套 SDK；健康时约一秒访问观察 RPO；异常时安全优先、可能背压或拒绝变更 |
 | 策略筛查 | 提交前缀后固定 RocksDB 快照，后台最多 4 个扫描；每页软预算 10 ms/2 MiB（允许首条进展），最多 256 行；不填充 RocksDB block cache | 前台持续 I/O 下的百万 namespace 验收；已增加后台加权资格，仍需验收实际 P99 |
 | 策略入队 | 每批最多 16 个候选；重新检查 policy/run、record version、当前路径、读保护和共享预算 | 已用无日志 ReadIndex 建立前后读取资格；P2 完成后缩短跨提交 gate |
 | 空扫描页 | 手动纯查询不记工作流结果；周期页面只条件提交 cursor/pressure，通过 apply 回执返回，无永久 outcome/binding；真正入队继续持久保存结果 | 新旧日志/checkpoint 及取消/丢回执回归 |

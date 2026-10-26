@@ -77,9 +77,10 @@ impl MasterFilesystem {
         let page = work.await.map_err(io)??;
         let wait = Instant::now();
         let _serial = gate
-            .enter(crate::master::authority_gate::Class::Background, true)
+            .enter(crate::master::authority_gate::Class::Background, false)
             .await;
         self.hsm_read_barrier().await?;
+        self.hsm_before_stable_underheld().await?;
         let current = self.fs_dir.read().hsm_namespace().map_err(io)?;
         let current = current.ok_or(HsmError::Fenced)?;
         validate_context(&context, &current)?;

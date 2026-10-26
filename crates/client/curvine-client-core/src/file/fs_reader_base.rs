@@ -27,6 +27,7 @@ use std::mem;
 use std::sync::Arc;
 
 pub struct FsReaderBase {
+    allow_short_circuit: bool,
     path: Path,
     fs_context: Arc<FsContext>,
     file_blocks: SearchFileBlocks,
@@ -51,6 +52,7 @@ impl FsReaderBase {
             BuildHasherDefault::<FxHasher>::default(),
         );
         Self {
+            allow_short_circuit: fs_context.conf.client.short_circuit,
             path,
             fs_context,
             file_blocks: SearchFileBlocks::new(file_blocks),
@@ -64,6 +66,10 @@ impl FsReaderBase {
 
     pub fn disable_cache_handles(&mut self) {
         self.cache_limit = 0;
+    }
+
+    pub(crate) fn disable_short_circuit(&mut self) {
+        self.allow_short_circuit = false;
     }
 
     pub fn remaining(&self) -> i64 {
@@ -147,15 +153,23 @@ impl FsReaderBase {
     }
 
     pub async fn complete(&mut self) -> FsResult<()> {
+        let mut error = None;
         if let Some(mut reader) = self.cur_reader.take() {
-            reader.complete().await?;
+            if let Err(e) = reader.complete().await {
+                error.get_or_insert(e);
+            }
         }
         // Clean all cached readers.
         for (_, mut reader) in self.cache_readers.drain() {
-            reader.complete().await?;
+            if let Err(e) = reader.complete().await {
+                error.get_or_insert(e);
+            }
         }
 
-        Ok(())
+        match error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     async fn update_reader(&mut self, cur: Option<BlockReader>, cache: bool) -> FsResult<()> {
@@ -193,7 +207,13 @@ impl FsReaderBase {
 
                     None => {
                         // Create a new block reader
-                        BlockReader::new(self.fs_context.clone(), loc.clone(), block_off).await?
+                        BlockReader::new_with_short_circuit(
+                            self.fs_context.clone(),
+                            loc.clone(),
+                            block_off,
+                            self.allow_short_circuit,
+                        )
+                        .await?
                     }
                 };
                 self.update_reader(Some(new_reader), false).await?;

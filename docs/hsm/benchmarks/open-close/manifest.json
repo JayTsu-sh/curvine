@@ -1,0 +1,100 @@
+{
+  "binaries": {
+    "upstream": {
+      "sha256": "eeef49b4bb9fb9c356c6908df6911cc801ee1ce4956d1a6070450cfa6118463b"
+    },
+    "hsm": {
+      "sha256": "c97af0ef092591e6362b9ba8b4f3784a0b4e69fd38927d158cf1cbb26f61e3f1"
+    }
+  },
+  "rounds": 3,
+  "files": 4096,
+  "steady_seconds": 6.0,
+  "concurrency": [
+    1,
+    16
+  ],
+  "file_bytes": [
+    0,
+    4096
+  ],
+  "harness_sha256": "a75c8477d612481a876f7c5f22c0a430a65c14809f58324a434bf697d3e55c57",
+  "topology": "3 Masters + 1 Worker, TCP/Raft, one Master connection, one fresh process per case; no UFS or short circuit",
+  "timing": "foreground open+complete, FIFO client close drain and the same two namespace RPCs in both cases; HSM namespace admission persists the access tail",
+  "cold_pass": "one open per file after a stable-operation cache invalidation; RocksDB/OS caches may be warm",
+  "revision": "Post-review implementation based on ed27bcda6aca17bc1493ffe1dc88b8c14597a0d3; all five runtime review findings fixed.",
+  "upstream_revision": "96bd16632e496ebbcab73c6c6f13bcbcc26220b6",
+  "build_command": "cargo build --locked --offline --release -p curvine-server --example hsm_fast_read_stages --features benchmark-hsm -j4",
+  "benchmark_features": {
+    "benchmark-hsm": true,
+    "hsm-scale-test": false
+  },
+  "changed_rust_proto_sha256": {
+    "crates/client/curvine-client-core/src/block/block_reader.rs": "b974f95efebd225bed4f54b9fb36e2271b6e01092db92045d2f902f6f9a757b3",
+    "crates/client/curvine-client-core/src/block/block_reader_remote.rs": "c8c0f4968bacd0763348c24f6097081d0d0a37d3b2c0d1f2b46ba954ee7dc5b3",
+    "crates/client/curvine-client-core/src/file/curvine_filesystem.rs": "7c40cb1420b6d1e46d5e205d3dbe530918c9982eadd12fe44e79df50b5eacb7c",
+    "crates/client/curvine-client-core/src/file/fs_client.rs": "19d25d10584db0e32ff48837ed2df190ba50b86547b8bca6b22a9d95a17db530",
+    "crates/client/curvine-client-core/src/file/fs_context.rs": "a368570faf93b463782188fd0ac760be124e37846fb494ac13f086059b750aec",
+    "crates/client/curvine-client-core/src/file/fs_reader.rs": "6dcf7df14cdc0a2097fd078602852c738ddc623f44138d757dc2d851d79ff625",
+    "crates/client/curvine-client-core/src/file/fs_reader_base.rs": "be45e1ba971072a0f2066bc47f3bb3d788df6f0419f2624f9e8a0238363bd906",
+    "crates/client/curvine-client-core/src/file/fs_reader_buffer.rs": "69381f5a04e630c80bd8c511a8d3ec5293967a7cd5cbaa593f32bf2d9715a95a",
+    "crates/client/curvine-client-core/src/file/fs_reader_parallel.rs": "f63d5f3b54baccdb6b9d9e378ac41e147e4cf4651a3eaaa0c68da80774a7c9bb",
+    "crates/client/curvine-client-core/src/file/hsm_io.rs": "68386ba0a2bdb6acc801822b3ecc02a2f332083d93c9d38815953887afe77c17",
+    "crates/client/curvine-client-core/src/file/hsm_read_cleanup.rs": "1d987ac6140b7a05cbe6be395acc1a4f423f0984c02489a4fddae30b5d0cd38b",
+    "crates/client/curvine-client-core/src/file/mod.rs": "6c8cc7fb252f306f9ee38c82bd2a130a8cc4e64506faf59457230c07633c740a",
+    "crates/client/curvine-client-core/src/file/native_commit.rs": "f3feed8f675bffe9200bf3f510f999b45014d72acd1098d776bacdc061f5a5b7",
+    "crates/common/curvine-model/src/hsm/native.rs": "0a5f16417f154c57f06f88c903282f78de35c34f342f10e776b3767d868ecdfb",
+    "crates/common/curvine-model/src/hsm/native/read_wire.rs": "8b8e9c5e628db4977bbab458e79ea1a09e241cfd322ffe8e8ecc150136dd5373",
+    "crates/common/curvine-proto/proto/master.proto": "d2a7956f4095122ce5bf840ec20712922e1cb5c2d7d928de5e377fd1b377f6e5",
+    "crates/core/curvine-sys/src/lease_time.rs": "ffcde863fce12a29062d015e9958d9e7a1592fad9f4773d4c9a628d6d89a5ccc",
+    "crates/core/curvine-sys/src/lib.rs": "05006dc5963ce60b4f25d468305a52805fbbbaf11e75f887651f144e24ca43ce",
+    "crates/core/rpc/src/handler/concurrent_handler.rs": "e638765cb00d5fbc125f93409bad92b89d615c2785c383d0ed526ab8765f367b",
+    "crates/core/rpc/src/handler/message_handler.rs": "a7dce9ab39d2736131b36491458742c6c022b9fa1596e21c69f6517cc7d52231",
+    "crates/core/rpc/src/handler/mod.rs": "11cdd098b5f7bcf69f8a994b23ba52d3980c1413215b6754308b533b3f88b4a1",
+    "crates/core/rpc/src/handler/stream_handler.rs": "d7eb97c095b16945f6571d0f061bc2a555b9283749d384cdbc69e261df724cf8",
+    "crates/core/rpc/src/handler/write_frame.rs": "e881738e422472b45c88dad08cc2d94c1dfbf3be20fbadef83f41ee99c1f6191",
+    "crates/core/rpc/src/server/rpc_server.rs": "a9c999c2841d135815a742cf5572e484db489b51d4db8bdb6655d700a4f2a855",
+    "crates/core/rpc/tests/concurrent_dispatch_test.rs": "5936506389b037390539ac2c04350f672c3cbab8056f899eb76075029c92265b",
+    "crates/metadata/curvine-raft/src/raft/raft_node.rs": "2130cdbf77414d74e15c3cc30596275848bfcae328f6782d85d5e4b496a30e4e",
+    "curvine-master/src/master/authority_gate.rs": "027cdb0f67f010abf41cfce0ac55dd1c990d0d80c3ae5ad9dc8e830d27b39195",
+    "curvine-master/src/master/committed/authority.rs": "6442b08057607c880f9d727ead7482a2b30af8f54839c747537a4d7bb9fae8d7",
+    "curvine-master/src/master/committed/commands.rs": "d8cefed90729ffd7f9efab6bda11f92c3230933445b2006cc2dd110720a5799c",
+    "curvine-master/src/master/committed/coordinator.rs": "c638a425aa652eb7755121242c4355e4e2e79e93cea100e73ff60a7896073f78",
+    "curvine-master/src/master/committed/input.rs": "a6e6b7940981c81599e985acbb7a1502ad70d77a8c9b993defb2f8779305bb50",
+    "curvine-master/src/master/committed/namespace.rs": "bb2699d30ecbb624afdd452cba3c0122c9b3ef80574f42449f31fd0db451443a",
+    "curvine-master/src/master/committed/namespace_tests.rs": "4c715d52de4a3d967f6adec2e3f7ae1652582d64b7c2e4a68ee52d38fecd5524",
+    "curvine-master/src/master/fs/master_filesystem.rs": "44f987cd74ede1b69d52dad1b90ed8f2dc8d26e0456a2b94c1895c15b6b884be",
+    "curvine-master/src/master/fs/worker_cleanup.rs": "05ff812b13d9f50abe3e9c91d237ecb91c31ff0a01a2143eddfbf3b11c5f7f76",
+    "curvine-master/src/master/hsm.rs": "e63c379dbf33b42d1cf7c63ca6ac59dd649ec0d3e06c594bd51b525c2aff203a",
+    "curvine-master/src/master/hsm/access_checkpoint.rs": "655203f38a9ff606755739ca13b0689c76678ae30921768c96c49b6cb8e16bf4",
+    "curvine-master/src/master/hsm/conditional.rs": "87f0023f925120a0abedb8131911326fa4e7511ce8954b91cd6e564fb9c53107",
+    "curvine-master/src/master/hsm/ordinary.rs": "58e73ffd669e07b19822a442dbf0e016dc41e74cac7e5291dfb0889c280ee921",
+    "curvine-master/src/master/hsm/read_apply.rs": "e30b21011d978071917ca363d344e73c82e72867e11fbbc62e3c42b53caaccfe",
+    "curvine-master/src/master/hsm/read_batch.rs": "9329e77090c6a5e37eaebb33698429f6a3e304472dcb453517822fe0eb35e8ab",
+    "curvine-master/src/master/hsm/read_clock.rs": "bd493539bd464b53f9e94195c601ad8a414e268f0352448e8dbfef18fa5137b9",
+    "curvine-master/src/master/hsm/read_history.rs": "90edb06929792024ade302f21c0a89c437679fbb88aca357153e605ad926c8d0",
+    "curvine-master/src/master/hsm/read_protection.rs": "b18d0cc0d630761badb1f92b93b49cd6690dd4f3351fb3f1ab57c23233bcd4ab",
+    "curvine-master/src/master/hsm/scale_fixture.rs": "cc26474404d9866e3dac49168dc13b86226d65e7a4a1be045e9e622151d17227",
+    "curvine-master/src/master/hsm/scale_tests.rs": "65afcf8d36035c5524854e6ae4f8915c328ae79fb88665c0b0bc1a6dbbc95deb",
+    "curvine-master/src/master/hsm/scan.rs": "63a5cfbb70bf834199e54634de6c975bd503b0daa9dc468c57c306405a4ce337",
+    "curvine-master/src/master/hsm/turn.rs": "e0eed93548a93e27653ae00a596691c7e3054db07bce3ac8f3ee438634684dd2",
+    "curvine-master/src/master/journal/journal_loader.rs": "1b11f981ea1e228b8abe5a9bbe200790d6bd5c29b08d109b50306ddac9d20662",
+    "curvine-master/src/master/journal/journal_writer.rs": "a57f4ef15ef916a1880cc143052a9967e191ab1504b9b8d547bf313149738e47",
+    "curvine-master/src/master/journal/mutation_batcher.rs": "891d8d8bea1a2c882dde9025519da14ccba311f03c7fe2aa3655cd8ffa9af776",
+    "curvine-master/src/master/master_handler.rs": "a94ab9e56838a99027c451fc75cfecda9b846e170ee0487684c505cbcc69196f",
+    "curvine-master/src/master/meta/fs_dir.rs": "7a8ed1011b30397a4233f3d3b1ccadc0bfa4662583962fb31808dd2c09d77061",
+    "curvine-master/src/master/meta/store/inode_store.rs": "d1182e2ebefc3ca0f69d0c191d141f34ee4faf433ff2c8c61b593f9f2c2fe6ff",
+    "curvine-master/src/master/meta/store/rocks_inode_store.rs": "2352a66dc216b04a3c81b58cfdfacdc978e5d889fb1e23744c1e54b1edecca95",
+    "curvine-server/examples/hsm_overhead.rs": "57093aca33743b1085529f046bf519a77aed413f8fc357f0c95ef9f06617719e",
+    "curvine-server/src/test/mini_cluster.rs": "94f741b0e0ec6bff835adb3c7bfc75e263e7a5633a2d267f6161fb62b7f15e21",
+    "curvine-server/tests/hsm_optimization_test.rs": "db47f1e91d3f5b396ca6ef14dfc465a0a8018c73194793afe1b2829c9f306900",
+    "docs/hsm/benchmarks/open-close/hsm_fast_read_stages.rs": "a75c8477d612481a876f7c5f22c0a430a65c14809f58324a434bf697d3e55c57"
+  },
+  "acceptance": {
+    "all_eight_median_ratios_at_least_95_percent": true,
+    "minimum_ratio": 1.0056724873203575,
+    "timed_results": 48,
+    "errors": 0
+  },
+  "archive_note": "Binary paths and machine-local database/log directories are omitted. The harness writes complete actual cluster configs and logs for every reproduction."
+}

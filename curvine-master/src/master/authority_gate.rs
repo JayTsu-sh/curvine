@@ -124,7 +124,29 @@ impl Drop for Waiting {
 }
 impl AuthorityGate {
     pub async fn read(self: &Arc<Self>) -> AuthorityGuard {
+        if let Some(guard) = self.try_read() {
+            return guard;
+        }
         self.enter(Class::Foreground, true).await
+    }
+    fn try_read(self: &Arc<Self>) -> Option<AuthorityGuard> {
+        let slot = self.slots[Class::Foreground as usize]
+            .clone()
+            .try_acquire_owned()
+            .ok()?;
+        let mut state = self.state.lock().unwrap();
+        if state.writer
+            || state.readers >= MAX_SHARED
+            || state.queues.iter().any(|queue| !queue.is_empty())
+        {
+            return None;
+        }
+        state.readers += 1;
+        Some(AuthorityGuard {
+            gate: self.clone(),
+            shared: true,
+            _slot: slot,
+        })
     }
     pub async fn write(self: &Arc<Self>) -> AuthorityGuard {
         self.enter(Class::Foreground, false).await

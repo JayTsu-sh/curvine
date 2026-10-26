@@ -4,17 +4,19 @@ use crate::master::meta::{inode::Inode, store::InodeWriteBatch};
 use curvine_model::{FileBlocks, FileType};
 
 pub(super) fn index_key(record: &Record) -> Vec<u8> {
-    let state = match record.state.residency {
+    access_index_key(
+        &record.state.residency,
+        record.atime_ms,
+        &record.state.data.entity.entity,
+    )
+}
+pub(super) fn access_index_key(residency: &Residency, atime: i64, entity: &str) -> Vec<u8> {
+    let state = match residency {
         Residency::Online => 'o',
         Residency::Dual => 'd',
         Residency::Offline => 'f',
     };
-    format!(
-        "\u{3}hsm:candidate:{state}:{:020}:{}",
-        record.atime_ms.max(0),
-        record.state.data.entity.entity
-    )
-    .into_bytes()
+    format!("\u{3}hsm:candidate:{state}:{:020}:{entity}", atime.max(0)).into_bytes()
 }
 pub(crate) fn write_record(
     batch: &mut InodeWriteBatch,
@@ -24,20 +26,19 @@ pub(crate) fn write_record(
     crate::master::committed::stage_record_retirements(batch, old, record)?;
     let index = index_key(record);
     let old_index = old.map(index_key);
-    let bytes = pack(record)?;
+    let id = record.state.data.entity.entity.parse()?;
+    let bytes_len = batch.hsm_put_record(id, record)?;
     if let Ok(metrics) = crate::master::Master::get_metrics() {
         metrics
             .hsm_record_write_bytes
             .with_label_values(&["base"])
-            .inc_by(bytes.len() as i64);
+            .inc_by(bytes_len as i64);
     }
-    batch.hsm_put(
-        &record_key(record.state.data.entity.entity.parse()?),
-        &bytes,
-    )?;
-    if old.is_some_and(|old| old.access_base.is_some()) {
-        batch.hsm_delete(&access_key(record.state.data.entity.entity.parse()?))?;
+    let deleted_access = old.is_some_and(|old| old.access_base.is_some());
+    if deleted_access {
+        batch.hsm_delete(&access_key(id))?;
     }
+    batch.cache_hsm_access_absence(id, deleted_access)?;
     if old_index.as_ref() != Some(&index) {
         if let Some(old_index) = old_index {
             batch.hsm_delete(&old_index)?;
@@ -85,14 +86,13 @@ pub(super) fn write_access(
         atime_ms: record.atime_ms,
         readers: record.readers.clone(),
     };
-    let bytes = pack(&access)?;
+    let bytes_len = batch.hsm_put_access(id, &access)?;
     if let Ok(metrics) = crate::master::Master::get_metrics() {
         metrics
             .hsm_record_write_bytes
             .with_label_values(&["access"])
-            .inc_by(bytes.len() as i64);
+            .inc_by(bytes_len as i64);
     }
-    batch.hsm_put(&access_key(id), &bytes)?;
     let previous = index_key(old);
     let next = index_key(record);
     if previous != next {
@@ -258,7 +258,7 @@ impl FsDir {
             let mut batch = self.get_rocks_store().new_batch();
             batch.hsm_put(
                 format!("\u{3}hsm:enroll:{}", file.id()).as_bytes(),
-                &pack(&file.id())?,
+                &pack(file.id())?,
             )?;
             return batch.commit();
         };
@@ -387,6 +387,9 @@ impl FsDir {
         self.hsm_guard_id(id)
     }
 }
+// This short-lived preparation value moves directly into the batch. Keep the
+// owned transaction together rather than adding allocations before submission.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum OrdinaryPlan {
     Immediate(Value),
     Transaction(Transaction, Option<Record>, Option<Value>),
@@ -513,7 +516,7 @@ impl MasterFilesystem {
             if record.state.residency == Residency::Offline {
                 // One Recall per offline state revision, shared by concurrent readers.
                 let iid = blake3::hash(
-                    &pack(&(&record.state.data, record.state.revision, "access-recall"))
+                    &pack((&record.state.data, record.state.revision, "access-recall"))
                         .map_err(io)?,
                 )
                 .to_hex()
@@ -599,7 +602,9 @@ impl MasterFilesystem {
                 record.atime_ms = record.atime_ms.max(now);
                 record.state.revision += 1;
                 blocks.status.atime = record.atime_ms;
-                record.readers.retain(|_, expiry| read_time.active(*expiry));
+                record
+                    .readers
+                    .retain(|_, expiry| read_time.protection().active(*expiry));
                 record
                     .readers
                     .insert(reader.clone(), lease_now + read_clock::LEASE_MS);

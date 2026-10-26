@@ -89,7 +89,7 @@ impl ReadBatcher {
             }
             let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
             let wait = std::time::Instant::now();
-            let _serial = gate.read().await;
+            let _serial = gate.write().await;
             let metrics = crate::master::Master::get_metrics()
                 .expect("Master metrics initialized before read coordinator");
             metrics
@@ -140,6 +140,7 @@ impl ReadBatcher {
         let ready_at = std::time::Instant::now();
         let readiness = async {
             fs.hsm_read_barrier().await?;
+            fs.hsm_before_stable_underheld().await?;
             if term != fs.master_monitor.journal_term.load(Ordering::Acquire) {
                 return Err(HsmError::Unknown("read batch leader term changed".into()));
             }

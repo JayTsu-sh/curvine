@@ -12,17 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::message::Builder;
 use crate::message::Message;
 use bytes::BytesMut;
 use curvine_core_error::{CommonErrorExt, ErrorExt};
-use curvine_io::DataSlice;
-use curvine_runtime::runtime::Runtime;
-use log::info;
+use curvine_io::{DataSlice, IOResult};
+use curvine_runtime::runtime::{RpcRuntime, Runtime};
+use log::{debug, info};
 use std::future::Future;
+use std::sync::Arc;
 
 /// Message Processors.
 pub trait MessageHandler: Send + Sync + 'static {
     type Error: ErrorExt + Send + Sync;
+
+    /// Requests needed to maintain peer liveness may use the server's separate
+    /// bounded admission reserve. Ordinary requests retain the global limit.
+    fn is_liveness(&self, _msg: &Message) -> bool {
+        false
+    }
 
     // Whether to process requests synchronously, default to true
     #[allow(unused)]
@@ -46,6 +54,37 @@ pub trait MessageHandler: Send + Sync + 'static {
 
     fn get_rt(&self, _msg: &Message) -> Option<&Runtime> {
         None
+    }
+}
+
+/// Dispatch without owning the connection. Both stream and concurrent servers
+/// use the same execution runtime and wire error conversion.
+pub(super) async fn dispatch<M: MessageHandler>(
+    rt: &Runtime,
+    handler: Arc<M>,
+    request: Message,
+) -> IOResult<Message> {
+    if handler.is_sync(&request) {
+        let rt = handler.get_rt(&request).unwrap_or(rt);
+        let handler = handler.clone();
+        Ok(rt
+            .spawn_blocking(move || match handler.handle(&request) {
+                Err(error) => {
+                    debug!("handler request {} error: {}", request.req_id(), error);
+                    request.error_ext(&error)
+                }
+                Ok(response) => response,
+            })
+            .await?)
+    } else {
+        let protocol = request.protocol;
+        Ok(match handler.async_handle(request).await {
+            Ok(response) => response,
+            Err(error) => {
+                debug!("handler request {} error: {}", protocol.req_id, error);
+                Builder::protocol(protocol).build().error_ext(&error)
+            }
+        })
     }
 }
 

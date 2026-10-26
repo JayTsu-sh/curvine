@@ -541,9 +541,11 @@ impl FsClient {
         Ok(rep.results)
     }
 
+    /// Inspect layout metadata; use CurvineFileSystem::open for protected data reads.
     pub async fn get_block_locations(&self, path: &Path) -> FsResult<FileBlocks> {
         let header = GetBlockLocationsRequest {
             path: path.encode(),
+            metadata_only: Some(true),
         };
 
         let rep: GetBlockLocationsResponse = self.rpc(RpcCode::GetBlockLocations, header).await?;
@@ -904,11 +906,7 @@ impl FsClient {
                 | RpcCode::CreateFilesBatch
                 | RpcCode::AddBlocksBatch
                 | RpcCode::CompleteFilesBatch
-        ) {
-            self.native_rpc(code, header).await
-        } else if matches!(
-            code,
-            RpcCode::Delete
+                | RpcCode::Delete
                 | RpcCode::SetAttr
                 | RpcCode::Rename
                 | RpcCode::ResizeFile

@@ -109,6 +109,7 @@ impl ReaderAdapter {
 }
 
 pub struct BlockReader {
+    allow_short_circuit: bool,
     inner: ReaderAdapter,
     locs: Vec<WorkerAddress>,
     block: ExtendedBlock,
@@ -121,18 +122,32 @@ impl BlockReader {
         located: LocatedBlock,
         off: i64,
     ) -> CommonResult<Self> {
+        let allow = fs_context.conf.client.short_circuit;
+        Self::new_with_short_circuit(fs_context, located, off, allow).await
+    }
+
+    pub(crate) async fn new_with_short_circuit(
+        fs_context: Arc<FsContext>,
+        located: LocatedBlock,
+        off: i64,
+        allow_short_circuit: bool,
+    ) -> CommonResult<Self> {
         let len = located.block.len;
 
-        let locs = Self::sort_locs(
-            located.locs,
-            fs_context.conf.client.short_circuit,
-            &fs_context.client_addr,
-        )?;
+        let locs = Self::sort_locs(located.locs, allow_short_circuit, &fs_context.client_addr)?;
 
-        let adapter =
-            Self::get_reader(&locs, located.block.clone(), fs_context.clone(), off, len).await?;
+        let adapter = Self::get_reader(
+            &locs,
+            located.block.clone(),
+            fs_context.clone(),
+            off,
+            len,
+            allow_short_circuit,
+        )
+        .await?;
 
         let reader = Self {
+            allow_short_circuit,
             inner: adapter,
             locs,
             block: located.block,
@@ -173,13 +188,14 @@ impl BlockReader {
         fs_context: Arc<FsContext>,
         off: i64,
         len: i64,
+        allow_short_circuit: bool,
     ) -> FsResult<ReaderAdapter> {
         if locs.is_empty() && block.alloc_opts.is_some() {
             let reader = BlockReaderHole::new(fs_context.clone(), block.clone(), off, len)?;
             return Ok(Hole(reader));
         }
 
-        let short_circuit = fs_context.conf.client.short_circuit;
+        let short_circuit = allow_short_circuit;
         for loc in locs {
             let short_circuit = short_circuit && fs_context.is_local_worker(loc);
             let res: FsResult<ReaderAdapter> = {
@@ -265,6 +281,7 @@ impl BlockReader {
                         self.fs_context.clone(),
                         self.pos(),
                         self.len(),
+                        self.allow_short_circuit,
                     )
                     .await?;
                 }
@@ -280,10 +297,7 @@ impl BlockReader {
     }
 
     pub async fn complete(&mut self) -> FsResult<()> {
-        if let Err(e) = self.inner.complete().await {
-            warn!("fail to complete reader: {}", e);
-        }
-        Ok(())
+        self.inner.complete().await
     }
 
     pub fn remaining(&self) -> i64 {

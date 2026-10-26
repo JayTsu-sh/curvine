@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::message_handler::dispatch;
 use crate::handler::{Frame, MessageHandler};
-use crate::message::{Builder, Message};
+use crate::message::Message;
 use crate::ServerConf;
 use curvine_io::IOResult;
-use curvine_runtime::runtime::{RpcRuntime, Runtime};
-use log::debug;
+use curvine_runtime::runtime::Runtime;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -71,29 +71,7 @@ impl<F: Frame, M: MessageHandler> StreamHandler<F, M> {
     }
 
     pub async fn call(&mut self, request: Message) -> IOResult<()> {
-        let response = if self.handler.is_sync(&request) {
-            let rt = self.handler.get_rt(&request).unwrap_or(&self.rt);
-
-            let handler = self.handler.clone();
-            rt.spawn_blocking(move || match handler.handle(&request) {
-                Err(e) => {
-                    debug!("handler request {} error: {}", request.req_id(), e);
-                    request.error_ext(&e)
-                }
-
-                Ok(v) => v,
-            })
-            .await?
-        } else {
-            let protocol = request.protocol;
-            match self.handler.async_handle(request).await {
-                Ok(v) => v,
-                Err(e) => {
-                    debug!("handler request {} error: {}", protocol.req_id, e);
-                    Builder::protocol(protocol).build().error_ext(&e)
-                }
-            }
-        };
+        let response = dispatch(&self.rt, self.handler.clone(), request).await?;
 
         if response.not_empty() {
             self.frame.send(response).await

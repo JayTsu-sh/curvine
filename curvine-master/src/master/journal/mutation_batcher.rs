@@ -89,6 +89,7 @@ impl HsmMutationBatcher {
         gate: Arc<crate::master::authority_gate::AuthorityGate>,
         writer: Arc<JournalWriter>,
         monitor: MasterMonitor,
+        fs: Option<crate::master::fs::MasterFilesystem>,
     ) -> FsResult<MutationTicket> {
         // Backpressure occurs before any speculative namespace mutation.
         let slot = self
@@ -118,7 +119,7 @@ impl HsmMutationBatcher {
         if spawn {
             let coordinator = self.clone();
             crate::master::spawn_authority("legacy native", async move {
-                coordinator.run(gate, writer, monitor).await
+                coordinator.run(gate, writer, monitor, fs).await
             });
         }
         Ok(MutationTicket {
@@ -156,6 +157,7 @@ impl HsmMutationBatcher {
         gate: Arc<crate::master::authority_gate::AuthorityGate>,
         writer: Arc<JournalWriter>,
         monitor: MasterMonitor,
+        fs: Option<crate::master::fs::MasterFilesystem>,
     ) {
         loop {
             // Yield once so already-ready callers can join without adding a
@@ -172,6 +174,17 @@ impl HsmMutationBatcher {
                 return;
             };
             let term = monitor.journal_term.load(Ordering::Acquire);
+            if let Some(fs) = &fs {
+                if let Err(error) = async {
+                    fs.hsm_read_barrier().await?;
+                    fs.hsm_before_stable_underheld().await
+                }
+                .await
+                {
+                    log::debug!("legacy mutation admission unavailable: {error}");
+                    continue;
+                }
+            }
             let mut completed = Vec::with_capacity(batch.len());
             for request in batch {
                 if !monitor.is_active()

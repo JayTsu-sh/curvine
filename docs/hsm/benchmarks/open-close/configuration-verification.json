@@ -1,0 +1,56 @@
+[
+  {
+    "case": "r1-hsm",
+    "hsm_enabled": true,
+    "masters": 3,
+    "workers": 1,
+    "master_connections": 1,
+    "short_circuit": false,
+    "configuration_sha256": "983d0fc54258e6cc1b0842d5f270b6475bf53a2fad6dc240054fabf71bdf3838"
+  },
+  {
+    "case": "r1-upstream",
+    "hsm_enabled": false,
+    "masters": 3,
+    "workers": 1,
+    "master_connections": 1,
+    "short_circuit": false,
+    "configuration_sha256": "a1aa73e4cf7e32d1c6aaba9450c47e7bed39ae93537dd7a77edac68613f5f303"
+  },
+  {
+    "case": "r2-hsm",
+    "hsm_enabled": true,
+    "masters": 3,
+    "workers": 1,
+    "master_connections": 1,
+    "short_circuit": false,
+    "configuration_sha256": "87ed585c66efb9ae98aad2239a47c25aefacef7e237d3086edce232d30eed882"
+  },
+  {
+    "case": "r2-upstream",
+    "hsm_enabled": false,
+    "masters": 3,
+    "workers": 1,
+    "master_connections": 1,
+    "short_circuit": false,
+    "configuration_sha256": "4bea5174be1f4c262884a5e695e3ed3efd0b82eba18042e04fa4b57efc922761"
+  },
+  {
+    "case": "r3-hsm",
+    "hsm_enabled": true,
+    "masters": 3,
+    "workers": 1,
+    "master_connections": 1,
+    "short_circuit": false,
+    "configuration_sha256": "fd46e301a83f29cb6b7e389030afc91a030a19bc597b901e3d55f0e2b6515a20"
+  },
+  {
+    "case": "r3-upstream",
+    "hsm_enabled": false,
+    "masters": 3,
+    "workers": 1,
+    "master_connections": 1,
+    "short_circuit": false,
+    "configuration_sha256": "7b92d0fc8fd60b1aecd78f41879344790d0264802889277707c581d849ed40f7"
+  }
+]

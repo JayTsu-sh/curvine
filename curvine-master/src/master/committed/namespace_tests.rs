@@ -68,7 +68,7 @@ fn rename(
     dst: &str,
     flags: RenameFlags,
 ) -> CommonResult<Vec<u8>> {
-    Ok(SerdeUtils::serialize(&command(
+    SerdeUtils::serialize(&command(
         fs,
         curvine_fs_api::RpcCode::Rename,
         RenameRequest {
@@ -76,7 +76,7 @@ fn rename(
             dst: dst.into(),
             flags: flags.value(),
         },
-    )?)?)
+    )?)
 }
 
 #[test]
@@ -113,12 +113,11 @@ fn compact_rename_moves_full_subtrees_exchanges_and_keeps_original_results() -> 
         "/moved/other"
     );
     assert!(
-        replay(
+        !replay(
             &fs,
             &rename(&fs, "/right", "/right/sub/cycle", RenameFlags::new(0))?
         )?
         .success
-            == false
     );
     assert_eq!(fs.file_status("/right/sub/data")?.id, id);
     Ok(())
@@ -291,7 +290,7 @@ fn ttl_candidates_recheck_metadata_identity_ownership_and_actual_children() -> C
             metadata: super::super::view::inode_fingerprint(&observed)?,
         });
         input.fingerprint = ttl_fingerprint(input.fingerprint, input.ttl.as_ref());
-        Ok(SerdeUtils::serialize(&input)?)
+        SerdeUtils::serialize(&input)
     };
     let obsolete = make_ttl()?;
     file(&fs, "/ttl/child")?;

@@ -15,24 +15,48 @@
 use crate::master::meta::inode::InodeView;
 use crate::master::meta::LockMeta;
 use curvine_core_error::CommonResult;
+use curvine_model::hsm::native::{ReadState, Record};
 use curvine_model::{BlockLocation, FileLock, MountInfo};
 use curvine_rocksdb::{DBConf, DBEngine, ReadOptions, RocksIterator, RocksUtils};
 use curvine_rocksdb::{
     DBIteratorWithThreadMode, DBPinnableSlice, Error, WriteBatchWithTransaction, DB,
 };
 use curvine_runtime::common::SerdeUtils as Serde;
-use std::collections::HashMap;
+use lru::LruCache;
+use parking_lot::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(test)]
 thread_local! {
     static LOCATION_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[derive(Clone)]
+enum CachedHsm {
+    Base(Option<Box<Record>>),
+    Access(Option<Box<ReadState>>),
+}
+fn is_hsm_projection(key: &[u8]) -> bool {
+    key.starts_with(b"\x03hsm:record:") || key.starts_with(b"\x03hsm:access:")
+}
+
 pub struct RocksInodeStore {
     pub(crate) db: DBEngine,
+    file_inode_epoch: AtomicU64,
+    file_inode_cache: Mutex<LruCache<i64, InodeView>>,
+    hsm_access_apply: Mutex<()>,
+    hsm_cache_epoch: AtomicU64,
+    hsm_cache: Mutex<LruCache<Vec<u8>, CachedHsm>>,
+    locations_epoch: AtomicU64,
+    locations_cache: Mutex<(u64, LruCache<i64, Vec<BlockLocation>>)>,
 }
 
 impl RocksInodeStore {
+    const FILE_CACHE_ENTRIES: usize = 8192;
+    const FILE_CACHE_MAX_BYTES: usize = 16 * 1024;
+
     pub const CF_INODES: &'static str = "inodes";
     pub const CF_EDGES: &'static str = "edges";
     pub const CF_BLOCK: &'static str = "block";
@@ -49,6 +73,8 @@ impl RocksInodeStore {
     pub(crate) const CF_HSM_CONDITIONAL_FORMAT: &'static str = "hsm_native_v7";
     pub(crate) const CF_LIFECYCLE_CONDITIONAL_FORMAT: &'static str = "hsm_native_v8";
     pub(crate) const CF_WORKER_CLEANUP_FORMAT: &'static str = "hsm_native_v9";
+
+    pub(crate) const CF_ACCESS_CHECKPOINT_FORMAT: &'static str = "hsm_native_v10";
 
     pub const PREFIX_MOUNT: u8 = 0x01;
     pub const PREFIX_LOCK: u8 = 0x02;
@@ -97,7 +123,18 @@ impl RocksInodeStore {
             .add_cf(Self::CF_LOCATION)
             .add_cf(Self::CF_COMMON);
         let db = DBEngine::new(conf, format)?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            file_inode_epoch: AtomicU64::new(0),
+            file_inode_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(Self::FILE_CACHE_ENTRIES).unwrap(),
+            )),
+            hsm_access_apply: Mutex::new(()),
+            hsm_cache_epoch: AtomicU64::new(0),
+            hsm_cache: Mutex::new(LruCache::new(NonZeroUsize::new(65_536).unwrap())),
+            locations_epoch: AtomicU64::new(0),
+            locations_cache: Mutex::new((0, LruCache::new(NonZeroUsize::new(65_536).unwrap()))),
+        })
     }
 
     pub fn get_child_ids(
@@ -193,6 +230,129 @@ impl RocksInodeStore {
         Ok(result)
     }
 
+    /// Cache only derived block-to-worker IDs, never worker health or endpoints.
+    /// Namespace guards serialize committed location changes with fast opens.
+    pub(crate) fn get_locations_many_cached(
+        &self,
+        ids: impl IntoIterator<Item = i64>,
+    ) -> CommonResult<HashMap<i64, Vec<BlockLocation>>> {
+        let epoch = self.locations_epoch.load(Ordering::Acquire);
+        let mut result = HashMap::new();
+        let mut missing = Vec::new();
+        {
+            let mut cache = self.locations_cache.lock();
+            for id in ids {
+                match cache.1.get(&id) {
+                    Some(locations) => {
+                        result.insert(id, locations.clone());
+                    }
+                    None => missing.push(id),
+                }
+            }
+        }
+        if !missing.is_empty() {
+            let loaded = self.get_locations_many(missing)?;
+            let mut cache = self.locations_cache.lock();
+            // A concurrent committed writer invalidates this fill. The caller
+            // can still use the lookup's snapshot, but it must not be cached.
+            if self.locations_epoch.load(Ordering::Acquire) == epoch && cache.0 == epoch {
+                for (&id, locations) in &loaded {
+                    cache.1.put(id, locations.clone());
+                }
+            }
+            result.extend(loaded);
+        }
+        Ok(result)
+    }
+
+    /// Access-only applies may share the namespace read guard, but committed
+    /// checkpoint CAS and publication remain serialized with each other.
+    pub(crate) fn lock_hsm_access_apply(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.hsm_access_apply.lock()
+    }
+
+    fn cached_hsm(&self, key: &[u8], access: bool) -> CommonResult<CachedHsm> {
+        let epoch = self.hsm_cache_epoch.load(Ordering::Acquire);
+        if let Some(value) = self.hsm_cache.lock().get(key).cloned() {
+            return Ok(value);
+        }
+        let bytes = self.hsm_get(key)?;
+        let value = if access {
+            CachedHsm::Access(
+                bytes
+                    .map(|bytes| serde_json::from_slice(&bytes).map(Box::new))
+                    .transpose()?,
+            )
+        } else {
+            CachedHsm::Base(
+                bytes
+                    .map(|bytes| serde_json::from_slice(&bytes).map(Box::new))
+                    .transpose()?,
+            )
+        };
+        let mut cache = self.hsm_cache.lock();
+        if self.hsm_cache_epoch.load(Ordering::Acquire) == epoch {
+            cache.put(key.to_vec(), value.clone());
+        }
+        Ok(value)
+    }
+
+    /// Inspect already decoded committed values without cloning a full Record.
+    /// Both keys must be known; missing entries use the caller's DB fallback.
+    /// The callback is synchronous and cannot retain references to cache values.
+    pub(crate) fn with_cached_hsm_parts<T>(
+        &self,
+        id: i64,
+        inspect: impl FnOnce(&Record, Option<&ReadState>) -> T,
+    ) -> Option<T> {
+        let cache = self.hsm_cache.lock();
+        let CachedHsm::Base(Some(base)) = cache.peek(format!("\x03hsm:record:{id}").as_bytes())?
+        else {
+            return None;
+        };
+        let CachedHsm::Access(access) = cache.peek(format!("\x03hsm:access:{id}").as_bytes())?
+        else {
+            return None;
+        };
+        Some(inspect(base, access.as_deref()))
+    }
+
+    /// Parsed projections remain derived from committed RocksDB values. The
+    /// caller holds the namespace guard across the base/access pair.
+    pub(crate) fn hsm_record_parts(
+        &self,
+        id: i64,
+    ) -> CommonResult<Option<(Record, Option<ReadState>)>> {
+        let CachedHsm::Base(base) =
+            self.cached_hsm(format!("\x03hsm:record:{id}").as_bytes(), false)?
+        else {
+            unreachable!("base key has an access value");
+        };
+        let Some(base) = base else { return Ok(None) };
+        let CachedHsm::Access(access) =
+            self.cached_hsm(format!("\x03hsm:access:{id}").as_bytes(), true)?
+        else {
+            unreachable!("access key has a base value");
+        };
+        Ok(Some((*base, access.map(|access| *access))))
+    }
+
+    fn reset_projection_caches(&self, locations: bool) {
+        let mut cache = self.hsm_cache.lock();
+        cache.clear();
+        self.hsm_cache_epoch.fetch_add(1, Ordering::Release);
+        drop(cache);
+        if locations {
+            let mut files = self.file_inode_cache.lock();
+            files.clear();
+            self.file_inode_epoch.fetch_add(1, Ordering::Release);
+            drop(files);
+            let mut cache = self.locations_cache.lock();
+            cache.1.clear();
+            cache.0 = self.locations_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        }
+    }
+
     /// Discard the untrusted projection before committed journal recovery.
     /// A range tombstone bounds this operation independently of record count.
     /// It is ordered before replay writes, so replayed keys inside the range
@@ -203,6 +363,7 @@ impl RocksInodeStore {
         let cf = self.db.cf(Self::CF_COMMON)?;
         batch.delete_range_cf(cf, b"\x03hsm:", b"\x03hsm;");
         self.db.write_batch(batch)?;
+        self.reset_projection_caches(false);
         log::info!(
             "reset HSM projection: one range tombstone, elapsed_us={}",
             started.elapsed().as_micros()
@@ -236,6 +397,11 @@ impl RocksInodeStore {
             batch.delete_range_cf(common, [prefix], [prefix + 1]);
         }
         self.db.write_batch(batch)?;
+        // Do not leave these full-schema tombstones in the active memtables
+        // throughout replay/serving. Every point lookup would otherwise build
+        // a range iterator, including for newly replayed native inode rows.
+        self.reset_projection_caches(true);
+        self.db.flush_mem(true)?;
         log::info!(
             "reset committed metadata projection: seven range tombstones, elapsed_us={}",
             started.elapsed().as_micros()
@@ -265,7 +431,7 @@ impl RocksInodeStore {
     }
 
     pub fn new_batch(&self) -> InodeWriteBatch<'_> {
-        InodeWriteBatch::new(&self.db)
+        InodeWriteBatch::new(self)
     }
 
     pub fn inodes_iter(&self) -> CommonResult<RocksIterator<'_>> {
@@ -277,18 +443,33 @@ impl RocksInodeStore {
             .prefix_scan(Self::CF_EDGES, RocksUtils::i64_to_bytes(id))
     }
 
+    /// Only bounded file values are retained. Every result is owned; callers
+    /// cannot mutate the committed cache through an inode returned for editing.
+    pub(crate) fn cached_file_inode(&self, id: i64) -> Option<InodeView> {
+        self.file_inode_cache.lock().get(&id).cloned()
+    }
+
+    fn cacheable_file_inode(inode: &InodeView, encoded_bytes: usize) -> bool {
+        matches!(inode, InodeView::File(_)) && encoded_bytes <= Self::FILE_CACHE_MAX_BYTES
+    }
+
     pub fn get_inode(&self, id: i64) -> CommonResult<Option<InodeView>> {
+        let epoch = self.file_inode_epoch.load(Ordering::Acquire);
+        if let Some(inode) = self.cached_file_inode(id) {
+            return Ok(Some(inode));
+        }
         let bytes = self
             .db
             .get_cf(Self::CF_INODES, RocksUtils::i64_to_bytes(id))?;
-        match bytes {
-            None => Ok(None),
-
-            Some(v) => {
-                let inode: InodeView = Serde::deserialize(&v)?;
-                Ok(Some(inode))
+        let Some(bytes) = bytes else { return Ok(None) };
+        let inode: InodeView = Serde::deserialize(&bytes)?;
+        if Self::cacheable_file_inode(&inode, bytes.len()) {
+            let mut cache = self.file_inode_cache.lock();
+            if self.file_inode_epoch.load(Ordering::Acquire) == epoch {
+                cache.put(id, inode.clone_metadata());
             }
         }
+        Ok(Some(inode))
     }
 
     pub fn batched_multi_get_inodes<'a, K, I>(
@@ -552,13 +733,25 @@ impl Iterator for InodeChildrenIter<'_> {
 
 pub struct InodeWriteBatch<'a> {
     db: &'a DBEngine,
+    store: &'a RocksInodeStore,
+    file_inode_updates: HashMap<i64, Option<InodeView>>,
+    reset_file_inode_cache: bool,
+    locations_changed: HashSet<i64>,
+    hsm_updates: HashMap<Vec<u8>, Option<CachedHsm>>,
+    reset_hsm_cache: bool,
     batch: WriteBatchWithTransaction<false>,
 }
 
 impl<'a> InodeWriteBatch<'a> {
-    pub fn new(db: &'a DBEngine) -> Self {
+    fn new(store: &'a RocksInodeStore) -> Self {
         Self {
-            db,
+            db: &store.db,
+            store,
+            file_inode_updates: HashMap::new(),
+            reset_file_inode_cache: false,
+            locations_changed: HashSet::new(),
+            hsm_updates: HashMap::new(),
+            reset_hsm_cache: false,
             batch: WriteBatchWithTransaction::<false>::default(),
         }
     }
@@ -568,6 +761,14 @@ impl<'a> InodeWriteBatch<'a> {
         K: AsRef<[u8]>,
         V: AsRef<[u8]>,
     {
+        if cf == RocksInodeStore::CF_INODES {
+            match RocksUtils::i64_from_bytes(key.as_ref()) {
+                Ok(id) => {
+                    self.file_inode_updates.insert(id, None);
+                }
+                Err(_) => self.reset_file_inode_cache = true,
+            }
+        }
         let cf = self.db.cf(cf)?;
         self.batch.put_cf(cf, key, value);
         Ok(())
@@ -577,12 +778,21 @@ impl<'a> InodeWriteBatch<'a> {
     where
         K: AsRef<[u8]>,
     {
+        if cf == RocksInodeStore::CF_INODES {
+            match RocksUtils::i64_from_bytes(key.as_ref()) {
+                Ok(id) => {
+                    self.file_inode_updates.insert(id, None);
+                }
+                Err(_) => self.reset_file_inode_cache = true,
+            }
+        }
         let cf = self.db.cf(cf)?;
         self.batch.delete_cf(cf, key);
         Ok(())
     }
 
     pub fn add_location(&mut self, id: i64, loc: &BlockLocation) -> CommonResult<()> {
+        self.locations_changed.insert(id);
         // store with the key of  (block_id, worker_id)
         let key = RocksUtils::i64_u32_to_bytes(id, loc.worker_id);
         let value = Serde::serialize(loc)?;
@@ -598,7 +808,11 @@ impl<'a> InodeWriteBatch<'a> {
     pub fn write_inode(&mut self, inode: &InodeView) -> CommonResult<()> {
         let key = RocksUtils::i64_to_bytes(inode.id());
         let value = Serde::serialize(inode)?;
-        self.put_cf(RocksInodeStore::CF_INODES, key, value)
+        let cacheable = RocksInodeStore::cacheable_file_inode(inode, value.len());
+        self.put_cf(RocksInodeStore::CF_INODES, key, value)?;
+        self.file_inode_updates
+            .insert(inode.id(), cacheable.then(|| inode.clone_metadata()));
+        Ok(())
     }
 
     // Add an edge to identify the subordinate relationship between inodes
@@ -626,6 +840,7 @@ impl<'a> InodeWriteBatch<'a> {
 
     // Delete 1 block to store information
     pub fn delete_location(&mut self, id: i64, worker_id: u32) -> CommonResult<()> {
+        self.locations_changed.insert(id);
         let key = RocksUtils::i64_u32_to_bytes(id, worker_id);
         self.delete_cf(RocksInodeStore::CF_BLOCK, key)?;
 
@@ -634,20 +849,116 @@ impl<'a> InodeWriteBatch<'a> {
     }
 
     pub fn hsm_delete(&mut self, key: &[u8]) -> CommonResult<()> {
+        if is_hsm_projection(key) {
+            self.hsm_updates.insert(key.to_vec(), None);
+        }
         self.delete_cf(RocksInodeStore::CF_COMMON, key)
     }
     pub fn hsm_put(&mut self, key: &[u8], value: &[u8]) -> CommonResult<()> {
+        if is_hsm_projection(key) {
+            self.hsm_updates.insert(key.to_vec(), None);
+        }
         self.put_cf(RocksInodeStore::CF_COMMON, key, value)
     }
 
+    /// Publish known absence with a staged stable-record write. Preserve the
+    /// original DB footprint: an already absent overlay needs no tombstone.
+    /// A staged/committed unexpected value stays unknown and is validated by
+    /// the normal DB fallback rather than being hidden by a negative cache hit.
+    pub(crate) fn cache_hsm_access_absence(&mut self, id: i64, deleted: bool) -> CommonResult<()> {
+        let key = format!("\x03hsm:access:{id}").into_bytes();
+        let absent = if deleted {
+            true
+        } else if self.hsm_updates.contains_key(&key) {
+            false
+        } else {
+            self.store.hsm_get(&key)?.is_none()
+        };
+        self.hsm_updates
+            .insert(key, absent.then_some(CachedHsm::Access(None)));
+        Ok(())
+    }
+
+    /// The parsed projection and canonical bytes come from the same value and
+    /// become visible together only after the WriteBatch succeeds.
+    pub(crate) fn hsm_put_record(&mut self, id: i64, record: &Record) -> CommonResult<usize> {
+        let key = format!("\x03hsm:record:{id}").into_bytes();
+        let bytes = serde_json::to_vec(record)?;
+        self.hsm_put(&key, &bytes)?;
+        let mut record = record.clone();
+        record.access_base = None; // serde skips this runtime-only provenance.
+        self.hsm_updates
+            .insert(key, Some(CachedHsm::Base(Some(Box::new(record)))));
+        Ok(bytes.len())
+    }
+
+    pub(crate) fn hsm_put_access(&mut self, id: i64, access: &ReadState) -> CommonResult<usize> {
+        let key = format!("\x03hsm:access:{id}").into_bytes();
+        let bytes = serde_json::to_vec(access)?;
+        self.hsm_put(&key, &bytes)?;
+        self.hsm_updates
+            .insert(key, Some(CachedHsm::Access(Some(Box::new(access.clone())))));
+        Ok(bytes.len())
+    }
+
     pub(crate) fn hsm_delete_range(&mut self, begin: &[u8], end: &[u8]) -> CommonResult<()> {
+        self.reset_hsm_cache = true;
+        self.hsm_updates
+            .retain(|key, _| key.as_slice() < begin || key.as_slice() >= end);
         self.batch
             .delete_range_cf(self.db.cf(RocksInodeStore::CF_COMMON)?, begin, end);
         Ok(())
     }
 
     pub fn commit(self) -> CommonResult<()> {
-        self.db.write_batch(self.batch)
+        self.db.write_batch(self.batch)?;
+        if self.reset_file_inode_cache || !self.file_inode_updates.is_empty() {
+            let mut cache = self.store.file_inode_cache.lock();
+            self.store.file_inode_epoch.fetch_add(1, Ordering::Release);
+            if self.reset_file_inode_cache {
+                cache.clear();
+            }
+            for (id, inode) in self.file_inode_updates {
+                match inode {
+                    Some(inode) => {
+                        cache.put(id, inode);
+                    }
+                    None => {
+                        cache.pop(&id);
+                    }
+                }
+            }
+        }
+        if !self.locations_changed.is_empty() {
+            let mut cache = self.store.locations_cache.lock();
+            cache.0 = self.store.locations_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+            for id in self.locations_changed {
+                cache.1.pop(&id);
+                // Move this derivation to the committed location update. A
+                // failed lookup leaves a miss; the DB write already succeeded.
+                if let Ok(locations) = self.store.get_locations(id) {
+                    cache.1.put(id, locations);
+                }
+            }
+        }
+        if self.reset_hsm_cache || !self.hsm_updates.is_empty() {
+            let mut cache = self.store.hsm_cache.lock();
+            self.store.hsm_cache_epoch.fetch_add(1, Ordering::Release);
+            if self.reset_hsm_cache {
+                cache.clear();
+            }
+            for (key, value) in self.hsm_updates {
+                match value {
+                    Some(value) => {
+                        cache.put(key, value);
+                    }
+                    None => {
+                        cache.pop(&key);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -659,12 +970,99 @@ mod tests {
     use curvine_runtime::common::Utils;
 
     #[test]
+    fn repeated_committed_file_reads_avoid_repeated_rocksdb_gets() -> CommonResult<()> {
+        use crate::master::meta::inode::InodeFile;
+        let directory = tempfile::tempdir()?;
+        let store = RocksInodeStore::new(DBConf::new(directory.path().to_str().unwrap()), true)?;
+        let inode = InodeView::new_file("file".into(), InodeFile::new(42, 1000));
+        let mut batch = store.new_batch();
+        batch.write_inode(&inode)?;
+        batch.commit()?;
+        assert_eq!(store.get_inode(42)?.unwrap().as_file_ref()?.atime, 1000);
+        set_perf_stats(PerfStatsLevel::EnableCount);
+        let mut perf = PerfContext::default();
+        perf.reset();
+        for _ in 0..128 {
+            assert_eq!(store.get_inode(42)?.unwrap().as_file_ref()?.atime, 1000);
+        }
+        let read_bytes = perf.metric(PerfMetric::GetReadBytes);
+        set_perf_stats(PerfStatsLevel::Disable);
+        assert_eq!(
+            read_bytes, 0,
+            "hot committed inode reads still query RocksDB"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn committed_file_read_cache_never_exposes_staged_or_borrowed_changes() -> CommonResult<()> {
+        use crate::master::meta::inode::InodeFile;
+        let directory = tempfile::tempdir()?;
+        let store = RocksInodeStore::new(DBConf::new(directory.path().to_str().unwrap()), true)?;
+        let mut inode = InodeView::new_file("original".into(), InodeFile::new(42, 1000));
+        let mut batch = store.new_batch();
+        batch.write_inode(&inode)?;
+        batch.commit()?;
+        let mut borrowed = store.get_inode(42)?.unwrap();
+        borrowed.as_file_mut()?.atime = 9000;
+        assert_eq!(store.get_inode(42)?.unwrap().as_file_ref()?.atime, 1000);
+        inode.as_file_mut()?.atime = 2000;
+        inode.as_file_mut()?.len = 4096;
+        let mut staged = store.new_batch();
+        staged.write_inode(&inode)?;
+        assert_eq!(store.get_inode(42)?.unwrap().as_file_ref()?.atime, 1000);
+        drop(staged);
+        assert_eq!(store.get_inode(42)?.unwrap().as_file_ref()?.len, 0);
+        let mut committed = store.new_batch();
+        committed.write_inode(&inode)?;
+        committed.commit()?;
+        let actual = store.get_inode(42)?.unwrap();
+        assert_eq!(actual.as_file_ref()?.atime, 2000);
+        assert_eq!(actual.as_file_ref()?.len, 4096);
+        let mut removed = store.new_batch();
+        removed.delete_inode(42)?;
+        removed.commit()?;
+        assert!(store.get_inode(42)?.is_none());
+        let mut recreated = store.new_batch();
+        recreated.write_inode(&inode)?;
+        recreated.commit()?;
+        assert!(store.get_inode(42)?.is_some());
+        store.reset_committed_projection()?;
+        assert!(store.get_inode(42)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn cached_locations_follow_only_committed_changes_and_reset() -> CommonResult<()> {
+        let directory = tempfile::tempdir()?;
+        let store = RocksInodeStore::new(DBConf::new(directory.path().to_str().unwrap()), true)?;
+        let workers = |id| -> CommonResult<Vec<u32>> {
+            Ok(store.get_locations_many_cached([id])?[&id]
+                .iter()
+                .map(|v| v.worker_id)
+                .collect())
+        };
+        assert!(workers(42)?.is_empty());
+        let mut batch = store.new_batch();
+        batch.add_location(42, &BlockLocation::new(100, StorageType::Ssd))?;
+        assert!(workers(42)?.is_empty());
+        batch.commit()?;
+        assert_eq!(workers(42)?, vec![100]);
+        let mut batch = store.new_batch();
+        batch.delete_location(42, 100)?;
+        batch.add_location(42, &BlockLocation::new(101, StorageType::Disk))?;
+        assert_eq!(workers(42)?, vec![100]);
+        batch.commit()?;
+        assert_eq!(workers(42)?, vec![101]);
+        store.reset_committed_projection()?;
+        assert!(workers(42)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn worker_inventory_discovery_seeks_past_dense_block_prefixes() -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
-        let store = RocksInodeStore::new(
-            DBConf::new(directory.path().to_string_lossy().into_owned()),
-            true,
-        )?;
+        let store = RocksInodeStore::new(DBConf::new(directory.path().to_string_lossy()), true)?;
         let mut batch = store.new_batch();
         for worker in [0, 7, 9, u32::MAX] {
             for block in 1..=2050 {
@@ -687,10 +1085,7 @@ mod tests {
     fn lost_worker_location_pages_follow_byte_order_and_bound_the_last_worker_prefix(
     ) -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
-        let store = RocksInodeStore::new(
-            DBConf::new(directory.path().to_string_lossy().into_owned()),
-            true,
-        )?;
+        let store = RocksInodeStore::new(DBConf::new(directory.path().to_string_lossy()), true)?;
         let ids = [0, 1, i64::MAX, i64::MIN, -2, -1];
         let mut batch = store.new_batch();
         for id in ids {
@@ -745,10 +1140,7 @@ mod tests {
     fn lost_worker_locations_remove_both_indexes_across_chunks_without_touching_other_replicas(
     ) -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
-        let store = RocksInodeStore::new(
-            DBConf::new(directory.path().to_string_lossy().into_owned()),
-            true,
-        )?;
+        let store = RocksInodeStore::new(DBConf::new(directory.path().to_string_lossy()), true)?;
         let mut batch = store.new_batch();
         for block in 1..=2050 {
             batch.add_location(block, &curvine_model::BlockLocation::with_id(7))?;
@@ -769,7 +1161,7 @@ mod tests {
     #[test]
     fn hsm_schema_fence_survives_checkpoint_and_rejects_legacy_open() -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
-        let legacy = DBConf::new(directory.path().to_string_lossy().into_owned());
+        let legacy = DBConf::new(directory.path().to_string_lossy());
         let overlay_only = legacy.clone().add_cf(RocksInodeStore::CF_HSM_FORMAT);
         let native_v3 = overlay_only
             .clone()
@@ -789,9 +1181,12 @@ mod tests {
         let native_v8 = native_v7
             .clone()
             .add_cf(RocksInodeStore::CF_LIFECYCLE_CONDITIONAL_FORMAT);
-        let upgraded = native_v8
+        let native_v9 = native_v8
             .clone()
             .add_cf(RocksInodeStore::CF_WORKER_CLEANUP_FORMAT);
+        let upgraded = native_v9
+            .clone()
+            .add_cf(RocksInodeStore::CF_ACCESS_CHECKPOINT_FORMAT);
         let store = RocksInodeStore::new(upgraded.clone(), true)?;
         let checkpoint = store.db.create_checkpoint(1)?;
         drop(store);
@@ -804,6 +1199,7 @@ mod tests {
         assert!(RocksInodeStore::new(native_v6, false).is_err());
         assert!(RocksInodeStore::new(native_v7, false).is_err());
         assert!(RocksInodeStore::new(native_v8, false).is_err());
+        assert!(RocksInodeStore::new(native_v9, false).is_err());
         let mut store = RocksInodeStore::new(upgraded, false)?;
         store.db.restore(checkpoint)?;
         assert!(store
@@ -817,6 +1213,10 @@ mod tests {
         assert!(store
             .db
             .cf(RocksInodeStore::CF_HSM_CONDITIONAL_FORMAT)
+            .is_ok());
+        assert!(store
+            .db
+            .cf(RocksInodeStore::CF_ACCESS_CHECKPOINT_FORMAT)
             .is_ok());
         assert!(store.db.cf(RocksInodeStore::CF_HSM_FORMAT).is_ok());
         assert!(store.db.cf(RocksInodeStore::CF_NATIVE_FORMAT).is_ok());
@@ -832,10 +1232,7 @@ mod tests {
     fn hsm_committed_reset_discards_native_tail_and_replay_can_reuse_its_keys() -> CommonResult<()>
     {
         let directory = tempfile::tempdir()?;
-        let store = RocksInodeStore::new(
-            DBConf::new(directory.path().to_string_lossy().into_owned()),
-            true,
-        )?;
+        let store = RocksInodeStore::new(DBConf::new(directory.path().to_string_lossy()), true)?;
         let mut batch = store.new_batch();
         let root = crate::master::meta::FsDir::create_root();
         batch.write_inode(&root)?;
@@ -849,6 +1246,14 @@ mod tests {
         batch.commit()?;
         store.db.flush(true)?;
         store.reset_committed_projection()?;
+        assert_eq!(
+            store.db.get_db().property_int_value_cf(
+                store.db.cf(RocksInodeStore::CF_INODES)?,
+                "rocksdb.num-entries-active-mem-table"
+            )?,
+            Some(0),
+            "reset tombstones remained in the serving memtable"
+        );
         for name in [
             RocksInodeStore::CF_INODES,
             RocksInodeStore::CF_EDGES,
@@ -890,7 +1295,7 @@ mod tests {
     #[test]
     fn hsm_range_reset_preserves_neighbors_and_replayed_keys_across_reopen() -> CommonResult<()> {
         let directory = tempfile::tempdir()?;
-        let conf = DBConf::new(directory.path().to_string_lossy().into_owned());
+        let conf = DBConf::new(directory.path().to_string_lossy());
         let store = RocksInodeStore::new(conf.clone(), true)?;
         let keep: &[&[u8]] = &[b"\x02hsm:keep", b"\x03hsm", b"\x03hsm;", b"\x04hsm:keep"];
         let mut batch = store.new_batch();

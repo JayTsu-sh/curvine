@@ -45,6 +45,7 @@ pub struct FsDir {
     pub(crate) hsm_control_slots: [Arc<tokio::sync::Semaphore>; 3],
     pub(crate) hsm_metadata_reads: Arc<crate::master::committed::MetadataReads>,
     pub(crate) hsm_read_batcher: Arc<crate::master::hsm::read_batch::ReadBatcher>,
+    pub(crate) hsm_read_protection: Arc<crate::master::hsm::read_protection::ReadProtection>,
     pub(crate) hsm_read_clock: crate::master::hsm::read_clock::ReadClock,
     pub(crate) hsm_mutation_batcher: Arc<HsmMutationBatcher>,
     #[cfg(feature = "hsm-scale-test")]
@@ -123,7 +124,8 @@ impl FsDir {
                 .add_cf(RocksInodeStore::CF_NATIVE_NAMESPACE_FORMAT)
                 .add_cf(RocksInodeStore::CF_HSM_CONDITIONAL_FORMAT)
                 .add_cf(RocksInodeStore::CF_LIFECYCLE_CONDITIONAL_FORMAT)
-                .add_cf(RocksInodeStore::CF_WORKER_CLEANUP_FORMAT);
+                .add_cf(RocksInodeStore::CF_WORKER_CLEANUP_FORMAT)
+                .add_cf(RocksInodeStore::CF_ACCESS_CHECKPOINT_FORMAT);
         }
 
         let store = RocksInodeStore::new(db_conf, conf.format_master)?;
@@ -147,6 +149,7 @@ impl FsDir {
             hsm_metadata_reads: Default::default(),
             hsm_read_batcher: Default::default(),
             hsm_read_clock: Default::default(),
+            hsm_read_protection: Default::default(),
             hsm_mutation_batcher: Default::default(),
             #[cfg(feature = "hsm-scale-test")]
             native_test_drop_receipt: None,
@@ -1164,6 +1167,7 @@ impl FsDir {
     // In production, use restore() with checkpoint path via Raft snapshot.
     pub fn restore_from_rocksdb(&mut self) -> CommonResult<()> {
         self.hsm_read_clock.reset();
+        self.hsm_read_protection.reset();
         let (last_inode_id, root_dir) = self.store.create_tree()?;
         self.root_dir = root_dir;
         self.update_last_inode_id(last_inode_id)?;
@@ -1176,6 +1180,7 @@ impl FsDir {
 
     pub fn restore<T: AsRef<str>>(&mut self, path: T, checkpoint_size: u64) -> CommonResult<()> {
         self.hsm_read_clock.reset();
+        self.hsm_read_protection.reset();
         let mut spend = TimeSpent::new();
         let path = path.as_ref();
 

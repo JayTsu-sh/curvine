@@ -4,6 +4,14 @@
 use super::*;
 
 impl MasterFilesystem {
+    /// Pause only periodic access persistence to exercise uncheckpointed grants.
+    pub fn hsm_test_pause_access_checkpoints(&self, paused: bool) {
+        self.fs_dir
+            .read()
+            .hsm_read_protection
+            .pause_checkpoints(paused);
+    }
+
     /// Build empty files for scale tests under a fresh, reserved test prefix.
     /// Call only while the test cluster has no application clients/controllers.
     pub async fn hsm_test_prefill(&self, root: &str, files: usize) -> HsmResult<Value> {

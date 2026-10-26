@@ -144,7 +144,6 @@ pub(super) fn apply(
                             edits: Default::default(),
                             response: curvine_proto::DeleteResponse {
                                 res: Some(Default::default()),
-                                ..Default::default()
                             }
                             .encode_to_vec(),
                             allocation: None,
@@ -194,7 +193,7 @@ impl MasterFilesystem {
             if let Prior::Cached(result) = prior(&dir, &identity, hash, request.code as i8, time)? {
                 return Ok(transport::response(&identity, result));
             }
-            dir.hsm_read_time()?
+            dir.hsm_read_time()?.protection()
         };
         let admission = (|| -> FsResult<()> {
             let mut paths = vec![input.path()];

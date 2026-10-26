@@ -157,7 +157,7 @@ pub(super) fn apply_creation(
     )?;
     let early = match &session.decision {
         Decision::Cached(value) => {
-            let old: StoredOutcome = SerdeUtils::deserialize(&value)?;
+            let old: StoredOutcome = SerdeUtils::deserialize(value)?;
             if old.format != 1 {
                 return err_box!("unsupported native result format");
             }
@@ -555,7 +555,7 @@ pub(super) fn apply_creation(
                 .into_iter()
                 .map(|(edge, (id, directory, depth))| (depth, edge, (id, directory)))
                 .collect::<Vec<_>>();
-            removals.sort_by(|left, right| right.0.cmp(&left.0));
+            removals.sort_by_key(|removal| std::cmp::Reverse(removal.0));
             for (_, (parent_id, name), (id, directory)) in removals {
                 let parent = directories
                     .get(&parent_id)

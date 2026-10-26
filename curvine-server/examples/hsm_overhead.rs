@@ -7,11 +7,7 @@ use curvine_runtime::runtime::RpcRuntime;
 use curvine_server::test::MiniCluster;
 use futures::{stream, StreamExt, TryStreamExt};
 use serde_json::{json, Value};
-use std::{
-    fs,
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::{fs, path::PathBuf, time::Instant};
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Clone, Copy, Debug)]
@@ -199,7 +195,7 @@ async fn metadata(
     result.push(
         measure(
             fs,
-            &[root.clone()],
+            std::slice::from_ref(&root),
             Action::List,
             64,
             concurrency,
@@ -322,7 +318,7 @@ async fn scan_comparison(fs: &CurvineFileSystem, count: usize, seed_count: usize
             }
             if cursor.is_none() {
                 cycles += 1;
-                tokio::select! {_=&mut stopped=>break,_=tokio::time::sleep(Duration::from_secs(1))=>{}}
+                tokio::select! {_=&mut stopped=>break,_=tokio::time::sleep(std::time::Duration::from_secs(1))=>{}}
             }
         }
         Ok::<Value, Box<dyn std::error::Error + Send + Sync>>(
@@ -449,12 +445,14 @@ fn main() -> Result {
                 .await?,
             );
         }
-        let mut scan = Value::Null;
         #[cfg(feature = "hsm-scale-test")]
-        if mode == "on" && !io_only {
-            scan =
-                scan_comparison(&filesystem, metadata_count, if smoke { 32 } else { 2048 }).await?;
-        }
+        let scan = if mode == "on" && !io_only {
+            scan_comparison(&filesystem, metadata_count, if smoke { 32 } else { 2048 }).await?
+        } else {
+            Value::Null
+        };
+        #[cfg(not(feature = "hsm-scale-test"))]
+        let scan = Value::Null;
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(
             json!({"mode":mode,"results":reports,"policy_interference":scan}),
         )

@@ -27,6 +27,9 @@ pub use self::rpc_codec::RpcCodec;
 mod stream_handler;
 pub use self::stream_handler::StreamHandler;
 
+mod concurrent_handler;
+pub(crate) use self::concurrent_handler::ConcurrentHandler;
+
 mod write_frame;
 pub use self::write_frame::WriteFrame;
 

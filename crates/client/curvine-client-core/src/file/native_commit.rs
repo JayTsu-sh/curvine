@@ -120,6 +120,7 @@ impl FsClient {
     where
         R: Message + Default,
     {
+        self.context.flush_hsm_read_closes().await?;
         let ticket = self.native_commits.ticket(LocalTime::mills());
         let mut request = NativeMutationRequest {
             version: 1,

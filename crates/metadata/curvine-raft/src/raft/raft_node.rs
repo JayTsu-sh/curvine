@@ -680,13 +680,16 @@ where
                 Some(Err(RaftError::other(
                     "read qualification lost its leader term".into(),
                 )))
-            } else if let Some(index) = pending.index.filter(|index| applied >= *index) {
-                Some(Ok(ReadIndexResponse {
-                    term,
-                    applied_index: index,
-                }))
             } else {
-                None
+                pending
+                    .index
+                    .filter(|index| applied >= *index)
+                    .map(|index| {
+                        Ok(ReadIndexResponse {
+                            term,
+                            applied_index: index,
+                        })
+                    })
             };
             if let Some(result) = result {
                 if let Some(callback) = pending.callback.take() {

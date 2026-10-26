@@ -39,6 +39,9 @@ pub type HsmWaiters =
 
 /// Runtime-only queue messages. Commit fences never enter the persisted journal.
 #[derive(Debug)]
+// Keep journal entries owned in the bounded queue without another allocation
+// for every metadata operation; the small variants are infrequent fences.
+#[allow(clippy::large_enum_variant)]
 pub enum JournalMessage {
     Entry {
         entry: JournalEntry,
@@ -961,7 +964,7 @@ mod tests {
             let signal = if id == 0 { mutated.take() } else { None };
             tasks.push(tokio::spawn(async move {
                 let mut ticket = batcher
-                    .enqueue(64, gate, writer.clone(), monitor)
+                    .enqueue(64, gate, writer.clone(), monitor, None)
                     .await
                     .unwrap();
                 let term = ticket.admitted().await.unwrap();
@@ -989,7 +992,10 @@ mod tests {
             let writer = writer.clone();
             let monitor = monitor.clone();
             tokio::spawn(async move {
-                let mut ticket = batcher.enqueue(64, gate, writer, monitor).await.unwrap();
+                let mut ticket = batcher
+                    .enqueue(64, gate, writer, monitor, None)
+                    .await
+                    .unwrap();
                 let _ = queued.send(());
                 let _ = ticket.admitted().await;
             })

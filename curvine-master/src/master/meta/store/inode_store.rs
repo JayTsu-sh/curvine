@@ -823,6 +823,14 @@ impl InodeStore {
         Ok(res)
     }
 
+    pub(crate) fn get_file_locations_cached(
+        &self,
+        file: &InodeFile,
+    ) -> CommonResult<HashMap<i64, Vec<BlockLocation>>> {
+        self.store
+            .get_locations_many_cached(file.blocks.iter().map(|meta| meta.id))
+    }
+
     pub fn get_block_locations(&self, block_id: i64) -> CommonResult<Vec<BlockLocation>> {
         self.store.get_locations(block_id)
     }

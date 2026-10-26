@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+pub mod read_wire;
+
 pub const CHUNK_BYTES: usize = 1024 * 1024;
 pub const HSM_ROOT: &str = "/.hsm";
 pub const MANAGED_ATTR: &str = "curvine.internal.hsm.v1";

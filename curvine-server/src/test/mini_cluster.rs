@@ -279,6 +279,14 @@ impl MiniCluster {
         self.client_rt.clone()
     }
 
+    #[cfg(feature = "hsm-scale-test")]
+    pub fn hsm_test_find_active_master_fs(&self) -> Option<MasterFilesystem> {
+        self.master_entries
+            .iter()
+            .find(|entry| entry.0.master_monitor.is_active())
+            .map(|entry| entry.0.clone())
+    }
+
     pub fn get_active_master_fs(&self) -> MasterFilesystem {
         self.master_entries
             .iter()

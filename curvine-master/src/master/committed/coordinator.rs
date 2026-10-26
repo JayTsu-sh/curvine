@@ -137,17 +137,15 @@ impl NativeCoordinator {
             let namespace = pending[0].input.as_ref().unwrap().namespace_input();
             let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
             let gate_at = std::time::Instant::now();
-            // Both prepared edits and compact namespace inputs are owned.
-            // Namespace expansion reads the current committed state at apply,
-            // including readers admitted after its captured protection clock.
-            // Keep speculative legacy writers excluded until commit/fencing,
-            // without excluding other owned requests while Raft is waiting.
+            // Stable mutations hold exclusive authority through commit/fencing.
+            // Admission drains local access observations before preparation;
+            // namespace expansion still validates the committed state at apply.
             let class = if pending[0].input.as_ref().unwrap().background() {
                 crate::master::authority_gate::Class::Background
             } else {
                 crate::master::authority_gate::Class::Foreground
             };
-            let _shared = gate.enter(class, true).await;
+            let _authority = gate.enter(class, false).await;
             let metrics = Master::get_metrics().expect("Master metrics initialized");
             metrics
                 .hsm_stage_duration
@@ -178,6 +176,9 @@ impl NativeCoordinator {
                 if term == 0 || term != fs.master_monitor.journal_term.load(Ordering::Acquire) {
                     return Err(FsError::common("native preparation leader changed"));
                 }
+                fs.hsm_before_stable_underheld()
+                    .await
+                    .map_err(|error| FsError::common(error.to_string()))?;
                 Ok(ns)
             }
             .await;

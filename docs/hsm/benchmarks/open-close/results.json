@@ -1,0 +1,2162 @@
+[
+  {
+    "close_drain_seconds": 5.3e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000214832,
+    "drain_seconds": 0.0004422760000000192,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.627213997,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 0.300229,
+      "mean": 0.1523079633789057,
+      "p50": 0.14953000000000002,
+      "p99": 0.188851
+    },
+    "mkdir_seconds": 0.000218604,
+    "operations": 4096,
+    "ops_per_sec": 6525.864834302389,
+    "seconds": 0.627656273,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 1,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000223498,
+    "drain_seconds": 0.0005003170000001944,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000127923,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 0.833839,
+      "mean": 0.15671173624871862,
+      "p50": 0.153043,
+      "p99": 0.218336
+    },
+    "mkdir_seconds": 0.000268259,
+    "operations": 38051,
+    "ops_per_sec": 6341.1693706257665,
+    "seconds": 6.00062824,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 1,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.8e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000224343,
+    "drain_seconds": 0.00045541100000001666,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.280623647,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.492105,
+      "mean": 1.0927550732421893,
+      "p50": 1.066034,
+      "p99": 1.394345
+    },
+    "mkdir_seconds": 0.000221762,
+    "operations": 4096,
+    "ops_per_sec": 14572.412577247218,
+    "seconds": 0.281079058,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 1,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 6.4e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000186445,
+    "drain_seconds": 0.0004363239999998214,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.00109272,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 1.834949,
+      "mean": 1.0931968544867867,
+      "p50": 1.057166,
+      "p99": 1.509432
+    },
+    "mkdir_seconds": 0.000242902,
+    "operations": 87724,
+    "ops_per_sec": 14616.941675505454,
+    "seconds": 6.001529044,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 1,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 6.2e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000199104,
+    "drain_seconds": 0.0004207930000000859,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.619826692,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 2.073162,
+      "mean": 0.14942704736328147,
+      "p50": 0.145351,
+      "p99": 0.19384400000000002
+    },
+    "mkdir_seconds": 0.000213514,
+    "operations": 4096,
+    "ops_per_sec": 6603.815572101836,
+    "seconds": 0.620247485,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 1,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.1e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000249602,
+    "drain_seconds": 0.00047478000000023,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.000041421,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 0.5673950000000001,
+      "mean": 0.15929909523681618,
+      "p50": 0.155787,
+      "p99": 0.214893
+    },
+    "mkdir_seconds": 0.000217804,
+    "operations": 37202,
+    "ops_per_sec": 6199.79994284495,
+    "seconds": 6.000516201,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 1,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.4e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000218537,
+    "drain_seconds": 0.000471834999999976,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.340988506,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.61058,
+      "mean": 1.327592453369139,
+      "p50": 1.3418189999999999,
+      "p99": 1.499775
+    },
+    "mkdir_seconds": 0.000243177,
+    "operations": 4096,
+    "ops_per_sec": 11995.536547537156,
+    "seconds": 0.341460341,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 1,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 4.4e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.00018166,
+    "drain_seconds": 0.0003979789999997152,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.001085549,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 2.4182650000000003,
+      "mean": 1.2669858006503614,
+      "p50": 1.2424300000000001,
+      "p99": 1.6197329999999999
+    },
+    "mkdir_seconds": 0.000208417,
+    "operations": 75651,
+    "ops_per_sec": 12605.383260163804,
+    "seconds": 6.001483528,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 1,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 0.000291827,
+    "concurrency": 1,
+    "delete_seconds": 0.006202512,
+    "drain_seconds": 0.08546875300000001,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.53864723,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 4.517555000000001,
+      "mean": 0.13058312744140602,
+      "p50": 0.118126,
+      "p99": 0.580834
+    },
+    "mkdir_seconds": 0.078967261,
+    "operations": 4096,
+    "ops_per_sec": 6562.882719829337,
+    "seconds": 0.624115983,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 9.0,
+        "sum_us": 42437.0
+      },
+      "apply_write": {
+        "count": 9.0,
+        "sum_us": 84123.0
+      },
+      "capture": {
+        "count": 3.0,
+        "sum_us": 4988.0
+      },
+      "commit": {
+        "count": 3.0,
+        "sum_us": 85559.0
+      },
+      "encode": {
+        "count": 3.0,
+        "sum_us": 4405.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "apply_write": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "capture": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "commit": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "encode": {
+        "count": 0.0,
+        "sum_us": 0.0
+      }
+    },
+    "round": 1,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000436391,
+    "concurrency": 1,
+    "delete_seconds": 0.005836079,
+    "drain_seconds": 0.05048966099999941,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000058238,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 5.157102999999999,
+      "mean": 0.1334602018319876,
+      "p50": 0.122483,
+      "p99": 0.511789
+    },
+    "mkdir_seconds": 0.044210215,
+    "operations": 44651,
+    "ops_per_sec": 7379.6622628803025,
+    "seconds": 6.050547899,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 72.0,
+        "sum_us": 519331.0
+      },
+      "apply_write": {
+        "count": 72.0,
+        "sum_us": 1022197.0
+      },
+      "capture": {
+        "count": 24.0,
+        "sum_us": 54390.0
+      },
+      "commit": {
+        "count": 24.0,
+        "sum_us": 857982.0
+      },
+      "encode": {
+        "count": 24.0,
+        "sum_us": 40891.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 9.0,
+        "sum_us": 42437.0
+      },
+      "apply_write": {
+        "count": 9.0,
+        "sum_us": 84123.0
+      },
+      "capture": {
+        "count": 3.0,
+        "sum_us": 4988.0
+      },
+      "commit": {
+        "count": 3.0,
+        "sum_us": 85559.0
+      },
+      "encode": {
+        "count": 3.0,
+        "sum_us": 4405.0
+      }
+    },
+    "round": 1,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000376552,
+    "concurrency": 16,
+    "delete_seconds": 0.006016071,
+    "drain_seconds": 0.10079827600000002,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.152262558,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.6176490000000001,
+      "mean": 0.5550268181152351,
+      "p50": 0.480939,
+      "p99": 1.3689909999999998
+    },
+    "mkdir_seconds": 0.094398968,
+    "operations": 4096,
+    "ops_per_sec": 16185.831427395042,
+    "seconds": 0.253060834,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 78.0,
+        "sum_us": 563070.0
+      },
+      "apply_write": {
+        "count": 76.0,
+        "sum_us": 1079725.0
+      },
+      "capture": {
+        "count": 26.0,
+        "sum_us": 58978.0
+      },
+      "commit": {
+        "count": 26.0,
+        "sum_us": 931653.0
+      },
+      "encode": {
+        "count": 26.0,
+        "sum_us": 43841.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 72.0,
+        "sum_us": 519331.0
+      },
+      "apply_write": {
+        "count": 72.0,
+        "sum_us": 1022197.0
+      },
+      "capture": {
+        "count": 24.0,
+        "sum_us": 54390.0
+      },
+      "commit": {
+        "count": 24.0,
+        "sum_us": 857982.0
+      },
+      "encode": {
+        "count": 24.0,
+        "sum_us": 40891.0
+      }
+    },
+    "round": 1,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000734639,
+    "concurrency": 16,
+    "delete_seconds": 0.006361956,
+    "drain_seconds": 0.09460332999999999,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000363923,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 7.282227,
+      "mean": 0.553789879065293,
+      "p50": 0.461073,
+      "p99": 1.463727
+    },
+    "mkdir_seconds": 0.087490104,
+    "operations": 164072,
+    "ops_per_sec": 26919.258658730647,
+    "seconds": 6.094967253,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 147.0,
+        "sum_us": 1072990.0
+      },
+      "apply_write": {
+        "count": 147.0,
+        "sum_us": 2161602.0
+      },
+      "capture": {
+        "count": 49.0,
+        "sum_us": 115348.0
+      },
+      "commit": {
+        "count": 49.0,
+        "sum_us": 1751317.0
+      },
+      "encode": {
+        "count": 49.0,
+        "sum_us": 85353.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 78.0,
+        "sum_us": 563070.0
+      },
+      "apply_write": {
+        "count": 78.0,
+        "sum_us": 1111062.0
+      },
+      "capture": {
+        "count": 26.0,
+        "sum_us": 58978.0
+      },
+      "commit": {
+        "count": 26.0,
+        "sum_us": 931653.0
+      },
+      "encode": {
+        "count": 26.0,
+        "sum_us": 43841.0
+      }
+    },
+    "round": 1,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000373073,
+    "concurrency": 1,
+    "delete_seconds": 0.008485704,
+    "drain_seconds": 0.08627417800000003,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.529660983,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.295147,
+      "mean": 0.12787893457031244,
+      "p50": 0.120155,
+      "p99": 0.44444900000000004
+    },
+    "mkdir_seconds": 0.077408544,
+    "operations": 4096,
+    "ops_per_sec": 6650.05062115621,
+    "seconds": 0.615935161,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 156.0,
+        "sum_us": 1120486.0
+      },
+      "apply_write": {
+        "count": 156.0,
+        "sum_us": 2252659.0
+      },
+      "capture": {
+        "count": 52.0,
+        "sum_us": 119809.0
+      },
+      "commit": {
+        "count": 52.0,
+        "sum_us": 1824152.0
+      },
+      "encode": {
+        "count": 52.0,
+        "sum_us": 88607.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 147.0,
+        "sum_us": 1072990.0
+      },
+      "apply_write": {
+        "count": 147.0,
+        "sum_us": 2161602.0
+      },
+      "capture": {
+        "count": 49.0,
+        "sum_us": 115348.0
+      },
+      "commit": {
+        "count": 49.0,
+        "sum_us": 1751317.0
+      },
+      "encode": {
+        "count": 49.0,
+        "sum_us": 85353.0
+      }
+    },
+    "round": 1,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000437322,
+    "concurrency": 1,
+    "delete_seconds": 0.006873072,
+    "drain_seconds": 0.05117398299999998,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.000127593,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 4.7717860000000005,
+      "mean": 0.1394284394907451,
+      "p50": 0.127053,
+      "p99": 0.510444
+    },
+    "mkdir_seconds": 0.043854015,
+    "operations": 42572,
+    "ops_per_sec": 7035.180690521909,
+    "seconds": 6.051301576,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 222.0,
+        "sum_us": 1604764.0
+      },
+      "apply_write": {
+        "count": 222.0,
+        "sum_us": 3137060.0
+      },
+      "capture": {
+        "count": 74.0,
+        "sum_us": 169402.0
+      },
+      "commit": {
+        "count": 74.0,
+        "sum_us": 2560260.0
+      },
+      "encode": {
+        "count": 74.0,
+        "sum_us": 122276.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 156.0,
+        "sum_us": 1120486.0
+      },
+      "apply_write": {
+        "count": 156.0,
+        "sum_us": 2252659.0
+      },
+      "capture": {
+        "count": 52.0,
+        "sum_us": 119809.0
+      },
+      "commit": {
+        "count": 52.0,
+        "sum_us": 1824152.0
+      },
+      "encode": {
+        "count": 52.0,
+        "sum_us": 88607.0
+      }
+    },
+    "round": 1,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000405818,
+    "concurrency": 16,
+    "delete_seconds": 0.005847453,
+    "drain_seconds": 0.09629281000000003,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.167887353,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 2.154724,
+      "mean": 0.6046079992675778,
+      "p50": 0.517436,
+      "p99": 1.495967
+    },
+    "mkdir_seconds": 0.090029556,
+    "operations": 4096,
+    "ops_per_sec": 15504.570644087307,
+    "seconds": 0.264180163,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 228.0,
+        "sum_us": 1649724.0
+      },
+      "apply_write": {
+        "count": 226.0,
+        "sum_us": 3195164.0
+      },
+      "capture": {
+        "count": 76.0,
+        "sum_us": 174239.0
+      },
+      "commit": {
+        "count": 76.0,
+        "sum_us": 2629113.0
+      },
+      "encode": {
+        "count": 76.0,
+        "sum_us": 125284.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 222.0,
+        "sum_us": 1604764.0
+      },
+      "apply_write": {
+        "count": 222.0,
+        "sum_us": 3137060.0
+      },
+      "capture": {
+        "count": 74.0,
+        "sum_us": 169402.0
+      },
+      "commit": {
+        "count": 74.0,
+        "sum_us": 2560260.0
+      },
+      "encode": {
+        "count": 74.0,
+        "sum_us": 122276.0
+      }
+    },
+    "round": 1,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.001207314,
+    "concurrency": 16,
+    "delete_seconds": 0.00595362,
+    "drain_seconds": 0.05641037600000054,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.000417171,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 6.129751,
+      "mean": 0.5991020650415732,
+      "p50": 0.49606599999999995,
+      "p99": 1.5629929999999999
+    },
+    "mkdir_seconds": 0.049242317,
+    "operations": 149243,
+    "ops_per_sec": 24640.457209966524,
+    "seconds": 6.056827547,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 294.0,
+        "sum_us": 2168001.0
+      },
+      "apply_write": {
+        "count": 293.0,
+        "sum_us": 4259775.0
+      },
+      "capture": {
+        "count": 98.0,
+        "sum_us": 227161.0
+      },
+      "commit": {
+        "count": 98.0,
+        "sum_us": 3448366.0
+      },
+      "encode": {
+        "count": 98.0,
+        "sum_us": 164571.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 228.0,
+        "sum_us": 1649724.0
+      },
+      "apply_write": {
+        "count": 228.0,
+        "sum_us": 3224061.0
+      },
+      "capture": {
+        "count": 76.0,
+        "sum_us": 174239.0
+      },
+      "commit": {
+        "count": 76.0,
+        "sum_us": 2629113.0
+      },
+      "encode": {
+        "count": 76.0,
+        "sum_us": 125284.0
+      }
+    },
+    "round": 1,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000235008,
+    "concurrency": 1,
+    "delete_seconds": 0.005551954,
+    "drain_seconds": 0.08532247699999995,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.539298139,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 4.76104,
+      "mean": 0.13076251733398453,
+      "p50": 0.117871,
+      "p99": 0.536598
+    },
+    "mkdir_seconds": 0.079528741,
+    "operations": 4096,
+    "ops_per_sec": 6557.580545820473,
+    "seconds": 0.624620616,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 9.0,
+        "sum_us": 44089.0
+      },
+      "apply_write": {
+        "count": 9.0,
+        "sum_us": 81602.0
+      },
+      "capture": {
+        "count": 3.0,
+        "sum_us": 4677.0
+      },
+      "commit": {
+        "count": 3.0,
+        "sum_us": 89041.0
+      },
+      "encode": {
+        "count": 3.0,
+        "sum_us": 5133.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "apply_write": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "capture": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "commit": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "encode": {
+        "count": 0.0,
+        "sum_us": 0.0
+      }
+    },
+    "round": 2,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000463018,
+    "concurrency": 1,
+    "delete_seconds": 0.007622604,
+    "drain_seconds": 0.05808078200000022,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000097135,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 5.003535,
+      "mean": 0.12817594309328093,
+      "p50": 0.118276,
+      "p99": 0.44859899999999997
+    },
+    "mkdir_seconds": 0.049979898,
+    "operations": 46462,
+    "ops_per_sec": 7669.302657754876,
+    "seconds": 6.058177917,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 72.0,
+        "sum_us": 516135.0
+      },
+      "apply_write": {
+        "count": 70.0,
+        "sum_us": 957322.0
+      },
+      "capture": {
+        "count": 24.0,
+        "sum_us": 52194.0
+      },
+      "commit": {
+        "count": 24.0,
+        "sum_us": 832861.0
+      },
+      "encode": {
+        "count": 24.0,
+        "sum_us": 40246.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 9.0,
+        "sum_us": 44089.0
+      },
+      "apply_write": {
+        "count": 9.0,
+        "sum_us": 81602.0
+      },
+      "capture": {
+        "count": 3.0,
+        "sum_us": 4677.0
+      },
+      "commit": {
+        "count": 3.0,
+        "sum_us": 89041.0
+      },
+      "encode": {
+        "count": 3.0,
+        "sum_us": 5133.0
+      }
+    },
+    "round": 2,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000373513,
+    "concurrency": 16,
+    "delete_seconds": 0.006867338,
+    "drain_seconds": 0.106442392,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.158497718,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.627889,
+      "mean": 0.5738274135742187,
+      "p50": 0.4845,
+      "p99": 1.415323
+    },
+    "mkdir_seconds": 0.099192865,
+    "operations": 4096,
+    "ops_per_sec": 15460.097755677689,
+    "seconds": 0.26494011,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 78.0,
+        "sum_us": 562854.0
+      },
+      "apply_write": {
+        "count": 76.0,
+        "sum_us": 1048868.0
+      },
+      "capture": {
+        "count": 26.0,
+        "sum_us": 57331.0
+      },
+      "commit": {
+        "count": 26.0,
+        "sum_us": 909044.0
+      },
+      "encode": {
+        "count": 26.0,
+        "sum_us": 44459.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 72.0,
+        "sum_us": 516135.0
+      },
+      "apply_write": {
+        "count": 72.0,
+        "sum_us": 986349.0
+      },
+      "capture": {
+        "count": 24.0,
+        "sum_us": 52194.0
+      },
+      "commit": {
+        "count": 24.0,
+        "sum_us": 832861.0
+      },
+      "encode": {
+        "count": 24.0,
+        "sum_us": 40246.0
+      }
+    },
+    "round": 2,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000860208,
+    "concurrency": 16,
+    "delete_seconds": 0.00687023,
+    "drain_seconds": 0.0954841360000005,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000334955,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 6.946733,
+      "mean": 0.5522374509330413,
+      "p50": 0.458112,
+      "p99": 1.463283
+    },
+    "mkdir_seconds": 0.087746412,
+    "operations": 165213,
+    "ops_per_sec": 27102.67439595182,
+    "seconds": 6.095819091,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 144.0,
+        "sum_us": 1082452.0
+      },
+      "apply_write": {
+        "count": 144.0,
+        "sum_us": 2176279.0
+      },
+      "capture": {
+        "count": 48.0,
+        "sum_us": 111644.0
+      },
+      "commit": {
+        "count": 48.0,
+        "sum_us": 1763371.0
+      },
+      "encode": {
+        "count": 48.0,
+        "sum_us": 86643.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 78.0,
+        "sum_us": 562854.0
+      },
+      "apply_write": {
+        "count": 78.0,
+        "sum_us": 1080487.0
+      },
+      "capture": {
+        "count": 26.0,
+        "sum_us": 57331.0
+      },
+      "commit": {
+        "count": 26.0,
+        "sum_us": 909044.0
+      },
+      "encode": {
+        "count": 26.0,
+        "sum_us": 44459.0
+      }
+    },
+    "round": 2,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000175052,
+    "concurrency": 1,
+    "delete_seconds": 0.01056756,
+    "drain_seconds": 0.08285796699999992,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.593337996,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 2.336406,
+      "mean": 0.1435811679687499,
+      "p50": 0.134554,
+      "p99": 0.49719
+    },
+    "mkdir_seconds": 0.072106748,
+    "operations": 4096,
+    "ops_per_sec": 6057.415637070286,
+    "seconds": 0.676195963,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 153.0,
+        "sum_us": 1127267.0
+      },
+      "apply_write": {
+        "count": 153.0,
+        "sum_us": 2262635.0
+      },
+      "capture": {
+        "count": 51.0,
+        "sum_us": 117202.0
+      },
+      "commit": {
+        "count": 51.0,
+        "sum_us": 1838681.0
+      },
+      "encode": {
+        "count": 51.0,
+        "sum_us": 90049.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 144.0,
+        "sum_us": 1082452.0
+      },
+      "apply_write": {
+        "count": 144.0,
+        "sum_us": 2176279.0
+      },
+      "capture": {
+        "count": 48.0,
+        "sum_us": 111644.0
+      },
+      "commit": {
+        "count": 48.0,
+        "sum_us": 1763371.0
+      },
+      "encode": {
+        "count": 48.0,
+        "sum_us": 86643.0
+      }
+    },
+    "round": 2,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000493721,
+    "concurrency": 1,
+    "delete_seconds": 0.006093215,
+    "drain_seconds": 0.04650012799999992,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.000047151,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 3.3923360000000002,
+      "mean": 0.1462660932971898,
+      "p50": 0.13507,
+      "p99": 0.523984
+    },
+    "mkdir_seconds": 0.039904974,
+    "operations": 40580,
+    "ops_per_sec": 6711.2681217157815,
+    "seconds": 6.046547279,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 219.0,
+        "sum_us": 1606716.0
+      },
+      "apply_write": {
+        "count": 218.0,
+        "sum_us": 3109003.0
+      },
+      "capture": {
+        "count": 73.0,
+        "sum_us": 163971.0
+      },
+      "commit": {
+        "count": 73.0,
+        "sum_us": 2546794.0
+      },
+      "encode": {
+        "count": 73.0,
+        "sum_us": 121703.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 153.0,
+        "sum_us": 1127267.0
+      },
+      "apply_write": {
+        "count": 153.0,
+        "sum_us": 2262635.0
+      },
+      "capture": {
+        "count": 51.0,
+        "sum_us": 117202.0
+      },
+      "commit": {
+        "count": 51.0,
+        "sum_us": 1838681.0
+      },
+      "encode": {
+        "count": 51.0,
+        "sum_us": 90049.0
+      }
+    },
+    "round": 2,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000632114,
+    "concurrency": 16,
+    "delete_seconds": 0.006985291,
+    "drain_seconds": 0.102588699,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.175118614,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.829375,
+      "mean": 0.6377111208496101,
+      "p50": 0.563462,
+      "p99": 1.396846
+    },
+    "mkdir_seconds": 0.094964255,
+    "operations": 4096,
+    "ops_per_sec": 14749.341512659408,
+    "seconds": 0.277707313,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 225.0,
+        "sum_us": 1654165.0
+      },
+      "apply_write": {
+        "count": 223.0,
+        "sum_us": 3180179.0
+      },
+      "capture": {
+        "count": 75.0,
+        "sum_us": 168972.0
+      },
+      "commit": {
+        "count": 75.0,
+        "sum_us": 2620074.0
+      },
+      "encode": {
+        "count": 75.0,
+        "sum_us": 125685.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 219.0,
+        "sum_us": 1606716.0
+      },
+      "apply_write": {
+        "count": 219.0,
+        "sum_us": 3120953.0
+      },
+      "capture": {
+        "count": 73.0,
+        "sum_us": 163971.0
+      },
+      "commit": {
+        "count": 73.0,
+        "sum_us": 2546794.0
+      },
+      "encode": {
+        "count": 73.0,
+        "sum_us": 121703.0
+      }
+    },
+    "round": 2,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000755062,
+    "concurrency": 16,
+    "delete_seconds": 0.008174117,
+    "drain_seconds": 0.10513005500000006,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.000375592,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 5.788871,
+      "mean": 0.5911818785072022,
+      "p50": 0.49426400000000004,
+      "p99": 1.560219
+    },
+    "mkdir_seconds": 0.096193666,
+    "operations": 151474,
+    "ops_per_sec": 24809.4111704619,
+    "seconds": 6.105505647,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 294.0,
+        "sum_us": 2188473.0
+      },
+      "apply_write": {
+        "count": 294.0,
+        "sum_us": 4235147.0
+      },
+      "capture": {
+        "count": 98.0,
+        "sum_us": 223358.0
+      },
+      "commit": {
+        "count": 98.0,
+        "sum_us": 3440077.0
+      },
+      "encode": {
+        "count": 98.0,
+        "sum_us": 161750.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 225.0,
+        "sum_us": 1654165.0
+      },
+      "apply_write": {
+        "count": 225.0,
+        "sum_us": 3209858.0
+      },
+      "capture": {
+        "count": 75.0,
+        "sum_us": 168972.0
+      },
+      "commit": {
+        "count": 75.0,
+        "sum_us": 2620074.0
+      },
+      "encode": {
+        "count": 75.0,
+        "sum_us": 125685.0
+      }
+    },
+    "round": 2,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 5.8e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000245968,
+    "drain_seconds": 0.00045134799999990705,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.663678744,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 0.286482,
+      "mean": 0.1611861169433599,
+      "p50": 0.159194,
+      "p99": 0.206428
+    },
+    "mkdir_seconds": 0.000196537,
+    "operations": 4096,
+    "ops_per_sec": 6167.466358383292,
+    "seconds": 0.664130092,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 2,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.9e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000942842,
+    "drain_seconds": 0.0012402570000000779,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000030721,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 0.409294,
+      "mean": 0.1471662162468857,
+      "p50": 0.14386100000000002,
+      "p99": 0.19936199999999998
+    },
+    "mkdir_seconds": 0.000289216,
+    "operations": 40537,
+    "ops_per_sec": 6754.735813230928,
+    "seconds": 6.001270978,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 2,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.3e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000171766,
+    "drain_seconds": 0.00046093499999999565,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.296813707,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.4787240000000001,
+      "mean": 1.1567660458984343,
+      "p50": 1.161617,
+      "p99": 1.422486
+    },
+    "mkdir_seconds": 0.000282049,
+    "operations": 4096,
+    "ops_per_sec": 13778.504525118562,
+    "seconds": 0.297274642,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 2,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.00071094,
+    "drain_seconds": 0.0009513180000002563,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000912045,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 2.3345480000000003,
+      "mean": 1.0673274080680966,
+      "p50": 1.0264829999999998,
+      "p99": 1.3740379999999999
+    },
+    "mkdir_seconds": 0.000232722,
+    "operations": 89860,
+    "ops_per_sec": 14972.016949596791,
+    "seconds": 6.001863363,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 2,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.4e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000184803,
+    "drain_seconds": 0.00039550300000001926,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.622443638,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 0.373158,
+      "mean": 0.15031272485351546,
+      "p50": 0.148059,
+      "p99": 0.197877
+    },
+    "mkdir_seconds": 0.00020253,
+    "operations": 4096,
+    "ops_per_sec": 6576.336858701049,
+    "seconds": 0.622839141,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 2,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.8e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.00019565,
+    "drain_seconds": 0.000399745999999368,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.00016085,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 1.342814,
+      "mean": 0.15972344478263248,
+      "p50": 0.15701800000000002,
+      "p99": 0.216152
+    },
+    "mkdir_seconds": 0.000196743,
+    "operations": 37126,
+    "ops_per_sec": 6187.088590480756,
+    "seconds": 6.000560596,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 2,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.2e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000231291,
+    "drain_seconds": 0.0004938789999999749,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.335540732,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.766953,
+      "mean": 1.306310108154298,
+      "p50": 1.321016,
+      "p99": 1.590065
+    },
+    "mkdir_seconds": 0.000255502,
+    "operations": 4096,
+    "ops_per_sec": 12189.220591922896,
+    "seconds": 0.336034611,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 2,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.7e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000170175,
+    "drain_seconds": 0.00039858700000028335,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.001116847,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 2.371464,
+      "mean": 1.1784408929462928,
+      "p50": 1.1312449999999998,
+      "p99": 1.510738
+    },
+    "mkdir_seconds": 0.000219699,
+    "operations": 81333,
+    "ops_per_sec": 13552.077120260223,
+    "seconds": 6.001515434,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 2,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 6.2e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000228578,
+    "drain_seconds": 0.00041263899999999243,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.575779092,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 0.310861,
+      "mean": 0.1398376176757812,
+      "p50": 0.13332400000000003,
+      "p99": 0.18782400000000002
+    },
+    "mkdir_seconds": 0.000176565,
+    "operations": 4096,
+    "ops_per_sec": 7108.744849377229,
+    "seconds": 0.576191731,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 3,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 6.9e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.00019844,
+    "drain_seconds": 0.00042122400000010884,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000090783,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 0.968487,
+      "mean": 0.14451516793060912,
+      "p50": 0.141453,
+      "p99": 0.195085
+    },
+    "mkdir_seconds": 0.000213036,
+    "operations": 41273,
+    "ops_per_sec": 6878.246381617481,
+    "seconds": 6.000512007,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 3,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 6.2e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000190126,
+    "drain_seconds": 0.00040002499999997054,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.293060488,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.617349,
+      "mean": 1.1412250737304654,
+      "p50": 1.111001,
+      "p99": 1.501788
+    },
+    "mkdir_seconds": 0.000197158,
+    "operations": 4096,
+    "ops_per_sec": 13957.58481482652,
+    "seconds": 0.293460513,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 3,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.9e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.001794115,
+    "drain_seconds": 0.002034787000000371,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.001317637,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 1.9815420000000001,
+      "mean": 1.0861682374276482,
+      "p50": 1.049237,
+      "p99": 1.43753
+    },
+    "mkdir_seconds": 0.000232976,
+    "operations": 88309,
+    "ops_per_sec": 14709.947669732208,
+    "seconds": 6.003352424,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 3,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.6e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000161912,
+    "drain_seconds": 0.0003534429999999533,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.68152699,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 0.564643,
+      "mean": 0.1644366821289066,
+      "p50": 0.162606,
+      "p99": 0.21780200000000002
+    },
+    "mkdir_seconds": 0.000183729,
+    "operations": 4096,
+    "ops_per_sec": 6006.918224620767,
+    "seconds": 0.681880433,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 3,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.2e-08,
+    "concurrency": 1,
+    "delete_seconds": 0.000178184,
+    "drain_seconds": 0.0004112510000000569,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.000107006,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 0.633021,
+      "mean": 0.1563260873642759,
+      "p50": 0.153399,
+      "p99": 0.199009
+    },
+    "mkdir_seconds": 0.000224995,
+    "operations": 37853,
+    "ops_per_sec": 6308.288447559005,
+    "seconds": 6.000518257,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 3,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000183398,
+    "drain_seconds": 0.0003906710000000091,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.304584684,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.506503,
+      "mean": 1.1857107946777314,
+      "p50": 1.1630049999999998,
+      "p99": 1.4013859999999998
+    },
+    "mkdir_seconds": 0.00019976,
+    "operations": 4096,
+    "ops_per_sec": 13430.593432705406,
+    "seconds": 0.304975355,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 3,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 5.7e-08,
+    "concurrency": 16,
+    "delete_seconds": 0.000247796,
+    "drain_seconds": 0.0004644889999996238,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.001283132,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 2.175556,
+      "mean": 1.2317060178075754,
+      "p50": 1.197151,
+      "p99": 1.556806
+    },
+    "mkdir_seconds": 0.000208251,
+    "operations": 77832,
+    "ops_per_sec": 12968.222743600101,
+    "seconds": 6.001747621,
+    "stages_after": null,
+    "stages_before": null,
+    "round": 3,
+    "case": "upstream"
+  },
+  {
+    "close_drain_seconds": 0.000178581,
+    "concurrency": 1,
+    "delete_seconds": 0.005621889,
+    "drain_seconds": 0.05479125500000004,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.565254331,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 4.307536,
+      "mean": 0.13708058471679696,
+      "p50": 0.125475,
+      "p99": 0.566453
+    },
+    "mkdir_seconds": 0.048980824,
+    "operations": 4096,
+    "ops_per_sec": 6605.965903932747,
+    "seconds": 0.620045586,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 8.0,
+        "sum_us": 53246.0
+      },
+      "apply_write": {
+        "count": 7.0,
+        "sum_us": 78300.0
+      },
+      "capture": {
+        "count": 3.0,
+        "sum_us": 4993.0
+      },
+      "commit": {
+        "count": 3.0,
+        "sum_us": 83429.0
+      },
+      "encode": {
+        "count": 3.0,
+        "sum_us": 4487.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "apply_write": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "capture": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "commit": {
+        "count": 0.0,
+        "sum_us": 0.0
+      },
+      "encode": {
+        "count": 0.0,
+        "sum_us": 0.0
+      }
+    },
+    "round": 3,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000457793,
+    "concurrency": 1,
+    "delete_seconds": 0.007045304,
+    "drain_seconds": 0.048541649000000575,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000058896,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 4.255814999999999,
+      "mean": 0.13068739483151925,
+      "p50": 0.119978,
+      "p99": 0.470819
+    },
+    "mkdir_seconds": 0.041031277,
+    "operations": 45584,
+    "ops_per_sec": 7536.288710234211,
+    "seconds": 6.048600545,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 72.0,
+        "sum_us": 537898.0
+      },
+      "apply_write": {
+        "count": 72.0,
+        "sum_us": 995158.0
+      },
+      "capture": {
+        "count": 24.0,
+        "sum_us": 53008.0
+      },
+      "commit": {
+        "count": 24.0,
+        "sum_us": 850002.0
+      },
+      "encode": {
+        "count": 24.0,
+        "sum_us": 39454.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 8.0,
+        "sum_us": 53246.0
+      },
+      "apply_write": {
+        "count": 7.0,
+        "sum_us": 78300.0
+      },
+      "capture": {
+        "count": 3.0,
+        "sum_us": 4993.0
+      },
+      "commit": {
+        "count": 3.0,
+        "sum_us": 83429.0
+      },
+      "encode": {
+        "count": 3.0,
+        "sum_us": 4487.0
+      }
+    },
+    "round": 3,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000621221,
+    "concurrency": 16,
+    "delete_seconds": 0.005963817,
+    "drain_seconds": 0.095033644,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 0.149998343,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.651583,
+      "mean": 0.5569701459960951,
+      "p50": 0.48071600000000003,
+      "p99": 1.243069
+    },
+    "mkdir_seconds": 0.088441521,
+    "operations": 4096,
+    "ops_per_sec": 16716.184895484686,
+    "seconds": 0.245031987,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 78.0,
+        "sum_us": 582634.0
+      },
+      "apply_write": {
+        "count": 76.0,
+        "sum_us": 1053482.0
+      },
+      "capture": {
+        "count": 26.0,
+        "sum_us": 57471.0
+      },
+      "commit": {
+        "count": 26.0,
+        "sum_us": 917238.0
+      },
+      "encode": {
+        "count": 26.0,
+        "sum_us": 42977.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 72.0,
+        "sum_us": 537898.0
+      },
+      "apply_write": {
+        "count": 72.0,
+        "sum_us": 995158.0
+      },
+      "capture": {
+        "count": 24.0,
+        "sum_us": 53008.0
+      },
+      "commit": {
+        "count": 24.0,
+        "sum_us": 850002.0
+      },
+      "encode": {
+        "count": 24.0,
+        "sum_us": 39454.0
+      }
+    },
+    "round": 3,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000622743,
+    "concurrency": 16,
+    "delete_seconds": 0.006649512,
+    "drain_seconds": 0.05369432899999982,
+    "errors": 0,
+    "file_bytes": 0,
+    "foreground_seconds": 6.000362553,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 6.690075,
+      "mean": 0.5528119345873775,
+      "p50": 0.46328899999999995,
+      "p99": 1.4051669999999998
+    },
+    "mkdir_seconds": 0.046413738,
+    "operations": 164693,
+    "ops_per_sec": 27203.741756980737,
+    "seconds": 6.054056882,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 144.0,
+        "sum_us": 1104363.0
+      },
+      "apply_write": {
+        "count": 144.0,
+        "sum_us": 2119094.0
+      },
+      "capture": {
+        "count": 48.0,
+        "sum_us": 106577.0
+      },
+      "commit": {
+        "count": 48.0,
+        "sum_us": 1753741.0
+      },
+      "encode": {
+        "count": 48.0,
+        "sum_us": 81771.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 78.0,
+        "sum_us": 582634.0
+      },
+      "apply_write": {
+        "count": 78.0,
+        "sum_us": 1082282.0
+      },
+      "capture": {
+        "count": 26.0,
+        "sum_us": 57471.0
+      },
+      "commit": {
+        "count": 26.0,
+        "sum_us": 917238.0
+      },
+      "encode": {
+        "count": 26.0,
+        "sum_us": 42977.0
+      }
+    },
+    "round": 3,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000365352,
+    "concurrency": 1,
+    "delete_seconds": 0.00988756,
+    "drain_seconds": 0.07195494499999999,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.528785127,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 2.067246,
+      "mean": 0.1278077998046873,
+      "p50": 0.119485,
+      "p99": 0.431645
+    },
+    "mkdir_seconds": 0.061695477,
+    "operations": 4096,
+    "ops_per_sec": 6818.256665255385,
+    "seconds": 0.600740072,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 153.0,
+        "sum_us": 1152102.0
+      },
+      "apply_write": {
+        "count": 153.0,
+        "sum_us": 2211215.0
+      },
+      "capture": {
+        "count": 51.0,
+        "sum_us": 111113.0
+      },
+      "commit": {
+        "count": 51.0,
+        "sum_us": 1829127.0
+      },
+      "encode": {
+        "count": 51.0,
+        "sum_us": 85077.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 144.0,
+        "sum_us": 1104363.0
+      },
+      "apply_write": {
+        "count": 144.0,
+        "sum_us": 2119094.0
+      },
+      "capture": {
+        "count": 48.0,
+        "sum_us": 106577.0
+      },
+      "commit": {
+        "count": 48.0,
+        "sum_us": 1753741.0
+      },
+      "encode": {
+        "count": 48.0,
+        "sum_us": 81771.0
+      }
+    },
+    "round": 3,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000494336,
+    "concurrency": 1,
+    "delete_seconds": 0.005608667,
+    "drain_seconds": 0.08299071199999997,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.000042538,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 5.360504000000001,
+      "mean": 0.1352831170590646,
+      "p50": 0.12352,
+      "p99": 0.497283
+    },
+    "mkdir_seconds": 0.076880583,
+    "operations": 43918,
+    "ops_per_sec": 7219.753401808218,
+    "seconds": 6.08303325,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 219.0,
+        "sum_us": 1666860.0
+      },
+      "apply_write": {
+        "count": 219.0,
+        "sum_us": 3131995.0
+      },
+      "capture": {
+        "count": 73.0,
+        "sum_us": 159295.0
+      },
+      "commit": {
+        "count": 73.0,
+        "sum_us": 2595685.0
+      },
+      "encode": {
+        "count": 73.0,
+        "sum_us": 115774.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 153.0,
+        "sum_us": 1152102.0
+      },
+      "apply_write": {
+        "count": 153.0,
+        "sum_us": 2211215.0
+      },
+      "capture": {
+        "count": 51.0,
+        "sum_us": 111113.0
+      },
+      "commit": {
+        "count": 51.0,
+        "sum_us": 1829127.0
+      },
+      "encode": {
+        "count": 51.0,
+        "sum_us": 85077.0
+      }
+    },
+    "round": 3,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000607458,
+    "concurrency": 16,
+    "delete_seconds": 0.00553909,
+    "drain_seconds": 0.09413603300000001,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 0.164601369,
+    "kind": "cold_pass",
+    "latency_ms": {
+      "max": 1.705014,
+      "mean": 0.5993942167968749,
+      "p50": 0.5100060000000001,
+      "p99": 1.3612870000000001
+    },
+    "mkdir_seconds": 0.087982317,
+    "operations": 4096,
+    "ops_per_sec": 15830.722455812554,
+    "seconds": 0.258737402,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 225.0,
+        "sum_us": 1712790.0
+      },
+      "apply_write": {
+        "count": 223.0,
+        "sum_us": 3187538.0
+      },
+      "capture": {
+        "count": 75.0,
+        "sum_us": 163963.0
+      },
+      "commit": {
+        "count": 75.0,
+        "sum_us": 2663154.0
+      },
+      "encode": {
+        "count": 75.0,
+        "sum_us": 119267.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 219.0,
+        "sum_us": 1666860.0
+      },
+      "apply_write": {
+        "count": 219.0,
+        "sum_us": 3131995.0
+      },
+      "capture": {
+        "count": 73.0,
+        "sum_us": 159295.0
+      },
+      "commit": {
+        "count": 73.0,
+        "sum_us": 2595685.0
+      },
+      "encode": {
+        "count": 73.0,
+        "sum_us": 115774.0
+      }
+    },
+    "round": 3,
+    "case": "hsm"
+  },
+  {
+    "close_drain_seconds": 0.000958536,
+    "concurrency": 16,
+    "delete_seconds": 0.00645262,
+    "drain_seconds": 0.10167603100000022,
+    "errors": 0,
+    "file_bytes": 4096,
+    "foreground_seconds": 6.000967234,
+    "kind": "steady",
+    "latency_ms": {
+      "max": 6.543008,
+      "mean": 0.5722241529250677,
+      "p50": 0.477306,
+      "p99": 1.488952
+    },
+    "mkdir_seconds": 0.094257759,
+    "operations": 157005,
+    "ops_per_sec": 25727.376348615715,
+    "seconds": 6.102643265,
+    "stages_after": {
+      "apply_preflight": {
+        "count": 291.0,
+        "sum_us": 2242128.0
+      },
+      "apply_write": {
+        "count": 291.0,
+        "sum_us": 4223845.0
+      },
+      "capture": {
+        "count": 97.0,
+        "sum_us": 219259.0
+      },
+      "commit": {
+        "count": 97.0,
+        "sum_us": 3463783.0
+      },
+      "encode": {
+        "count": 97.0,
+        "sum_us": 159004.0
+      }
+    },
+    "stages_before": {
+      "apply_preflight": {
+        "count": 225.0,
+        "sum_us": 1712790.0
+      },
+      "apply_write": {
+        "count": 225.0,
+        "sum_us": 3215272.0
+      },
+      "capture": {
+        "count": 75.0,
+        "sum_us": 163963.0
+      },
+      "commit": {
+        "count": 75.0,
+        "sum_us": 2663154.0
+      },
+      "encode": {
+        "count": 75.0,
+        "sum_us": 119267.0
+      }
+    },
+    "round": 3,
+    "case": "hsm"
+  }
+]

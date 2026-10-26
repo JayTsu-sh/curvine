@@ -35,6 +35,21 @@ async fn control(
     Ok(serde_json::from_slice(&response.payload)?)
 }
 
+async fn legacy_block_locations(
+    fs: &curvine_client_core::file::CurvineFileSystem,
+    path: &Path,
+) -> curvine_error::FsResult<curvine_proto::GetBlockLocationsResponse> {
+    fs.fs_client()
+        .rpc(
+            RpcCode::GetBlockLocations,
+            curvine_proto::GetBlockLocationsRequest {
+                path: path.encode(),
+                metadata_only: None,
+            },
+        )
+        .await
+}
+
 #[test]
 fn disabled_native_mkdir_preserves_legacy_confirmation_and_rejects_bound_namespace() -> Result {
     let root = Utils::test_sub_dir(format!("native-disabled-{}", Utils::rand_str(8)));
@@ -122,7 +137,9 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
     conf.journal.raft_election_tick = 100;
     conf.journal.raft_min_election_ticks = 100;
     conf.journal.raft_max_election_ticks = 150;
-    conf.client.master_conn_pool_size = 32;
+    // All concurrent commands must share one TCP connection: Master RPC
+    // dispatch must admit them together instead of relying on a large pool.
+    conf.client.master_conn_pool_size = 1;
     conf.client.short_circuit = false;
     conf.client.replicas = 1;
     conf.client.block_size_str = "4KB".into();
@@ -207,12 +224,9 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             assert_eq!(pages, [1024, 1024, 2]);
             assert!(master.fs_dir().read().get_worker_block_ids(worker_id)?.is_empty());
         }
-        // A real HSM Import and native namespace creation must both finish
-        // while another shared authority turn remains held. The previous
-        // exclusive control path could not pass this boundary. Their IDs
-        // come from one allocator, including Worker allocation/requalification.
-        let authority_gate = cluster.get_active_master_fs().fs_dir().read().hsm_test_mutation_gate();
-        let shared_turn = authority_gate.read().await;
+        // Parallel imports and native creation share one inode allocator,
+        // including Worker allocation and requalification.
+
         let ids = tokio::time::timeout(std::time::Duration::from_secs(15), async {
             stream::iter(0..16).map(|index| {
                 let fs = &fs;
@@ -232,16 +246,16 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
                 }
             }).buffer_unordered(8).try_collect::<Vec<_>>().await
         }).await??;
-        drop(shared_turn);
+
         let unique: std::collections::BTreeSet<_> = ids.into_iter().flatten().collect();
         assert_eq!(unique.len(), 32, "parallel HSM/native inode identity collision");
-        // Lifecycle metadata operations must complete under a concurrent
-        // shared authority turn as well, including the off-gate scan phase.
+        // Lifecycle metadata, including the off-gate scan phase, retains its
+        // committed results under exclusive observation coordination.
         let lifecycle_path = Path::from_str("/shared-lifecycle-file")?;
         fs.create(&lifecycle_path, false).await?.complete().await?;
         let lifecycle_id = fs.get_status(&lifecycle_path).await?.id;
         let data = cluster.get_active_master_fs().fs_dir().read().hsm_record(lifecycle_id)?.unwrap().state.data;
-        let shared_lifecycle = authority_gate.read().await;
+
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             let token = uuid::Uuid::new_v4().simple().to_string();
             let begun = control(&fs, &json!({"op":"seal_begin", "entity":data.entity, "data":data, "token":token})).await?;
@@ -277,18 +291,19 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             let input = request.clone();
             let pending = tokio::spawn(async move { control(&client, &input).await });
             tokio::time::timeout(std::time::Duration::from_secs(3), started.notified()).await?;
-            let mut reader = fs.open(&lifecycle_path).await?;
+            let mut opening = Box::pin(fs.open(&lifecycle_path));
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(25), &mut opening).await.is_err(), "read crossed an exclusive lifecycle preparation");
             resume.notify_one();
-            let rejected = pending.await??;
-            assert_eq!(rejected["data"]["code"], "busy", "{rejected}");
+            let claimed = pending.await??;
+            assert_eq!(claimed["data"]["status"], "running", "{claimed}");
+            let mut reader = opening.await?;
             reader.complete().await?;
-            let retried = control(&fs, &request).await?;
-            assert_eq!(retried["data"]["status"], "superseded", "{retried}");
+            fs.flush_hsm_read_closes().await?;
             drop(wake);
             assert_eq!(control(&fs, &json!({"op":"gc_batch"})).await?["kind"], "gc");
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
         }).await??;
-        drop(shared_lifecycle);
+
         let before_native = curvine_master::master::Master::get_metrics()?.hsm_test_commit_stats();
         stream::iter(0..32)
             .map(|i| {
@@ -551,13 +566,16 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         let online_path = Path::from_str("/native-file-0")?;
         let mut concurrent_reader = tokio::time::timeout(std::time::Duration::from_secs(2), fs.open(&online_path)).await??;
         concurrent_reader.complete().await?;
-        tokio::time::timeout(std::time::Duration::from_secs(2),
-            fs.mkdir(&Path::from_str("/owned-during-shared-query")?, false)).await??;
         tokio::time::timeout(std::time::Duration::from_secs(2), fs.get_status(&online_path)).await??;
+        let pending_path = Path::from_str("/owned-during-shared-query")?;
+        let mut pending_mkdir = Box::pin(fs.mkdir(&pending_path, false));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(25), &mut pending_mkdir).await.is_err(), "structural writer crossed an active shared turn");
+        drop(shared);
+        pending_mkdir.await?;
         let source_dir = Path::from_str("/native-batch-1")?;
         let owned_dir = Path::from_str("/owned-after-shared-query")?;
-        tokio::time::timeout(std::time::Duration::from_secs(2),
-            fs.rename(&source_dir, &owned_dir)).await??;
+        fs.rename(&source_dir, &owned_dir).await?;
+        let shared = gate.read().await;
         let moved_dir = Path::from_str("/legacy-after-shared-query")?;
         // rpc_bytes intentionally bypasses SDK Native routing: this really
         // exercises the speculative compatibility handler, unlike fs.rename.
@@ -624,7 +642,7 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         let qualifications =
             after["read_indexes"].as_u64().unwrap() - before["read_indexes"].as_u64().unwrap();
         assert!(
-            (1..32).contains(&qualifications),
+            qualifications < 32,
             "read qualifications were not grouped: {qualifications}"
         );
         assert!(
@@ -635,11 +653,8 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             - before["read_apply_commits"].as_u64().unwrap();
         let apply_commands = after["read_apply_commands"].as_f64().unwrap()
             - before["read_apply_commands"].as_f64().unwrap();
-        assert!(apply_commits > 0 && apply_commands >= 32.0);
-        assert!(
-            apply_commands > apply_commits as f64,
-            "Raft batching did not coalesce RocksDB writes"
-        );
+        assert_eq!(apply_commits, 0, "fast opens appended legacy per-reader commands");
+        assert_eq!(apply_commands, 0.0);
         assert!(
             fs.create(&path, true).await.is_err(),
             "active readers must protect overwrite"
@@ -681,6 +696,59 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         assert_eq!(reader.read(&mut bytes).await?, 18);
         assert_eq!(bytes, b"native open create");
         reader.complete().await?;
+        // Fast observations remain visible across a stable writer's cache
+        // invalidation. Duplicate opens/renewals cannot extend an old receipt,
+        // and a repeated batched close cannot revive or recount a reader.
+        let mut fast = json!({"op":"open_path","path":"/hot","read_mode":"fast_v1",
+            "reader":uuid::Uuid::new_v4().simple().to_string(),"request_id":request_id()});
+        let binding = control(&fs,&fast).await?;
+        assert_eq!(binding["kind"],"read_fast_bind");
+        fast["issuer"] = binding["data"].clone();
+        let grant = control(&fs,&fast).await?;
+        assert_eq!(grant["kind"],"read_fast");
+        let revision = control(&fs,&json!({"op":"resolve","path":"/hot"})).await?["data"]["revision"].as_u64().unwrap();
+        let duplicate = control(&fs,&fast).await?;
+        assert_eq!(duplicate["data"]["expires_ms"],grant["data"]["expires_ms"]);
+        assert_eq!(control(&fs,&json!({"op":"resolve","path":"/hot"})).await?["data"]["revision"].as_u64(),Some(revision));
+        let mut rebound = fast.clone();rebound["request_id"] = json!(request_id());
+        assert_eq!(control(&fs,&rebound).await?["data"]["code"],"fenced");
+        let renew = json!({"op":"read_renew","read_mode":"fast_v1","data":grant["data"]["data"],
+            "entity":grant["data"]["data"]["entity"],"reader":grant["data"]["reader"],"request_id":request_id()});
+        let renewed = control(&fs,&renew).await?;
+        assert_eq!(renewed["kind"],"done");
+        assert_eq!(control(&fs,&renew).await?["data"]["expires_ms"],renewed["data"]["expires_ms"]);
+        assert_eq!(control(&fs,&json!({"op":"resolve","path":"/hot"})).await?["data"]["revision"].as_u64(),Some(revision+1));
+        assert!(fs.create(&path,true).await.is_err(),"uncheckpointed fast grant did not protect overwrite");
+        let close = json!({"op":"read_close_batch","read_mode":"fast_v1","closes":[{
+            "data":grant["data"]["data"],"reader":grant["data"]["reader"]}]});
+        assert_eq!(control(&fs,&close).await?["kind"],"done");
+        assert_eq!(control(&fs,&close).await?["kind"],"done");
+        assert_eq!(control(&fs,&fast).await?["data"]["code"],"fenced");
+        assert_eq!(control(&fs,&renew).await?["data"]["code"],"fenced");
+        fs.mkdir(&Path::from_str("/after-fast-close-checkpoint")?,false).await?;
+        assert_eq!(control(&fs,&json!({"op":"resolve","path":"/hot"})).await?["data"]["revision"].as_u64(),Some(revision+2));
+        // Idle retirement replaces closed tombstones with the timestamp floor.
+        // An older, still-active open must retain its original receipt even
+        // after that floor has advanced past its request timestamp.
+        let mut retained = fast.clone();
+        retained["reader"] = json!(uuid::Uuid::new_v4().simple().to_string());
+        retained["request_id"] = json!(request_id());
+        let retained_grant = control(&fs, &retained).await?;
+        assert_eq!(retained_grant["kind"], "read_fast");
+        let mut retired = retained.clone();
+        retired["reader"] = json!(uuid::Uuid::new_v4().simple().to_string());
+        retired["request_id"] = json!(request_id());
+        let retired_grant = control(&fs, &retired).await?;
+        assert_eq!(retired_grant["kind"], "read_fast");
+        assert_eq!(control(&fs, &json!({"op":"read_close_batch","read_mode":"fast_v1","closes":[{
+            "data":retired_grant["data"]["data"],"reader":retired_grant["data"]["reader"]}]})).await?["kind"], "done");
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        assert_eq!(control(&fs, &retired).await?["data"]["code"], "fenced");
+        let retained_duplicate = control(&fs, &retained).await?;
+        assert_eq!(retained_duplicate["kind"], "read_fast");
+        assert_eq!(retained_duplicate["data"]["expires_ms"], retained_grant["data"]["expires_ms"]);
+        assert_eq!(control(&fs, &json!({"op":"read_close_batch","read_mode":"fast_v1","closes":[{
+            "data":retained_grant["data"]["data"],"reader":retained_grant["data"]["reader"]}]})).await?["kind"], "done");
         let reader = uuid::Uuid::new_v4().simple().to_string();
         let original =
             json!({"op":"open_path","path":"/hot","reader":reader,"request_id":request_id()});
@@ -785,7 +853,8 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         // Retire more than one GC page. Physical deletion is driven solely by
         // the committed outbox and actual Worker heartbeat acknowledgements.
         let current_path = Path::from_str("/after/many-blocks")?;
-        let old_layout = fs.fs_client().get_block_locations(&current_path).await?;
+        assert!(legacy_block_locations(&fs,&current_path).await.is_err(), "raw managed open bypassed read protection");
+        let old_layout = fs.get_block_locations(&current_path).await?;
         let mut writer = fs.open_for_write(&current_path, true).await?;
         writer.write(b"new layout").await?;
         writer.complete().await?;
@@ -988,14 +1057,15 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         active.worker_manager.write().add_test_worker(curvine_model::WorkerInfo {
             address: proxy_worker, last_update: curvine_runtime::common::LocalTime::mills(), ..Default::default()
         });
-        let digest = json!({"algorithm":"blake3", "value":blake3::hash(b"").as_bytes().to_vec()});
+        let private_bytes = b"private-proof";
+        let digest = json!({"algorithm":"blake3", "value":blake3::hash(private_bytes).as_bytes().to_vec()});
         let namespace = control(&fs, &json!({"op":"namespace"})).await?;
         let epoch = namespace["data"]["epoch"].as_u64().unwrap();
         let mut selected = None;
         for attempt in 0..2 {
             let context = json!({"operation_id":format!("io-turn-{}-{attempt}", request_id()), "controller_epoch":epoch,"attempt_epoch":1});
             let prepared = control(&fs, &json!({"op":"prepare_import", "context":context,
-                "path":format!("/.hsm/io-turn-{attempt}"),"length":0,"digest":digest})).await?;
+                "path":format!("/.hsm/io-turn-{attempt}"),"length":private_bytes.len(),"digest":digest})).await?;
             assert_eq!(prepared["kind"], "recall");
             let cap: Vec<u8> = serde_json::from_value(prepared["data"]["destination"]["capability"].clone())?;
             let endpoint: curvine_model::hsm::native::Endpoint = serde_json::from_slice(&cap)?;
@@ -1004,8 +1074,13 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
             }
         }
         let (context, target) = selected.expect("placement did not select the sole live test endpoint");
+        let cap:Vec<u8> = serde_json::from_value(target["destination"]["capability"].clone())?;
+        let endpoint:curvine_model::hsm::native::Endpoint = serde_json::from_slice(&cap)?;
+        let written = curvine_client_core::file::hsm_io::hsm_worker_rpc(fs.rpc_conf(),&endpoint.worker,
+            &curvine_model::hsm::native::WorkerRequest::Write {endpoint:endpoint.clone(),offset:0,bytes:private_bytes.to_vec()}).await?;
+        assert!(matches!(written,curvine_model::hsm::native::WorkerReply::Done));
         let commit_request = json!({"op":"commit_import", "context":context,"target":target,
-            "evidence":{"length":0,"digest":digest}});
+            "evidence":{"length":private_bytes.len(),"digest":digest}});
         pause_reply.store(true, Ordering::Release);
         let commit = {
             let fs = fs.clone(); let request = commit_request.clone();
@@ -1035,6 +1110,13 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         resumed["context"]["controller_epoch"] = json!(epoch + 1);
         let published = control(&fs, &resumed).await?;
         assert_eq!(published["kind"], "entity", "old I/O completion poisoned the new controller's logical step");
+        let id=published["data"]["data"]["entity"]["entity"].as_str().ok_or("missing imported inode")?.parse::<i64>()?;
+        let imported_path=active.fs_dir().read().get_inode_path(id)?;
+        let mut imported=fs.open(&Path::from_str(imported_path)?).await?;
+        let mut actual=vec![0;private_bytes.len()];
+        assert_eq!(imported.read(&mut actual).await?,private_bytes.len());
+        assert_eq!(actual,private_bytes);
+        imported.complete().await?;fs.flush_hsm_read_closes().await?;
         active.worker_manager.write().add_test_worker(original_worker);
         proxy.abort();
 
@@ -1060,6 +1142,181 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         let replay = control(&fs, &claim).await?;
         assert_eq!(replay["kind"], "epoch");
         assert_eq!(replay["data"], epoch + 1);
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    })
+}
+
+#[test]
+fn fast_grants_survive_leader_transfer_without_a_durable_reader_row() -> Result {
+    use curvine_raft::{
+        conf::JournalConfExt,
+        proto::raft::{RaftRequest, RaftResponse},
+        raft::{LibRaftMessage, RaftClient, RaftCode},
+    };
+    use curvine_rpc::message::Builder;
+    let root = Utils::test_sub_dir(format!("hsm-fast-transfer-{}", Utils::rand_str(8)));
+    let mut conf = ClusterConf::format();
+    conf.testing = false;
+    conf.master.hsm_enabled = true;
+    conf.master.meta_dir = format!("{root}/meta");
+    conf.worker.data_dir = vec![format!("{root}/worker")];
+    conf.journal.enable = true;
+    conf.journal.writer_channel_size = 0;
+    conf.journal.leader_create_snapshot = Some(false);
+    conf.journal.journal_dir = format!("{root}/journal");
+    conf.journal.snapshot_entries = u64::MAX;
+    conf.journal.snapshot_interval = "24h".into();
+    conf.journal.raft_tick_interval_ms = 100;
+    conf.journal.raft_election_tick = 100;
+    conf.journal.raft_min_election_ticks = 100;
+    conf.journal.raft_max_election_ticks = 150;
+    conf.client.master_conn_pool_size = 1;
+    conf.client.short_circuit = false;
+    conf.client.replicas = 1;
+    conf.log.level = "WARN".into();
+    conf.log.log_dir = "stderr".into();
+    conf.master.log = conf.log.clone();
+    conf.worker.log = conf.log.clone();
+    let cluster = MiniCluster::with_num(&conf, 3, 1);
+    cluster.start_cluster();
+    let fs = cluster.new_fs();
+    cluster.clone_client_rt().block_on(async {
+        let path = Path::from_str("/uncheckpointed-reader")?;
+        let mut writer = fs.create(&path, false).await?;
+        writer.write(b"epoch-data").await?;
+        writer.complete().await?;
+        let old = cluster.get_active_master_fs();
+        old.hsm_test_pause_access_checkpoints(true);
+        let mut request = json!({
+            "op": "open_path", "path": path.path(),
+            "reader": uuid::Uuid::new_v4().simple().to_string(),
+            "request_id": request_id(), "read_mode": "fast_v1",
+        });
+        let binding = control(&fs, &request).await?;
+        assert_eq!(binding["kind"], "read_fast_bind");
+        request["issuer"] = binding["data"].clone();
+        let grant = control(&fs, &request).await?;
+        assert_eq!(grant["kind"], "read_fast");
+        let repeated = control(&fs, &request).await?;
+        assert_eq!(grant["data"]["reader"], repeated["data"]["reader"]);
+        assert_eq!(grant["data"]["expires_ms"], repeated["data"]["expires_ms"]);
+        assert!(repeated["data"]["granted_ms"].as_i64() >= grant["data"]["granted_ms"].as_i64());
+        let mut sdk_reader = fs.open(&path).await?;
+        let inode = grant["data"]["blocks"]["status"]["id"]
+            .as_i64()
+            .ok_or("missing inode")?;
+        let observed = control(&fs, &json!({"op": "resolve", "path": path.path()})).await?;
+        let durable = old.fs_dir().read().hsm_record(inode)?.unwrap();
+        assert!(
+            durable.readers.is_empty(),
+            "test failed to retain an uncheckpointed grant"
+        );
+        assert!(observed["data"]["revision"].as_u64().unwrap() > durable.state.revision);
+        assert!(
+            legacy_block_locations(&fs, &path).await.is_err(),
+            "raw managed open bypassed protection"
+        );
+        assert_eq!(fs.get_block_locations(&path).await?.status.id, inode);
+
+        let old_conf = cluster
+            .master_conf
+            .iter()
+            .find(|conf| conf.master.meta_dir == old.conf.meta_dir)
+            .ok_or("missing leader config")?;
+        let old_id = old_conf.journal.node_id()?;
+        let target = old_conf
+            .journal
+            .journal_addrs
+            .iter()
+            .find(|peer| peer.id != old_id)
+            .ok_or("missing successor")?
+            .id;
+        let client = RaftClient::from_conf(cluster.clone_client_rt(), &old_conf.journal);
+        let mut message = LibRaftMessage {
+            from: target,
+            to: old_id,
+            ..Default::default()
+        };
+        message.set_msg_type(raft::eraftpb::MessageType::MsgTransferLeader);
+        let packet = Builder::new_rpc(RaftCode::Raft)
+            .proto_header(RaftRequest {
+                message,
+                sender_session: None,
+                receiver_session: None,
+                leader_commit: None,
+            })
+            .build();
+        let _: RaftResponse = client
+            .timeout_rpc(old_id, packet)
+            .await
+            .map_err(|(_, error)| error)?;
+        let promoted = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if let Some(current) = cluster.hsm_test_find_active_master_fs() {
+                    if current.conf.meta_dir != old.conf.meta_dir {
+                        return current;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await?;
+        assert!(promoted
+            .fs_dir()
+            .read()
+            .hsm_record(inode)?
+            .unwrap()
+            .readers
+            .is_empty());
+        assert!(
+            fs.delete(&path, false).await.is_err(),
+            "new leader deleted data protected only by an old volatile grant"
+        );
+        let recovery_started = std::time::Instant::now();
+        let rebound = control(&fs, &request).await?;
+        assert_eq!(
+            rebound["kind"], "read_fast_bind",
+            "old open packet created a new grant"
+        );
+        let renew = json!({
+            "op": "read_renew", "read_mode": "fast_v1",
+            "entity": grant["data"]["data"]["entity"],
+            "data": grant["data"]["data"], "reader": grant["data"]["reader"],
+        });
+        assert_eq!(control(&fs, &renew).await?["data"]["code"], "fenced");
+        let mut byte = [0];
+        assert_eq!(sdk_reader.read(&mut byte).await?, 1);
+        assert_eq!(byte[0], b'e');
+        eprintln!(
+            "FAST_TRANSFER_GRACE_STARTED: waiting for the real 120-second protection horizon"
+        );
+        tokio::time::sleep_until(tokio::time::Instant::from_std(
+            recovery_started + std::time::Duration::from_secs(123),
+        ))
+        .await;
+        assert!(
+            sdk_reader.read(&mut byte).await.is_err(),
+            "expired SDK grant exposed already-buffered data"
+        );
+        sdk_reader.complete().await?;
+        fs.flush_hsm_read_closes().await?;
+        // The first Raft RPC after the real idle interval may find a closed
+        // transport. Reconcile an uncertain delete against this unchanged
+        // path; no competing writer can recreate it in this test.
+        let cleanup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if matches!(fs.exists(&path).await, Ok(false)) {
+                break;
+            }
+            if let Err(error) = fs.delete(&path, false).await {
+                eprintln!("post-grace cleanup will reconcile transient outcome: {error}");
+            }
+            assert!(
+                std::time::Instant::now() < cleanup_deadline,
+                "post-grace cleanup did not confirm deletion"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     })
 }

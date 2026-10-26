@@ -9,9 +9,7 @@ pub(super) fn shared_request(request: &Value) -> bool {
     matches!(
         request["op"].as_str(),
         Some(
-            "seal_begin"
-                | "seal_commit"
-                | "capabilities"
+            "capabilities"
                 | "namespace"
                 | "inspect"
                 | "resolve"
@@ -21,24 +19,9 @@ pub(super) fn shared_request(request: &Value) -> bool {
                 | "pending_view"
                 | "completed_import"
                 | "completed"
-                | "policy_put"
-                | "intent_claim"
-                | "intent_finish"
-                | "gc_batch"
-                | "collect_garbage"
                 | "policy_list"
                 | "intent_list"
                 | "intent_get"
-                | "prepare_import"
-                | "commit_import"
-                | "prepare_archive"
-                | "commit_archive"
-                | "open_view"
-                | "close_view"
-                | "release"
-                | "prepare_recall"
-                | "commit_recall"
-                | "abort_recall"
         )
     )
 }
@@ -256,39 +239,44 @@ mod tests {
     }
 
     #[test]
-    fn file_controls_overlap_but_legacy_and_controller_transitions_wait() -> CommonResult<()> {
+    fn structural_controls_wait_for_local_read_observations() -> CommonResult<()> {
         let (_root, fs, _id) = fixture()?;
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         rt.block_on(async {
+            let query = json!({"op":"inspect"});
+            let first =
+                turn::AuthorityTurn::acquire(&fs, Class::request(&query), shared_request(&query))
+                    .await;
+            assert!(first.shared());
+            for op in [
+                "release",
+                "prepare_recall",
+                "claim_controller",
+                "seal_begin",
+                "intent_claim",
+                "policy_put",
+            ] {
+                let mutation = json!({"op":op});
+                assert!(!shared_request(&mutation));
+                let mut waiting = Box::pin(turn::AuthorityTurn::acquire(
+                    &fs,
+                    Class::request(&mutation),
+                    shared_request(&mutation),
+                ));
+                assert!(futures::poll!(&mut waiting).is_pending());
+                drop(waiting);
+            }
+            drop(first);
             let release = json!({"op":"release"});
-            let recall = json!({"op":"prepare_recall"});
-            let first = turn::AuthorityTurn::acquire(
+            let exclusive = turn::AuthorityTurn::acquire(
                 &fs,
                 Class::request(&release),
                 shared_request(&release),
             )
             .await;
-            let second = tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                turn::AuthorityTurn::acquire(&fs, Class::request(&recall), shared_request(&recall)),
-            )
-            .await?;
-            assert!(first.shared() && second.shared());
-            let controller = json!({"op":"claim_controller"});
-            assert!(!shared_request(&controller));
-            let mut waiting = Box::pin(turn::AuthorityTurn::acquire(
-                &fs,
-                Class::request(&controller),
-                shared_request(&controller),
-            ));
-            assert!(futures::poll!(&mut waiting).is_pending());
-            drop(first);
-            assert!(futures::poll!(&mut waiting).is_pending());
-            drop(second);
-            let controller = waiting.await;
-            assert!(!controller.shared());
+            assert!(!exclusive.shared());
             Ok(())
         })
     }

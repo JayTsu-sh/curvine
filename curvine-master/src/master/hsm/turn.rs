@@ -93,6 +93,9 @@ impl AuthorityTurn {
         }) {
             return Err(HsmError::Fenced);
         }
+        if !self.shared {
+            fs.hsm_before_stable_underheld().await?;
+        }
         self.invalidated = false;
         result
     }

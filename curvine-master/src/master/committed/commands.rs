@@ -581,7 +581,6 @@ pub(super) fn delete(
     }
     let response = curvine_proto::DeleteResponse {
         res: Some(ProtoUtils::delete_res_to_pb(result)),
-        ..Default::default()
     }
     .encode_to_vec();
     Ok(PreparedCommand {

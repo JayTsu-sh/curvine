@@ -77,9 +77,14 @@ fn read_record(
     let Some(bytes) = get(&record_key(id))? else {
         return Ok(None);
     };
-    let mut record: Record = decode(&bytes)?;
-    if let Some(bytes) = get(&access_key(id))? {
-        let access: ReadState = decode(&bytes)?;
+    let record: Record = decode(&bytes)?;
+    let access = get(&access_key(id))?
+        .map(|bytes| decode(&bytes))
+        .transpose()?;
+    merge_access(record, access).map(Some)
+}
+fn merge_access(mut record: Record, access: Option<ReadState>) -> CommonResult<Record> {
+    if let Some(access) = access {
         if access.base_version != record.version
             || access.data != record.state.data
             || access.version <= record.version
@@ -92,11 +97,14 @@ fn read_record(
         record.atime_ms = access.atime_ms;
         record.readers = access.readers;
     }
-    Ok(Some(record))
+    Ok(record)
 }
 impl FsDir {
     pub fn hsm_record(&self, id: i64) -> CommonResult<Option<Record>> {
-        read_record(id, |key| self.get_rocks_store().hsm_get(key))
+        self.get_rocks_store()
+            .hsm_record_parts(id)?
+            .map(|(record, access)| merge_access(record, access))
+            .transpose()
     }
     pub(crate) fn hsm_namespace(&self) -> CommonResult<Option<Namespace>> {
         self.get_rocks_store()
@@ -125,7 +133,30 @@ impl FsDir {
         }
         Ok(())
     }
+    /// This committed envelope updates only the access projection. Holding the
+    /// namespace read guard blocks structural apply/restore, while allowing
+    /// protected reads to continue. The store serializes checkpoint applies.
+    pub(crate) fn try_apply_access_checkpoint_entry(
+        &self,
+        entry: &HsmEntry,
+    ) -> Option<CommonResult<()>> {
+        let bytes = entry.payload.strip_prefix(access_checkpoint::MAGIC)?;
+        Some((|| {
+            if !self.hsm_enabled {
+                return err_box!("HSM journal requires hsm_enabled=true on every Master");
+            }
+            let value = access_checkpoint::apply(self, bytes)?;
+            if let Some((_, tx)) = self.hsm_local_apply.remove(&entry.ticket) {
+                let _ = tx.send(vec![value]);
+            }
+            Ok(())
+        })())
+    }
+
     pub fn apply_hsm_entry(&mut self, entry: &HsmEntry) -> CommonResult<()> {
+        if let Some(result) = self.try_apply_access_checkpoint_entry(entry) {
+            return result;
+        }
         if !self.hsm_enabled {
             return err_box!("HSM journal requires hsm_enabled=true on every Master");
         }
@@ -188,6 +219,12 @@ impl FsDir {
     fn apply_hsm_results(&mut self, payload: &[u8]) -> CommonResult<Vec<Value>> {
         if let Some(bytes) = payload.strip_prefix(crate::master::fs::worker_cleanup::MAGIC) {
             return crate::master::fs::worker_cleanup::apply(self, bytes).map(|value| vec![value]);
+        }
+        if let Some(bytes) = payload.strip_prefix(access_checkpoint::ACTIVATE_MAGIC) {
+            return access_checkpoint::activate(self, bytes).map(|value| vec![value]);
+        }
+        if let Some(bytes) = payload.strip_prefix(access_checkpoint::MAGIC) {
+            return access_checkpoint::apply(self, bytes).map(|value| vec![value]);
         }
         if let Some(bytes) = payload.strip_prefix(READ_BATCH_MAGIC) {
             let transactions: Vec<Transaction> = decode(bytes)?;
@@ -462,7 +499,7 @@ impl FsDir {
                         .transpose()?
                         .unwrap_or(0);
                     if clock > old {
-                        batch.hsm_put(read_clock::FLOOR, &pack(&clock)?)?;
+                        batch.hsm_put(read_clock::FLOOR, &pack(clock)?)?;
                     }
                 } else {
                     ordinary::write_record(&mut batch, old.as_ref(), &record)?;
@@ -505,7 +542,7 @@ impl FsDir {
                                     .length
                                     .checked_mul(copies)
                                     .ok_or("HSM reservation size overflow")?;
-                                batch.hsm_put(&reserved, &pack(&amount)?)?;
+                                batch.hsm_put(&reserved, &pack(amount)?)?;
                                 next_reserved = Some(amount);
                             }
                         } else {
@@ -535,7 +572,7 @@ impl FsDir {
                 }
                 let total =
                     u64::try_from(total).map_err(|_| "invalid HSM reservation aggregate")?;
-                batch.hsm_put(lifecycle::RESERVATION_TOTAL, &pack(&total)?)?;
+                batch.hsm_put(lifecycle::RESERVATION_TOTAL, &pack(total)?)?;
             }
             if let Some(child) = &changed_inode {
                 batch.write_inode(child.as_ref())?;
@@ -766,15 +803,32 @@ impl MasterFilesystem {
             inode: None,
             expected_version: None,
             record: None,
-            namespace: Some(ns),
+            namespace: Some(ns.clone()),
             expected_epoch: None,
             create: false,
             time: curvine_runtime::common::LocalTime::mills() as i64,
             data: None,
             action: None,
         };
+        let (term, nonce) = {
+            let dir = self.fs_dir.read();
+            let _ = dir.hsm_read_time().map_err(io)?;
+            (
+                dir.journal_writer.current_term(),
+                dir.hsm_read_protection.nonce(),
+            )
+        };
         let response = self.hsm_submit(&tx).await?;
-        field(&response, "data")
+        let actual: Namespace = field(&response, "data")?;
+        let dir = self.fs_dir.read();
+        if actual.storage == ns.storage
+            && actual.incarnation == ns.incarnation
+            && dir.journal_writer.current_term() == term
+            && nonce == dir.hsm_read_protection.nonce()
+        {
+            dir.hsm_read_clock.mark_fresh(term);
+        }
+        Ok(actual)
     }
     pub async fn hsm_control(&self, request: HsmControlRequest) -> HsmControlResponse {
         let enabled = self.fs_dir.read().hsm_enabled;
@@ -793,7 +847,7 @@ impl MasterFilesystem {
             }
             return curvine_model::hsm::control_response(request);
         }
-        let value = match serde_json::from_slice::<Value>(&request.payload) {
+        let mut value = match serde_json::from_slice::<Value>(&request.payload) {
             Ok(value) => value,
             Err(_) => {
                 return HsmControlResponse {
@@ -804,6 +858,26 @@ impl MasterFilesystem {
                 }
             }
         };
+        if value["op"] == "read_close_batch" {
+            let result = async {
+                let closes = value
+                    .get_mut("closes")
+                    .and_then(Value::as_array_mut)
+                    .filter(|closes| closes.len() <= 512)
+                    .ok_or_else(|| HsmError::Invalid("invalid bounded close batch".into()))?;
+                let protection = self.fs_dir.read().hsm_read_protection.clone();
+                let closes: Vec<read_protection::Close> =
+                    serde_json::from_value(Value::Array(std::mem::take(closes))).map_err(io)?;
+                protection.close_batch(self, closes).await?;
+                Ok(reply("done", Value::Null))
+            }
+            .await
+            .unwrap_or_else(error_value);
+            return HsmControlResponse {
+                protocol_version: 1,
+                payload: result.to_string().into_bytes(),
+            };
+        }
         let class = self.hsm_control_class(&value);
         let result = if value["op"] == "policy_scan" {
             let fs = self.clone();
@@ -813,6 +887,23 @@ impl MasterFilesystem {
             value["op"].as_str(),
             Some("open_path" | "read_path" | "read_close" | "read_renew")
         ) {
+            let protection = self.fs_dir.read().hsm_read_protection.clone();
+            let fast = protection.execute(self, &value).await;
+            match fast {
+                Ok(Some(result)) => {
+                    return HsmControlResponse {
+                        protocol_version: 1,
+                        payload: result.encode(value["read_encoding"] == "protobuf_v1"),
+                    }
+                }
+                Err(error) => {
+                    return HsmControlResponse {
+                        protocol_version: 1,
+                        payload: error_value(error).to_string().into_bytes(),
+                    }
+                }
+                Ok(None) => {}
+            }
             let batcher = self.fs_dir.read().hsm_read_batcher.clone();
             batcher
                 .execute(self.clone(), value)
@@ -901,6 +992,9 @@ impl MasterFilesystem {
         if request["op"] != "capabilities" {
             self.hsm_read_barrier().await?;
         }
+        if !shared {
+            self.hsm_before_stable_underheld().await?;
+        }
         let result = self.hsm_execute(request, &mut turn).await;
         if matches!(&result, Err(HsmError::Unknown(_))) {
             if let Err(error) = self.hsm_read_barrier().await {
@@ -981,7 +1075,10 @@ impl MasterFilesystem {
             {
                 return Err(HsmError::Busy("managed import is private".into()));
             }
-            return Ok(reply("entity", record.state));
+            return Ok(reply(
+                "entity",
+                fs.hsm_read_protection.observed(record).state,
+            ));
         }
         if op == "view_blocks" {
             let capability: Vec<u8> = field(&request, "capability")?;
@@ -1536,7 +1633,7 @@ impl MasterFilesystem {
                 let source = if record.native_blocks {
                     DataEndpoint {
                         adapter: "curvine-block-view-v2".into(),
-                        capability: pack(&serde_json::json!({"data":record.state.data,"operation_id":ctx.operation_id,"view_id":view_id})).map_err(io)?,
+                        capability: pack(serde_json::json!({"data":record.state.data,"operation_id":ctx.operation_id,"view_id":view_id})).map_err(io)?,
                     }
                 } else {
                     record
@@ -2122,7 +2219,9 @@ mod scale_fixture;
 
 pub(crate) mod read_batch;
 
+mod access_checkpoint;
 mod read_history;
+pub(crate) mod read_protection;
 
 mod read_grant;
 

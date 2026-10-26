@@ -145,7 +145,7 @@ pub(super) fn apply(fs: &FsDir, transactions: &[Transaction]) -> CommonResult<Op
         batch.write_inode(&inode)?;
     }
     if clock > old_clock {
-        batch.hsm_put(read_clock::FLOOR, &pack(&clock)?)?;
+        batch.hsm_put(read_clock::FLOOR, &pack(clock)?)?;
     }
     if !outcomes.is_empty() {
         batch.commit()?;
