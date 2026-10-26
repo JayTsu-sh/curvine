@@ -185,6 +185,7 @@ fn recursive_unlink_counts_all_aliases_without_deleting_outside_links() -> Commo
         DeleteRequest {
             path: "/tree".into(),
             recursive: true,
+            skip_trash: None,
         },
     )?)?;
     let result = replay(&fs, &operation)?;
@@ -283,6 +284,7 @@ fn ttl_candidates_recheck_metadata_identity_ownership_and_actual_children() -> C
             DeleteRequest {
                 path: "/ttl".into(),
                 recursive: true,
+                skip_trash: None,
             },
         )?;
         input.ttl = Some(TtlCondition {
@@ -361,6 +363,7 @@ fn recursive_delete_removes_wide_nested_tree_without_reusing_detached_pointers()
         DeleteRequest {
             path: "/wide-delete".into(),
             recursive: true,
+            skip_trash: None,
         },
     )?)?;
     let result = replay(&fs, &operation)?;

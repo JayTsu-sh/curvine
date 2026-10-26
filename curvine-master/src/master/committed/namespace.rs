@@ -144,6 +144,7 @@ pub(super) fn apply(
                             edits: Default::default(),
                             response: curvine_proto::DeleteResponse {
                                 res: Some(Default::default()),
+                                trashed: None,
                             }
                             .encode_to_vec(),
                             allocation: None,
@@ -176,6 +177,9 @@ impl MasterFilesystem {
         mounts: Option<&MountManager>,
         term: u64,
     ) -> FsResult<NativeMutationResponse> {
+        if input.trash_input() {
+            return self.trash_mutate(request, input, mounts, term).await;
+        }
         let identity = transport::identity(request);
         let ttl = match &input {
             NativeInput::TtlDelete {
@@ -188,14 +192,20 @@ impl MasterFilesystem {
         };
         let hash = ttl_fingerprint(fingerprint(request.code, &request.header), ttl.as_ref());
         let time = LocalTime::mills() as i64;
-        let protection = {
+        {
             let dir = self.fs_dir.read();
             if let Prior::Cached(result) = prior(&dir, &identity, hash, request.code as i8, time)? {
                 return Ok(transport::response(&identity, result));
             }
-            dir.hsm_read_time()?.protection()
-        };
+        }
+        // The coordinator qualified this prefix and retains exclusive
+        // authority. Prior outcomes are read-only, including in quarantine.
+        self.hsm_before_stable_underheld()
+            .await
+            .map_err(|error| curvine_error::FsError::common(error.to_string()))?;
+        let protection = self.fs_dir.read().hsm_read_time()?.protection();
         let admission = (|| -> FsResult<()> {
+            input.validate_client(&self.fs_dir.read())?;
             let mut paths = vec![input.path()];
             if let NativeInput::Rename(rename) = &input {
                 paths.push(&rename.dst);

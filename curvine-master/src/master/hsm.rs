@@ -1691,6 +1691,11 @@ impl MasterFilesystem {
                 tx.response = reply("entity", &record.state);
             }
             "release" => {
+                if crate::master::meta::trash::is_trash_path(&record.path) {
+                    return Err(HsmError::Busy(
+                        "trash retention preserves resident blocks until explicit purge".into(),
+                    ));
+                }
                 let expected: EntityState = field(request, "expected")?;
                 if expected != record.state {
                     return Err(HsmError::Conflict("Release observation changed".into()));
@@ -1845,6 +1850,7 @@ impl MasterFilesystem {
                         inodes: 0,
                         bytes: 0,
                         blocks,
+                        trashed: false,
                     });
                 let acknowledged = {
                     let fs = self.fs_dir.read();

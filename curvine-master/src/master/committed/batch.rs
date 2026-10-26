@@ -11,7 +11,7 @@ use prost::Message;
 use std::collections::BTreeMap;
 
 impl PreparedEdits {
-    fn append(&mut self, next: Self) {
+    pub(super) fn append(&mut self, next: Self) {
         // Later commands observe the private result of earlier commands. CAS
         // must retain each key's FIRST observation of the committed prefix.
         for (key, value) in next.inode_checks {
@@ -34,7 +34,7 @@ impl PreparedEdits {
         self.controls.extend(next.controls);
     }
 
-    fn coalesce_versions(&mut self) -> CommonResult<()> {
+    pub(super) fn coalesce_versions(&mut self) -> CommonResult<()> {
         // Build this map once after all items, rather than rebuilding every
         // successful prefix (quadratic for overwrites with many retirements).
         let mut controls = BTreeMap::new();

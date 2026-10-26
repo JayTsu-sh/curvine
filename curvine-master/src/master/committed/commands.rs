@@ -19,12 +19,13 @@ pub(super) struct PreparedCommand {
     pub(super) failure: Option<FsError>,
 }
 
-fn directory(
+pub(super) fn directory(
     view: &mut CommandView<'_, '_>,
     parent_id: i64,
     name: &str,
     mut opts: MkdirOpts,
     time: i64,
+    captured: Option<i64>,
 ) -> FsResult<i64> {
     let mut parent = view
         .inode(parent_id)?
@@ -37,7 +38,13 @@ fn directory(
         opts.group = acl.group.clone();
         opts.mode |= 0o2000;
     }
-    let id = view.allocate_inode()?;
+    let id = match captured {
+        Some(id) => {
+            view.reserve_inode(id)?;
+            id
+        }
+        None => view.allocate_inode()?,
+    };
     let mut inode = InodeDir::with_opts(id, time, opts);
     inode.parent_id = parent_id;
     parent.update_mtime(time);
@@ -84,6 +91,7 @@ pub(super) fn mkdir(
                 &parts[pos],
                 options,
                 time,
+                None,
             )?;
             resolved.push(id);
         }
@@ -127,6 +135,7 @@ pub(super) fn create(
             name,
             opts.dir_opts().parent_opts(),
             time,
+            None,
         )?;
         resolved.push(id);
     }
@@ -412,24 +421,30 @@ pub(super) fn overwrite(
 /// this response independently on each replica, so persist a sorted encoding.
 /// The small wrappers use the existing wire tags/types; the public generated
 /// DTO and already-cached original response bytes remain unchanged.
-fn attribute_response(mut status: curvine_proto::FileStatusProto) -> Vec<u8> {
+pub(super) fn canonical_file_status(mut status: curvine_proto::FileStatusProto) -> Vec<u8> {
     #[derive(Clone, PartialEq, Message)]
     struct OrderedAttributes {
         #[prost(btree_map = "string, bytes", tag = "13")]
         values: std::collections::BTreeMap<String, Vec<u8>>,
-    }
-    #[derive(Clone, PartialEq, Message)]
-    struct Response {
-        // A nested message and bytes share the length-delimited wire type.
-        #[prost(bytes = "vec", required, tag = "1")]
-        status: Vec<u8>,
     }
     let attributes = OrderedAttributes {
         values: std::mem::take(&mut status.x_attr).into_iter().collect(),
     };
     let mut encoded = status.encode_to_vec();
     encoded.extend(attributes.encode_to_vec());
-    Response { status: encoded }.encode_to_vec()
+    encoded
+}
+fn attribute_response(status: curvine_proto::FileStatusProto) -> Vec<u8> {
+    #[derive(Clone, PartialEq, Message)]
+    struct Response {
+        // A nested message and bytes share the length-delimited wire type.
+        #[prost(bytes = "vec", required, tag = "1")]
+        status: Vec<u8>,
+    }
+    Response {
+        status: canonical_file_status(status),
+    }
+    .encode_to_vec()
 }
 
 /// Recursive inputs are expanded only inside committed apply. Child options
@@ -581,6 +596,7 @@ pub(super) fn delete(
     }
     let response = curvine_proto::DeleteResponse {
         res: Some(ProtoUtils::delete_res_to_pb(result)),
+        trashed: None,
     }
     .encode_to_vec();
     Ok(PreparedCommand {
@@ -597,6 +613,7 @@ pub(super) fn rename(
     time: i64,
 ) -> FsResult<PreparedCommand> {
     use curvine_model::RenameFlags;
+    let trusted_trash = batch.trusted_trash();
     let flags = RenameFlags::new(request.flags);
     if ![
         0,
@@ -605,6 +622,12 @@ pub(super) fn rename(
         RenameFlags::RESTORE.value(),
     ]
     .contains(&request.flags)
+        && !(trusted_trash
+            && [
+                (RenameFlags::NO_REPLACE | RenameFlags::TRASH).value(),
+                (RenameFlags::NO_REPLACE | RenameFlags::RESTORE).value(),
+            ]
+            .contains(&request.flags))
     {
         return Err(FsError::invalid_argument("unsupported rename flags"));
     }
@@ -730,6 +753,22 @@ pub(super) fn rename(
     moving.change_name(dst_parts.last().unwrap().clone());
     moving.set_parent_id(dst_parent);
     moving.update_ctime(time);
+    if trusted_trash {
+        let attrs = moving.x_attr_mut()?;
+        if flags.trash() {
+            attrs.insert(
+                crate::master::meta::trash::TRASH_XATTR_ORIGIN.into(),
+                request.src.as_bytes().to_vec(),
+            );
+            attrs.insert(
+                crate::master::meta::trash::TRASH_XATTR_DELETE_MS.into(),
+                time.to_le_bytes().to_vec(),
+            );
+        } else if flags.restore() {
+            attrs.remove(crate::master::meta::trash::TRASH_XATTR_ORIGIN);
+            attrs.remove(crate::master::meta::trash::TRASH_XATTR_DELETE_MS);
+        }
+    }
     view.put_inode(moving)?;
     view.set_edge(dst_parent, dst_parts.last().unwrap(), Some(source))?;
     for (_, mut parent) in parents {

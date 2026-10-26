@@ -54,6 +54,7 @@ impl NativeCoordinator {
         request: NativeMutationRequest,
         input: NativeInput,
     ) -> FsResult<NativeMutationResponse> {
+        let input = input.capture_delete_mode(fs.conf.trash_enabled);
         let queued = std::time::Instant::now();
         let slot = self.slots[input.background() as usize]
             .clone()
@@ -176,9 +177,11 @@ impl NativeCoordinator {
                 if term == 0 || term != fs.master_monitor.journal_term.load(Ordering::Acquire) {
                     return Err(FsError::common("native preparation leader changed"));
                 }
-                fs.hsm_before_stable_underheld()
-                    .await
-                    .map_err(|error| FsError::common(error.to_string()))?;
+                if !namespace {
+                    fs.hsm_before_stable_underheld()
+                        .await
+                        .map_err(|error| FsError::common(error.to_string()))?;
+                }
                 Ok(ns)
             }
             .await;
@@ -398,6 +401,60 @@ impl NativeCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn permanent_nonrecursive_delete_captures_mode_and_keeps_native_microbatches() {
+        let delete = |path: &str, recursive: bool, skip_trash: bool| {
+            NativeInput::Delete(curvine_proto::DeleteRequest {
+                path: path.into(),
+                recursive,
+                skip_trash: Some(skip_trash),
+            })
+        };
+        for (path, recursive, enabled, skip, namespace) in [
+            ("/ordinary", false, false, false, false),
+            ("/ordinary", false, true, true, false),
+            ("/ordinary", false, true, false, true),
+            ("/.Trash/123-42", false, false, true, true),
+            ("/.Trash/123-42", false, true, true, true),
+            ("/tree", true, false, true, true),
+            ("/tree", true, true, false, true),
+        ] {
+            let input = delete(path, recursive, skip).capture_delete_mode(enabled);
+            assert_eq!(
+                input.namespace_input(),
+                namespace,
+                "{path}, recursive={recursive}, enabled={enabled}, skip={skip}"
+            );
+            assert_eq!(input.trash_input(), namespace);
+        }
+        let captured = delete("/ordinary", false, false).capture_delete_mode(false);
+        // Reusing an admitted operation after configuration changes must not
+        // reinterpret its already-captured permanent mutation as a soft one.
+        assert!(!captured.capture_delete_mode(true).namespace_input());
+        let coordinator = NativeCoordinator::default();
+        for sequence in 1..=2 {
+            let (response, _) = oneshot::channel();
+            coordinator
+                .queue
+                .lock()
+                .unwrap()
+                .pending
+                .push_back(Pending {
+                    request: NativeMutationRequest {
+                        sequence,
+                        ..Default::default()
+                    },
+                    input: Some(delete("/ordinary", false, false).capture_delete_mode(false)),
+                    response,
+                    queued: std::time::Instant::now(),
+                    mounts: None,
+                    _slot: coordinator.slots[0].clone().try_acquire_owned().unwrap(),
+                });
+        }
+        assert_eq!(coordinator.take().unwrap().len(), 2);
+        assert!(coordinator.take().is_none());
+    }
+
     #[test]
     fn foreground_batches_overtake_ttl_but_background_gets_a_bounded_turn() {
         let coordinator = NativeCoordinator::default();

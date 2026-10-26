@@ -62,6 +62,7 @@ pub(super) struct BatchView<'a> {
     bytes: usize,
     budget: usize,
     protection_time: Option<crate::master::hsm::read_clock::ReadTime>,
+    trusted_trash: bool,
 }
 impl<'a> BatchView<'a> {
     pub(super) fn new(authority: &'a FsDir, budget: usize) -> Self {
@@ -78,6 +79,7 @@ impl<'a> BatchView<'a> {
             bytes: 0,
             budget,
             protection_time: None,
+            trusted_trash: false,
         }
     }
     /// Compact namespace inputs are expanded only inside committed apply.
@@ -92,6 +94,20 @@ impl<'a> BatchView<'a> {
     }
     pub(super) fn guard_path(&self, path: &str) -> curvine_error::FsResult<()> {
         self.authority.hsm_guard_path(path)
+    }
+    pub(super) fn for_trash(
+        authority: &'a FsDir,
+        time: crate::master::hsm::read_clock::ReadTime,
+    ) -> Self {
+        let mut view = Self::for_namespace(authority, time);
+        view.trusted_trash = true;
+        view
+    }
+    pub(super) fn trusted_trash(&self) -> bool {
+        self.trusted_trash
+    }
+    pub(super) fn authority(&self) -> &FsDir {
+        self.authority
     }
     pub(super) fn command<'b>(&'b mut self) -> CommandView<'b, 'a> {
         let last_inode = self.last_inode;
@@ -160,7 +176,7 @@ impl<'a> BatchView<'a> {
         }
         Ok(())
     }
-    fn install(&mut self, edits: &PreparedEdits) -> CommonResult<()> {
+    pub(super) fn install(&mut self, edits: &PreparedEdits) -> CommonResult<()> {
         let records = edits
             .hsm_records
             .iter()
@@ -499,6 +515,16 @@ impl CommandView<'_, '_> {
         let id = self.batch.authority.inode_id.next()?;
         self.edits.last_inode = self.edits.last_inode.max(id);
         Ok(id)
+    }
+    pub(super) fn reserve_inode(&mut self, id: i64) -> CommonResult<()> {
+        if id <= ROOT_INODE_ID
+            || id > crate::master::meta::InodeId::ID_MASK
+            || self.inode(id)?.is_some()
+        {
+            return err_box!("captured native inode is invalid or already allocated");
+        }
+        self.edits.last_inode = self.edits.last_inode.max(id);
+        Ok(())
     }
     pub(super) fn put_inode(&mut self, inode: InodeView) -> CommonResult<()> {
         let id = inode.id();

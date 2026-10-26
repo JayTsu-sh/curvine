@@ -98,7 +98,7 @@ impl InodeTtlChecker {
                         );
                     }
                 }
-                Ok((false, inode)) => {
+                Ok((false, inode, _)) => {
                     self.bucket_list.add(&inode);
                 }
 

@@ -14,6 +14,7 @@
 
 use crate::master::fs::MasterFilesystem;
 use crate::master::meta::inode::{InodePath, InodeView};
+use crate::master::meta::trash;
 use curvine_core_error::err_ext;
 use curvine_error::{FsError, FsResult};
 use curvine_model::TtlAction;
@@ -56,6 +57,16 @@ impl InodeTtlExecutor {
         Ok(inode)
     }
 
+    fn is_trash_entry(inode: &InodeView) -> bool {
+        if inode.is_file_entry() {
+            return false;
+        }
+        inode
+            .x_attr()
+            .map(|x_attr| x_attr.contains_key(trash::TRASH_XATTR_ORIGIN))
+            .unwrap_or(false)
+    }
+
     pub fn is_active(&self) -> bool {
         self.filesystem.master_monitor.is_active()
     }
@@ -67,29 +78,45 @@ impl InodeTtlExecutor {
         Ok(inp.is_empty_dir())
     }
 
-    pub fn execute_by_id(&self, inode_id: i64) -> FsResult<(bool, InodeView)> {
-        // Conservative no-op decisions need no mutation gate or commit. This
-        // avoids serializing a large TTL pass over files owned by HSM. The
-        // actual action repeats all checks under committed_background below.
+    // Returns (handled, inode, reclaimed_bytes). `handled` drives TTL bucket
+    // bookkeeping; `reclaimed_bytes` lets quota eviction count only space that
+    // was actually released.
+    pub fn execute_by_id(&self, inode_id: i64) -> FsResult<(bool, InodeView, i64)> {
+        // No-op candidates do not need a committed mutation turn. Actual
+        // deletion rechecks inode identity and expiry at committed apply.
         {
             let dir = self.filesystem.fs_dir.read();
             if dir.hsm_enabled {
                 if let Some(inode) = dir.store.get_inode(inode_id, None)? {
+                    if Self::is_trash_entry(&inode)
+                        || trash::is_trash_path(&dir.get_inode_path(inode_id)?)
+                    {
+                        return Ok((true, inode, 0));
+                    }
                     if dir.hsm_record(inode_id)?.is_some() || !inode.is_expired()? {
-                        return Ok((false, inode));
+                        return Ok((false, inode, 0));
                     }
                     if inode.storage_policy()?.ttl_action == TtlAction::Delete
                         && dir.get_mount_table()?.is_empty()
                     {
                         drop(dir);
-                        return self.filesystem.hsm_ttl_delete(inode);
+                        return self
+                            .filesystem
+                            .hsm_ttl_delete(inode)
+                            .map(|(handled, inode)| {
+                                let reclaimed = match &inode {
+                                    InodeView::File(file) if handled && file.nlink() <= 1 => {
+                                        file.len.max(0)
+                                    }
+                                    _ => 0,
+                                };
+                                (handled, inode, reclaimed)
+                            });
                     }
                     if inode.storage_policy()?.ttl_action == TtlAction::Free
                         && inode.as_file_ref().is_ok_and(|file| !file.ufs_exists())
                     {
-                        // Native-only bytes have no UFS copy to free. Their
-                        // lifecycle belongs to explicit HSM Release policies.
-                        return Ok((false, inode));
+                        return Ok((false, inode, 0));
                     }
                 }
             }
@@ -98,23 +125,33 @@ impl InodeTtlExecutor {
             .committed_background(|| self.execute_by_id0(inode_id))
     }
 
-    fn execute_by_id0(&self, inode_id: i64) -> FsResult<(bool, InodeView)> {
+    fn execute_by_id0(&self, inode_id: i64) -> FsResult<(bool, InodeView, i64)> {
         let inode = if let Some(inode) = self.get_inode_from_store(inode_id)? {
             inode
         } else {
             return err_ext!(FsError::file_not_found(format!("inode_id={}", inode_id)));
         };
 
-        // HSM owns these files' lifecycle; TTL must not bypass committed publication.
+        // Trash entries are governed by trash retention, not TTL or quota
+        // eviction. Detect them from the internal marker before the expiry
+        // check: the marker is cheap (no path walk) and makes a trashed entry
+        // report `handled` with zero reclaimed bytes even when it has no TTL,
+        // so eviction drops it from the candidate set without counting it as
+        // progress. Blocks stay allocated until a purge reclaims them.
+        if Self::is_trash_entry(&inode) {
+            debug!("skip ttl action for trash entry inode_id={}", inode_id);
+            return Ok((true, inode, 0));
+        }
+
         let managed = {
-            let fs = self.filesystem.fs_dir.read();
-            fs.hsm_enabled && fs.hsm_record(inode_id)?.is_some()
+            let dir = self.filesystem.fs_dir.read();
+            dir.hsm_enabled && dir.hsm_record(inode_id)?.is_some()
         };
         if managed {
-            return Ok((false, inode));
+            return Ok((false, inode, 0));
         }
         if !inode.is_expired()? {
-            return Ok((false, inode));
+            return Ok((false, inode, 0));
         }
 
         let action = inode.storage_policy()?.ttl_action;
@@ -125,26 +162,39 @@ impl InodeTtlExecutor {
         );
 
         let path = self.get_inode_path(inode_id)?;
+        if trash::is_trash_path(&path) {
+            // Entries placed under /.Trash without the internal marker (for
+            // example restored/foreign entries) are still not TTL candidates.
+            debug!("skip ttl action for trash path {} ({})", path, inode_id);
+            return Ok((true, inode, 0));
+        }
+
         match action {
             TtlAction::Delete => {
                 // A non-empty directory stays until its children are gone.
-                // Returning (false, inode) puts it back in its TTL bucket.
+                // Returning (false, inode, ..) puts it back in its TTL bucket.
                 // Free is not gated here: it drops cached blocks and leaves children.
                 if inode.is_dir() && !self.is_empty_dir(&path)? {
                     debug!("skip ttl delete for non-empty directory {}", inode_id);
-                    return Ok((false, inode));
+                    return Ok((false, inode, 0));
                 }
+                // Unlinking one name of a hard-linked file keeps the shared
+                // blocks, so only the last link reclaims the file size.
+                let reclaimed = match &inode {
+                    InodeView::File(f) if f.nlink() <= 1 => f.len.max(0),
+                    _ => 0,
+                };
                 self.filesystem.delete(&path, true)?;
                 debug!("ttl delete {} {:?}", path, inode);
-                Ok((true, inode))
+                Ok((true, inode, reclaimed))
             }
             TtlAction::Free => {
                 let freed = self.filesystem.free(&path, true)?;
                 debug!("ttl free {} {:?}", path, inode);
-                Ok((freed.inodes > 0, inode))
+                Ok((freed.inodes > 0, inode, freed.bytes.max(0)))
             }
 
-            _ => Ok((true, inode)),
+            _ => Ok((true, inode, 0)),
         }
     }
 }

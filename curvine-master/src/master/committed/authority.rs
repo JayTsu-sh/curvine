@@ -17,7 +17,7 @@ use curvine_runtime::common::SerdeUtils;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) struct RequestIdentity {
     pub(super) incarnation: String,
     pub(super) session: String,

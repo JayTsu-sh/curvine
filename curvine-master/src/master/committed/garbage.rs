@@ -178,6 +178,7 @@ impl MasterFilesystem {
                 inodes: 0,
                 bytes: 0,
                 blocks: [(garbage.block, snapshot.locations)].into_iter().collect(),
+                trashed: false,
             });
             if snapshot.acknowledged {
                 ready.push((key.clone(), bytes.clone()));

@@ -368,14 +368,12 @@ impl Drop for FsReader {
 mod tests {
     use super::*;
     use curvine_model::hsm::native::ReadHandle;
-    use curvine_runtime::runtime::RpcRuntime;
+    use curvine_runtime::runtime::{RpcRuntime, Runtime};
 
-    #[test]
-    fn expired_fast_lease_rejects_already_buffered_bytes() {
-        let Ok(now) = curvine_sys::lease_time_millis() else {
-            return;
-        };
-        let mut conf = curvine_config::ClusterConf::default();
+    fn fast_reader_with_cached_bytes(
+        mut conf: curvine_config::ClusterConf,
+    ) -> Option<(FsReader, Arc<Runtime>)> {
+        let now = curvine_sys::lease_time_millis().ok()?;
         conf.client.init().unwrap();
         let context = Arc::new(FsContext::new(conf).unwrap());
         let rt = context.clone_runtime();
@@ -407,11 +405,42 @@ mod tests {
         )
         .unwrap();
         reader.chunk = DataSlice::bytes(bytes::Bytes::from_static(b"cached"));
+        Some((reader, rt))
+    }
+
+    #[test]
+    fn expired_fast_lease_rejects_already_buffered_bytes() {
+        let Some((mut reader, rt)) =
+            fast_reader_with_cached_bytes(curvine_config::ClusterConf::default())
+        else {
+            return;
+        };
         // Model resume beyond the boot deadline while Instant remains valid.
         reader.hsm_boot_deadline = Some(0);
         assert!(rt.block_on(reader.read_chunk(Some(1))).is_err());
         assert_eq!(reader.chunk.len(), 6);
         // This test creates no real server grant requiring advisory cleanup.
+        reader.hsm.take();
+    }
+
+    #[test]
+    fn fast_lease_expiry_rejects_cached_forward_seek_with_absorption_enabled() {
+        let mut conf = curvine_config::ClusterConf::default();
+        conf.client.enable_smart_prefetch = true;
+        conf.client.read_chunk_num = 4;
+        conf.client.seek_absorb_window_str = "4MB".into();
+        conf.client.short_circuit = true;
+        let Some((mut reader, rt)) = fast_reader_with_cached_bytes(conf) else {
+            return;
+        };
+        rt.block_on(reader.seek(2)).unwrap();
+        assert_eq!(reader.pos(), 2);
+        assert_eq!(reader.chunk.as_slice(), b"ched");
+        // Simulate host resume beyond the grant after a cached forward seek.
+        reader.hsm_boot_deadline = Some(0);
+        assert!(rt.block_on(reader.read_chunk(Some(1))).is_err());
+        assert_eq!(reader.pos(), 2);
+        assert_eq!(reader.chunk.as_slice(), b"ched");
         reader.hsm.take();
     }
 }

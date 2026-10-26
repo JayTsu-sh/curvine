@@ -82,8 +82,12 @@ impl FsDir {
         }
         let version: u32 =
             SerdeUtils::deserialize(entry.payload.get(..4).ok_or("truncated native version")?)?;
-        if version == super::namespace::VERSION {
-            let result = super::namespace::apply(self, SerdeUtils::deserialize(&entry.payload)?)?;
+        if version == super::namespace::VERSION || version == super::trash::VERSION {
+            let result = if version == super::namespace::VERSION {
+                super::namespace::apply(self, SerdeUtils::deserialize(&entry.payload)?)?
+            } else {
+                super::trash::apply(self, SerdeUtils::deserialize(&entry.payload)?)?
+            };
             if let Some((_, waiter)) = self.native_local_apply.remove(&entry.ticket) {
                 let _ = waiter.send(vec![result]);
             }

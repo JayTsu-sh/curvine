@@ -305,6 +305,14 @@ impl MiniCluster {
             .clone()
     }
 
+    #[cfg(feature = "hsm-scale-test")]
+    pub fn hsm_test_master_filesystems(&self) -> Vec<MasterFilesystem> {
+        self.master_entries
+            .iter()
+            .map(|entry| entry.0.clone())
+            .collect()
+    }
+
     pub fn get_active_master_replication_manager(&self) -> Arc<MasterReplicationManager> {
         self.master_entries
             .iter()

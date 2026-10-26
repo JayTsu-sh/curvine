@@ -26,9 +26,20 @@ pub(crate) enum NativeInput {
     Reopen(curvine_proto::OpenFileRequest),
     SetAttr(curvine_proto::SetAttrRequest),
     Delete(curvine_proto::DeleteRequest),
+    // Captured at admission, never interpreted from configuration at apply.
+    // Ordinary permanent file deletes retain their native microbatch path.
+    PermanentDelete(curvine_proto::DeleteRequest),
     Resize(curvine_proto::FileResizeRequest),
     AssignWorker(curvine_proto::AssignWorkerRequest),
     Rename(curvine_proto::RenameRequest),
+    RestoreTrash(curvine_proto::RestoreTrashRequest),
+    EmptyTrash,
+    TrashPurge {
+        path: String,
+        inode: i64,
+        delete_ms: i64,
+        cutoff_ms: i64,
+    },
     TtlDelete {
         path: String,
         inode: i64,
@@ -41,6 +52,16 @@ impl NativeInput {
             return err_box!("unsupported native mutation format or size");
         }
         match request.code {
+            value if value == RpcCode::RestoreTrash as u32 => {
+                curvine_proto::RestoreTrashRequest::decode(request.header.as_slice())
+                    .map(Self::RestoreTrash)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
+            value if value == RpcCode::EmptyTrash as u32 => {
+                curvine_proto::EmptyTrashRequest::decode(request.header.as_slice())
+                    .map(|_| Self::EmptyTrash)
+                    .map_err(|error| FsError::common(error.to_string()))
+            }
             value if value == RpcCode::CreateFilesBatch as u32 => {
                 curvine_proto::CreateFilesBatchRequest::decode(request.header.as_slice())
                     .map(Self::CreateBatch)
@@ -129,26 +150,160 @@ impl NativeInput {
             Self::AddBlock(request) => &request.path,
             Self::Reopen(request) => &request.path,
             Self::SetAttr(request) => &request.path,
-            Self::Delete(request) => &request.path,
+            Self::Delete(request) | Self::PermanentDelete(request) => &request.path,
             Self::Rename(request) => &request.src,
+            Self::RestoreTrash(request) => &request.path,
+            Self::EmptyTrash => crate::master::meta::trash::TRASH_ROOT,
+            Self::TrashPurge { path, .. } => path,
             Self::Resize(request) => &request.path,
             Self::AssignWorker(request) => &request.path,
             Self::TtlDelete { path, .. } => path,
         }
     }
     pub(super) fn background(&self) -> bool {
-        matches!(self, Self::TtlDelete { .. })
+        matches!(self, Self::TtlDelete { .. } | Self::TrashPurge { .. })
+    }
+    pub(super) fn capture_delete_mode(self, trash_enabled: bool) -> Self {
+        match self {
+            Self::Delete(request)
+                if !request.recursive
+                    && (!trash_enabled || request.skip_trash())
+                    && Path::from_str(&request.path).is_ok_and(|path| {
+                        !crate::master::meta::trash::is_trash_path(path.path())
+                    }) =>
+            {
+                Self::PermanentDelete(request)
+            }
+            input => input,
+        }
     }
     pub(super) fn namespace_input(&self) -> bool {
         match self {
-            Self::Rename(_) | Self::TtlDelete { .. } => true,
-            Self::Delete(request) => request.recursive,
+            Self::Rename(_)
+            | Self::TtlDelete { .. }
+            | Self::Delete(_)
+            | Self::RestoreTrash(_)
+            | Self::EmptyTrash
+            | Self::TrashPurge { .. } => true,
             Self::SetAttr(request) => request.opts.recursive,
             _ => false,
         }
     }
-    pub(crate) fn legacy(self, fs: &MasterFilesystem) -> FsResult<Vec<u8>> {
+    pub(super) fn trash_input(&self) -> bool {
+        matches!(
+            self,
+            Self::Delete(_) | Self::RestoreTrash(_) | Self::EmptyTrash | Self::TrashPurge { .. }
+        )
+    }
+    /// Admission-only checks. Historical namespace DTOs deliberately decode
+    /// without these new client restrictions during journal replay.
+    pub(crate) fn validate_client(&self, dir: &crate::master::meta::FsDir) -> FsResult<()> {
+        let public_path = |path: &str| -> FsResult<()> {
+            let path = Path::from_str(path)?;
+            if crate::master::meta::trash::is_reserved_path(path.path()) {
+                return Err(FsError::invalid_argument(
+                    "path is reserved for the recycle bin",
+                ));
+            }
+            dir.hsm_guard_path(path.path())
+        };
         match self {
+            Self::CreateBatch(request) => {
+                for item in &request.requests {
+                    Self::Create(item.clone()).validate_client(dir)?;
+                }
+                return Ok(());
+            }
+            Self::AddBatch(request) => {
+                for item in &request.requests {
+                    Self::AddBlock(item.clone()).validate_client(dir)?;
+                }
+                return Ok(());
+            }
+            Self::CompleteBatch(request) => {
+                for item in &request.requests {
+                    Self::Complete(item.clone()).validate_client(dir)?;
+                }
+                return Ok(());
+            }
+            Self::SetAttr(request) => crate::master::meta::FsDir::check_not_internal_x_attr(
+                &ProtoUtils::set_attr_opts_from_pb(request.opts.clone()),
+            )?,
+            Self::Complete(request) => {
+                if let Some(opts) = &request.set_attr_opts {
+                    crate::master::meta::FsDir::check_not_internal_x_attr(
+                        &ProtoUtils::set_attr_opts_from_pb(opts.clone()),
+                    )?;
+                }
+            }
+            Self::Rename(request) => {
+                if curvine_model::RenameFlags::new(request.flags)
+                    .intersects(curvine_model::RenameFlags::internal_mask())
+                {
+                    return Err(FsError::invalid_argument(
+                        "rename flags contain a master-internal bit",
+                    ));
+                }
+                public_path(&request.dst)?;
+            }
+            Self::Delete(request) | Self::PermanentDelete(request) => {
+                let path = Path::from_str(&request.path)?;
+                if path.path() == crate::master::meta::trash::TRASH_ROOT {
+                    return Err(FsError::invalid_argument(
+                        "the recycle bin root cannot be deleted",
+                    ));
+                }
+                return dir.hsm_guard_path(path.path());
+            }
+            Self::RestoreTrash(request) => {
+                if !crate::master::meta::trash::is_trash_entry_path(&request.path) {
+                    return Err(FsError::invalid_argument(
+                        "restore requires a direct trash entry",
+                    ));
+                }
+                if let Some(dst) = request.dst.as_deref().filter(|dst| !dst.is_empty()) {
+                    public_path(dst)?;
+                }
+                return Ok(());
+            }
+            Self::EmptyTrash | Self::TrashPurge { .. } | Self::TtlDelete { .. } => return Ok(()),
+            _ => (),
+        }
+        public_path(self.path())?;
+        let inode = match self {
+            Self::Complete(request) => request.inode_id,
+            Self::AddBlock(request) => request.inode_id,
+            Self::Resize(request) => request.inode_id,
+            Self::AssignWorker(request) => request.inode_id,
+            _ => None,
+        };
+        if let Some(id) = inode.filter(|id| *id > 0) {
+            public_path(&dir.get_inode_path(id)?)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn legacy(self, fs: &MasterFilesystem) -> FsResult<Vec<u8>> {
+        if !matches!(
+            self,
+            Self::CreateBatch(_) | Self::AddBatch(_) | Self::CompleteBatch(_)
+        ) {
+            self.validate_client(&fs.fs_dir.read())?;
+        }
+        match self {
+            Self::RestoreTrash(request) => {
+                let restored =
+                    fs.restore_trash(&request.path, request.dst.as_deref(), request.overwrite())?;
+                Ok(curvine_proto::RestoreTrashResponse {
+                    dst: Some(restored.dst),
+                    status: Some(ProtoUtils::file_status_to_pb(restored.status)),
+                }
+                .encode_to_vec())
+            }
+            Self::EmptyTrash => Ok(curvine_proto::EmptyTrashResponse {
+                res: ProtoUtils::delete_res_to_pb(fs.empty_trash()?),
+            }
+            .encode_to_vec()),
+            Self::TrashPurge { .. } => err_box!("trash purge requires committed native authority"),
             Self::CreateBatch(request) => {
                 let mut file_statuses = vec![];
                 for item in request.requests {
@@ -210,10 +365,13 @@ impl NativeInput {
                 )?,
             }
             .encode_to_vec()),
-            Self::Delete(request) => {
-                let result = fs.delete(request.path, request.recursive)?;
+            Self::Delete(request) | Self::PermanentDelete(request) => {
+                let skip_trash = request.skip_trash();
+                let result = fs.delete_with_opts(request.path, request.recursive, skip_trash)?;
+                let trashed = result.trashed;
                 Ok(curvine_proto::DeleteResponse {
                     res: Some(ProtoUtils::delete_res_to_pb(result)),
+                    trashed: Some(trashed),
                 }
                 .encode_to_vec())
             }
@@ -321,6 +479,7 @@ impl NativeInput {
         ) {
             return super::batch::prepare(self, fs, mounts, view, time);
         }
+        self.validate_client(view.authority())?;
         if mounts
             .get_mount_info(&Path::from_str(self.path())?)?
             .is_some()
@@ -331,9 +490,14 @@ impl NativeInput {
             Self::CreateBatch(_) | Self::AddBatch(_) | Self::CompleteBatch(_) => unreachable!(),
             Self::Resize(request) => commands::resize(view, fs, request, time),
             Self::AssignWorker(request) => commands::assign_worker(view, fs, request),
-            Self::TtlDelete { .. } => err_box!("TTL input requires compact committed expansion"),
+            Self::TtlDelete { .. }
+            | Self::TrashPurge { .. }
+            | Self::RestoreTrash(_)
+            | Self::EmptyTrash => err_box!("namespace input requires compact committed expansion"),
             Self::Rename(request) => commands::rename(view, request, time),
-            Self::Delete(request) => commands::delete(view, &request.path, request.recursive, time),
+            Self::Delete(request) | Self::PermanentDelete(request) => {
+                commands::delete(view, &request.path, request.recursive, time)
+            }
             Self::SetAttr(request) => commands::set_attr(
                 view,
                 &request.path,

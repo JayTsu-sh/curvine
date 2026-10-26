@@ -92,6 +92,12 @@ pub enum RpcCode {
     HsmData = 62,
     NativeMutation = 63,
 
+    // Fork recycle-bin codes follow the already-published HSM range. Upstream
+    // uses 61-63 for trash; clients must use this fork's matching RPC schema.
+    ListTrash = 64,
+    RestoreTrash = 65,
+    EmptyTrash = 66,
+
     // block interface.
     WriteBlock = 80,
     ReadBlock = 81,
@@ -103,5 +109,30 @@ pub enum RpcCode {
 impl fmt::Display for RpcCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RpcCode;
+    use std::collections::HashSet;
+
+    #[test]
+    fn hsm_wire_codes_stay_stable_and_trash_codes_are_distinct() {
+        let contracts = [
+            (RpcCode::HsmControl, 61),
+            (RpcCode::HsmData, 62),
+            (RpcCode::NativeMutation, 63),
+            (RpcCode::ListTrash, 64),
+            (RpcCode::RestoreTrash, 65),
+            (RpcCode::EmptyTrash, 66),
+        ];
+        let mut wire_codes = HashSet::new();
+        for (code, expected) in contracts {
+            let wire = i8::from(code);
+            assert_eq!(wire, expected, "changed wire code for {code:?}");
+            assert!(wire_codes.insert(wire), "reused wire code {wire}");
+            assert_eq!(RpcCode::from(wire), code, "wrong dispatch for {wire}");
+        }
     }
 }

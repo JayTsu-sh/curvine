@@ -100,7 +100,8 @@ pub(super) fn selected_metadata(policy: &LifecyclePolicy, record: &Record, now: 
     }
 }
 fn selected_path(policy: &LifecyclePolicy, record: &Record) -> bool {
-    record.path.starts_with(&policy.prefix)
+    !crate::master::meta::trash::is_trash_path(&record.path)
+        && record.path.starts_with(&policy.prefix)
         && !policy
             .selection
             .exclude_prefixes
@@ -1058,6 +1059,24 @@ mod tests {
         record.state.length = 2097152;
         record.path = "/data/tmp/a".into();
         assert!(!selected(&policy, &record, 10000));
+
+        let mut all_paths = policy.clone();
+        all_paths.prefix = "/".into();
+        all_paths.selection.exclude_prefixes.clear();
+        record.path = "/data/a".into();
+        assert!(!selected_current_path(
+            &all_paths,
+            &mut record,
+            10000,
+            || { Some("/.Trash/123-1001/nested/a".into()) }
+        ));
+        assert!(!selected(&all_paths, &record, 10000));
+        assert!(selected_current_path(
+            &all_paths,
+            &mut record,
+            10000,
+            || { Some("/data/restored".into()) }
+        ));
     }
     #[test]
     fn watermarks_start_at_high_continue_between_and_stop_at_low() {

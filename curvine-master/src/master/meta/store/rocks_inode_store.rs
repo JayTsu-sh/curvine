@@ -75,6 +75,7 @@ impl RocksInodeStore {
     pub(crate) const CF_WORKER_CLEANUP_FORMAT: &'static str = "hsm_native_v9";
 
     pub(crate) const CF_ACCESS_CHECKPOINT_FORMAT: &'static str = "hsm_native_v10";
+    pub(crate) const CF_NATIVE_TRASH_FORMAT: &'static str = "hsm_native_v11";
 
     pub const PREFIX_MOUNT: u8 = 0x01;
     pub const PREFIX_LOCK: u8 = 0x02;
@@ -1184,9 +1185,12 @@ mod tests {
         let native_v9 = native_v8
             .clone()
             .add_cf(RocksInodeStore::CF_WORKER_CLEANUP_FORMAT);
-        let upgraded = native_v9
+        let native_v10 = native_v9
             .clone()
             .add_cf(RocksInodeStore::CF_ACCESS_CHECKPOINT_FORMAT);
+        let upgraded = native_v10
+            .clone()
+            .add_cf(RocksInodeStore::CF_NATIVE_TRASH_FORMAT);
         let store = RocksInodeStore::new(upgraded.clone(), true)?;
         let checkpoint = store.db.create_checkpoint(1)?;
         drop(store);
@@ -1200,6 +1204,7 @@ mod tests {
         assert!(RocksInodeStore::new(native_v7, false).is_err());
         assert!(RocksInodeStore::new(native_v8, false).is_err());
         assert!(RocksInodeStore::new(native_v9, false).is_err());
+        assert!(RocksInodeStore::new(native_v10, false).is_err());
         let mut store = RocksInodeStore::new(upgraded, false)?;
         store.db.restore(checkpoint)?;
         assert!(store
@@ -1218,6 +1223,7 @@ mod tests {
             .db
             .cf(RocksInodeStore::CF_ACCESS_CHECKPOINT_FORMAT)
             .is_ok());
+        assert!(store.db.cf(RocksInodeStore::CF_NATIVE_TRASH_FORMAT).is_ok());
         assert!(store.db.cf(RocksInodeStore::CF_HSM_FORMAT).is_ok());
         assert!(store.db.cf(RocksInodeStore::CF_NATIVE_FORMAT).is_ok());
         assert!(store.db.cf(RocksInodeStore::CF_NATIVE_GC_FORMAT).is_ok());
