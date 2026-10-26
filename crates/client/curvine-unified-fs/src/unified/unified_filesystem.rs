@@ -494,8 +494,11 @@ impl UnifiedFileSystem {
         ufs_path: &Path,
         mount: &MountValue,
     ) -> FsResult<Option<FallbackFsReader>> {
-        let mut blocks = match self.cv.get_block_locations(cv_path).await {
+        let mut blocks = match self.cv.get_unmanaged_read_blocks(cv_path).await {
             Ok(blocks) => blocks,
+            // An obsolete cached mount must not turn an HSM denial into UFS
+            // fallback (which could read a different generation).
+            Err(error @ FsError::Unsupported(_)) => return Err(error),
             Err(e) => {
                 if !matches!(e, FsError::FileNotFound(_) | FsError::Expired(_)) {
                     error!("failed to get block locations for {}: {}", cv_path, e)
@@ -1295,6 +1298,10 @@ impl FileSystem<UnifiedWriter, UnifiedReader> for UnifiedFileSystem {
         self.track("SetAttr", path.path(), "", fut).await
     }
 }
+
+#[cfg(test)]
+#[path = "unmanaged_read_tests.rs"]
+mod unmanaged_read_tests;
 
 #[cfg(test)]
 mod tests {

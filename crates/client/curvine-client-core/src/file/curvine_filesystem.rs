@@ -310,6 +310,11 @@ impl CurvineFileSystem {
         self.fs_client.get_block_locations(path).await
     }
 
+    /// Obtain an unmanaged cache-read layout; managed data requires open().
+    pub async fn get_unmanaged_read_blocks(&self, path: &Path) -> FsResult<FileBlocks> {
+        self.fs_client.get_unmanaged_read_blocks(path).await
+    }
+
     pub async fn get_filesystem_info(&self) -> FsResult<FilesystemInfo> {
         self.fs_client.get_filesystem_info().await
     }

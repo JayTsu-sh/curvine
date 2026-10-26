@@ -22,6 +22,10 @@ log = { workspace = true }
 once_cell = { workspace = true }
 tokio = { workspace = true }
 
+[dev-dependencies]
+curvine-rpc = { workspace = true }
+curvine-net = { workspace = true }
+
 [features]
 default = []
 opendal = ["dep:curvine-ufs-opendal"]

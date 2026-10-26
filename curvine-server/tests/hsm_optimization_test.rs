@@ -854,6 +854,13 @@ fn read_batches_keep_all_hot_inode_readers_until_committed_close() -> Result {
         // the committed outbox and actual Worker heartbeat acknowledgements.
         let current_path = Path::from_str("/after/many-blocks")?;
         assert!(legacy_block_locations(&fs,&current_path).await.is_err(), "raw managed open bypassed read protection");
+        assert!(matches!(
+            fs.get_unmanaged_read_blocks(&current_path).await,
+            Err(curvine_error::FsError::Unsupported(_))
+        ));
+        // Exercise qualified snapshot traversal through the real RPC/Raft path.
+        let snapshot = fs.get_cv_metadata_snapshot_page(None, Some(10_000)).await?;
+        assert!(snapshot.entries.iter().any(|entry| entry.status.path == current_path.path()));
         let old_layout = fs.get_block_locations(&current_path).await?;
         let mut writer = fs.open_for_write(&current_path, true).await?;
         writer.write(b"new layout").await?;

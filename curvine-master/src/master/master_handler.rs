@@ -485,8 +485,15 @@ impl MasterHandler {
             let input =
                 crate::master::meta::inode::InodePath::resolve(dir.root_ptr(), &path, &dir.store)?;
             if let Some(inode) = input.get_last_inode() {
-                if dir.hsm_record(inode.id())?.is_some() {
-                    return err_box!("managed reads require an HSM-aware SDK and a read grant");
+                // Also deny a native regular file before enrollment: a raw
+                // reader must not survive its later adoption without a grant.
+                let native_file = inode.as_file_ref().is_ok_and(|file| {
+                    file.file_type == curvine_model::FileType::File && !file.ufs_exists()
+                });
+                if dir.hsm_record(inode.id())?.is_some() || native_file {
+                    return Err(FsError::unsupported(
+                        "managed reads require an HSM-aware SDK and a read grant",
+                    ));
                 }
             }
         }
@@ -577,8 +584,34 @@ impl MasterHandler {
     ) -> FsResult<Message> {
         let req: GetCvMetadataSnapshotPageRequest = ctx.parse_header()?;
         ctx.set_audit(Some("cv-metadata-snapshot".to_string()), None);
-        let fs = self.fs.clone();
-        let response = Self::run_master_rpc_task(self.control_rpc_executor.clone(), move || {
+        let response = Self::read_cv_metadata_snapshot_page(
+            self.fs.clone(),
+            self.control_rpc_executor.clone(),
+            req,
+            ctx.msg.header_len().saturating_add(ctx.msg.data_len()),
+        )
+        .await?;
+        ctx.response(response)
+    }
+
+    async fn read_cv_metadata_snapshot_page(
+        fs: MasterFilesystem,
+        executor: Arc<GroupExecutor>,
+        req: GetCvMetadataSnapshotPageRequest,
+        request_bytes: usize,
+    ) -> FsResult<GetCvMetadataSnapshotPageResponse> {
+        let ticket = if fs.conf.hsm_enabled {
+            let reads = fs.fs_dir.read().hsm_metadata_reads.clone();
+            let mut ticket = reads.enqueue(fs.clone(), request_bytes).await?;
+            ticket.admitted().await?;
+            Some(ticket)
+        } else {
+            None
+        };
+        Self::run_master_rpc_task(executor, move || {
+            // The queued task owns its ticket through traversal. Dropping the
+            // RPC waiter cannot release authority over accepted blocking work.
+            let _ticket = ticket;
             let page = fs.cv_metadata_snapshot_page(
                 req.page_token,
                 req.page_size.unwrap_or(10_000) as usize,
@@ -596,8 +629,7 @@ impl MasterHandler {
                 epoch: page.epoch,
             })
         })
-        .await?;
-        ctx.response(response)
+        .await
     }
 
     fn process_get_filesystem_info(fs: MasterFilesystem) -> FsResult<FilesystemInfo> {
@@ -830,7 +862,7 @@ impl MasterHandler {
         ctx.set_audit(Some(request.path.to_string()), None);
 
         let path = Path::from_str(request.path)?;
-        let ret = self.mount_manager.get_mount_info(&path)?;
+        let ret = self.mount_manager.get_read_mount_info(&path)?;
         let rep_header = GetMountInfoResponse {
             mount_info: ret.map(ProtoUtils::mount_info_to_pb),
         };
@@ -1353,6 +1385,195 @@ mod tests {
     use crate::master::journal::JournalSystem;
     use curvine_model::WorkerAddress;
     use curvine_runtime::common::Utils;
+
+    #[test]
+    fn raw_layout_reads_refuse_native_adoption_and_keep_ufs_cache_inspection() -> FsResult<()> {
+        Master::init_test_metrics();
+        let root = tempfile::tempdir()?;
+        let mut conf = ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let mut fs = JournalSystem::fs_only_for_test(&conf)?;
+        let native = fs.create("/native", true)?;
+        let cached = fs.create("/cached", true)?;
+        {
+            let dir = fs.fs_dir.read();
+            let mut inode = dir.store.get_inode(cached.id, None)?.unwrap();
+            inode.as_file_mut()?.storage_policy.save_ufs(1);
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.write_inode(&inode)?;
+            batch.commit()?;
+            assert!(dir.hsm_record(native.id)?.is_none());
+        }
+        Arc::make_mut(&mut fs.conf).hsm_enabled = true;
+        fs.fs_dir.write().hsm_enabled = true;
+        assert!(matches!(
+            MasterHandler::process_get_block_locations(fs.clone(), "/native".into(), false),
+            Err(FsError::Unsupported(_))
+        ));
+        assert_eq!(
+            MasterHandler::process_get_block_locations(fs.clone(), "/native".into(), true)?
+                .status
+                .id,
+            native.id
+        );
+        assert_eq!(
+            MasterHandler::process_get_block_locations(fs.clone(), "/cached".into(), false)?
+                .status
+                .id,
+            cached.id
+        );
+        {
+            let dir = fs.fs_dir.read();
+            let inode = dir.store.get_inode(native.id, None)?.unwrap();
+            let record = crate::master::hsm::native_record(
+                &curvine_model::hsm::native::Namespace {
+                    ordinary_format: 2,
+                    root_inode: 9999,
+                    storage: "s".into(),
+                    incarnation: "n".into(),
+                    epoch: 1,
+                },
+                "/native",
+                inode.as_file_ref()?,
+                None,
+            )?
+            .unwrap();
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.hsm_put_record(native.id, &record)?;
+            batch.commit()?;
+        }
+        assert!(matches!(
+            MasterHandler::process_get_block_locations(fs.clone(), "/native".into(), false),
+            Err(FsError::Unsupported(_))
+        ));
+        Arc::make_mut(&mut fs.conf).hsm_enabled = false;
+        fs.fs_dir.write().hsm_enabled = false;
+        assert_eq!(
+            MasterHandler::process_get_block_locations(fs, "/native".into(), false)?
+                .status
+                .id,
+            native.id
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hsm_snapshot_waits_for_legacy_authority_and_rejects_unqualified_prefix() {
+        Master::init_test_metrics();
+        let root = tempfile::tempdir().unwrap();
+        let mut conf = ClusterConf::format();
+        conf.testing = true;
+        conf.journal.enable = false;
+        conf.master.meta_dir = root.path().join("meta").to_string_lossy().into_owned();
+        conf.journal.journal_dir = root.path().join("journal").to_string_lossy().into_owned();
+        let mut fs = JournalSystem::fs_only_for_test(&conf).unwrap();
+        fs.create("/visible", false).unwrap();
+        fs.master_monitor
+            .journal_ctl
+            .set_state(curvine_raft::raft::RoleState::Leader);
+        fs.master_monitor
+            .journal_term
+            .store(7, std::sync::atomic::Ordering::Release);
+        let executor = Arc::new(GroupExecutor::new("snapshot-qualification-test", 1, 2));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let page = MasterHandler::read_cv_metadata_snapshot_page(
+                fs.clone(),
+                executor.clone(),
+                GetCvMetadataSnapshotPageRequest::default(),
+                0,
+            )
+            .await
+            .unwrap();
+            assert!(page
+                .entries
+                .iter()
+                .any(|entry| entry.status.path == "/visible"));
+            Arc::make_mut(&mut fs.conf).hsm_enabled = true;
+            let gate = fs.fs_dir.read().hsm_mutation_gate.clone();
+            let legacy = gate.write().await;
+            let mut request = Box::pin(MasterHandler::read_cv_metadata_snapshot_page(
+                fs.clone(),
+                executor.clone(),
+                GetCvMetadataSnapshotPageRequest::default(),
+                0,
+            ));
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(25), &mut request)
+                    .await
+                    .is_err(),
+                "snapshot traversed the speculative namespace during a legacy turn"
+            );
+            drop(legacy);
+            let error = tokio::time::timeout(std::time::Duration::from_secs(5), request)
+                .await
+                .unwrap()
+                .unwrap_err();
+            assert!(matches!(error, FsError::NotLeaderMaster(_)));
+            assert!(error.to_string().contains("committed HSM journal"));
+        });
+    }
+
+    #[test]
+    fn queued_snapshot_task_keeps_authority_after_waiter_cancellation() {
+        use crate::master::authority_gate::AuthorityGate;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let executor = Arc::new(GroupExecutor::new("snapshot-queued-owner-test", 1, 2));
+        let (started, starting) = mpsc::channel();
+        let (resume, resumed) = mpsc::channel();
+        executor
+            .try_spawn(move || {
+                started.send(()).unwrap();
+                let _ = resumed.recv();
+            })
+            .unwrap();
+        starting.recv_timeout(Duration::from_secs(5)).unwrap();
+        let gate = Arc::new(AuthorityGate::default());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let authority = gate.read().await;
+            let (finished, finish) = tokio::sync::oneshot::channel();
+            let mut request = Box::pin(MasterHandler::run_master_rpc_task(
+                executor.clone(),
+                move || {
+                    let _authority = authority;
+                    let _ = finished.send(());
+                    Ok(())
+                },
+            ));
+            assert!(
+                tokio::time::timeout(Duration::from_millis(25), &mut request)
+                    .await
+                    .is_err()
+            );
+            drop(request);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(25), gate.write())
+                    .await
+                    .is_err(),
+                "canceling a queued RPC released its accepted task's authority"
+            );
+            resume.send(()).unwrap();
+            tokio::time::timeout(Duration::from_secs(5), finish)
+                .await
+                .unwrap()
+                .unwrap();
+            let _exclusive = tokio::time::timeout(Duration::from_secs(5), gate.write())
+                .await
+                .unwrap();
+        });
+    }
 
     #[test]
     fn process_worker_heartbeat_stores_worker_report_fields() {

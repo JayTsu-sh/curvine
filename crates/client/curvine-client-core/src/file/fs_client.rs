@@ -543,9 +543,19 @@ impl FsClient {
 
     /// Inspect layout metadata; use CurvineFileSystem::open for protected data reads.
     pub async fn get_block_locations(&self, path: &Path) -> FsResult<FileBlocks> {
+        self.block_locations(path, true).await
+    }
+
+    /// Obtain a layout for an unmanaged cache reader. HSM data is refused by
+    /// the Master even when the caller retains an obsolete UFS mount route.
+    pub async fn get_unmanaged_read_blocks(&self, path: &Path) -> FsResult<FileBlocks> {
+        self.block_locations(path, false).await
+    }
+
+    async fn block_locations(&self, path: &Path, metadata_only: bool) -> FsResult<FileBlocks> {
         let header = GetBlockLocationsRequest {
             path: path.encode(),
-            metadata_only: Some(true),
+            metadata_only: Some(metadata_only),
         };
 
         let rep: GetBlockLocationsResponse = self.rpc(RpcCode::GetBlockLocations, header).await?;

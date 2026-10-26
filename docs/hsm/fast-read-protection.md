@@ -46,6 +46,14 @@ Normal mutations through the same `FsContext` flush preceding closes before obta
 
 `GetBlockLocations.metadata_only=true` explicitly requests layout inspection and grants no read authority. Updated SDK metadata queries and transfer planning retain this operation. An old bare `GetBlockLocations` request against managed data is rejected so that an unaware SDK cannot obtain its default unprotected reader. Use `CurvineFileSystem::open` for managed data reads. Published private allocations continue to use their protected private Worker endpoint, rather than a native block lookup.
 
+UnifiedFS cache readers use `get_unmanaged_read_blocks` with `metadata_only=false`, retaining one layout RPC for an ordinary cache open. With HSM enabled the Master returns typed `Unsupported` for managed records and native regular files without UFS backing, including files not yet enrolled. UnifiedFS propagates this denial even if its cached mount route still points to an old UFS generation. Explicitly wrapping a managed reader in `FallbackFsReader` is also refused before reading cached bytes.
+
+UFS mounts cannot overlap managed HSM data or the reserved HSM namespace. New mounts and updates are checked before publication; restored and historically replayed mounts are checked before external routing is returned. An incompatible persisted mount makes the mount-table RPC fail until an operator unmounts it; unmount remains available. Choose an unmanaged subtree for UFS caching. Ordinary unmanaged UFS-backed files and HSM-disabled operation retain their existing behavior.
+
+`GetCvMetadataSnapshotPage` also uses qualified metadata admission when HSM is enabled. Its blocking traversal owns the read ticket while queued and running, including after RPC cancellation. Page tokens remain opaque path strings, compared by path components to match the name-sorted depth-first traversal; punctuation and multibyte sibling names cannot disappear between pages. Each page has its own qualified read; pagination does not freeze concurrent namespace changes across multiple requests.
+
+Snapshot pages retain offline and private-layout file status with no ordinary block layout (`blocks=None`). Their presence does not invoke an ordinary data read or prevent enumeration of the rest of the namespace. Database errors and errors resolving an ordinary native layout remain explicit.
+
 ## Metadata lookup cost
 
 Protected opens cache derived block-to-worker mappings in a bounded 65,536-block LRU. A committed location update refreshes just its changed block IDs from RocksDB before the writer returns; unaffected mappings remain cached. Uncommitted batches leave the cache intact. Worker availability and endpoints are resolved against the current Worker manager on every open.

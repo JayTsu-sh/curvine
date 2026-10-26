@@ -194,6 +194,16 @@ impl FsReader {
     pub fn file_blocks(&self) -> &FileBlocks {
         &self.file_blocks
     }
+
+    /// Refuse wrappers that cannot preserve HSM grant and cached-read checks.
+    pub fn ensure_unmanaged_read(&self) -> FsResult<()> {
+        if self.hsm.is_some() {
+            return Err(curvine_error::FsError::unsupported(
+                "managed HSM readers cannot use UFS fallback",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Reader for FsReader {

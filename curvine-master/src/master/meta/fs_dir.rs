@@ -38,6 +38,9 @@ use std::sync::Arc;
 
 const MODE_SETGID: u32 = 0o2000;
 
+#[cfg(feature = "hsm-scale-test")]
+type LifecycleTestPause = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+
 /// Note: The modification operation uses &mut self, which is a necessary improvement. We use the unsafe API to perform modifications.
 pub struct FsDir {
     pub(crate) hsm_replaying: bool,
@@ -51,8 +54,7 @@ pub struct FsDir {
     #[cfg(feature = "hsm-scale-test")]
     pub(crate) native_test_drop_receipt: Option<String>,
     #[cfg(feature = "hsm-scale-test")]
-    pub(crate) lifecycle_test_pauses:
-        Option<dashmap::DashMap<String, (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
+    pub(crate) lifecycle_test_pauses: Option<dashmap::DashMap<String, LifecycleTestPause>>,
     pub(crate) native_coordinator: Arc<crate::master::committed::NativeCoordinator>,
     pub(crate) native_local_apply: Arc<
         dashmap::DashMap<

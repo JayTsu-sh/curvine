@@ -168,6 +168,7 @@ impl Reader for FallbackFsReader {
     }
 
     async fn read_chunk0(&mut self) -> FsResult<DataSlice> {
+        self.cv_reader.ensure_unmanaged_read()?;
         // Already fallen back to UFS — read directly, no retry to Curvine.
         if let Some(ufs) = &mut self.ufs_reader {
             return ufs.read_chunk0().await;
@@ -211,6 +212,20 @@ impl Reader for FallbackFsReader {
 
             Err(e) => Err(e),
         }
+    }
+
+    async fn read_chunk(&mut self, len: Option<usize>) -> FsResult<DataSlice> {
+        self.cv_reader.ensure_unmanaged_read()?;
+        if self.chunk_mut().is_empty() {
+            *self.chunk_mut() = self.read_chunk0().await?;
+        }
+        let read_len = len.map_or(self.chunk_mut().len(), |len| {
+            len.min(self.chunk_mut().len())
+        });
+        if read_len == 0 {
+            return Ok(DataSlice::empty());
+        }
+        Ok(self.chunk_mut().split_to(read_len))
     }
 
     async fn seek(&mut self, pos: i64) -> FsResult<()> {

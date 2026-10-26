@@ -101,6 +101,13 @@ fn snapshot_token_in_subtree(token: &str, subtree_path: &str) -> bool {
                 .unwrap_or(false))
 }
 
+fn snapshot_path_order(left: &str, right: &str) -> std::cmp::Ordering {
+    // Children are name-sorted and a directory precedes all descendants.
+    // Comparing whole paths would put `/a.txt` before `/a/z` even though the
+    // walk visits it afterwards, causing a path cursor to skip that sibling.
+    left.split(PATH_SEPARATOR).cmp(right.split(PATH_SEPARATOR))
+}
+
 pub(super) enum BackgroundScope {
     Namespace,
     Locations,
@@ -1143,19 +1150,37 @@ impl MasterFilesystem {
             return Ok(());
         }
         if let Some(token) = start_after {
-            if path != "/" && token > path && !snapshot_token_in_subtree(token, path) {
+            if path != "/"
+                && snapshot_path_order(token, path).is_gt()
+                && !snapshot_token_in_subtree(token, path)
+            {
                 return Ok(());
             }
         }
 
         let resolved = self.resolve_snapshot_inode(fs_dir, inode)?;
-        if start_after.map(|token| path > token).unwrap_or(true) {
+        if start_after
+            .map(|token| snapshot_path_order(path, token).is_gt())
+            .unwrap_or(true)
+        {
             let status = resolved.to_file_status(path)?;
             let blocks = if let Ok(file) = resolved.as_file_ref() {
-                Some(FileBlocks::new(
-                    status.clone(),
-                    self.get_block_locs(path, fs_dir, file)?,
-                ))
+                let non_native_layout = fs_dir.hsm_enabled
+                    && fs_dir.hsm_record(file.id)?.is_some_and(|record| {
+                        !record.native_blocks
+                            || record.state.residency
+                                == curvine_model::hsm::native::Residency::Offline
+                    });
+                if non_native_layout {
+                    // Metadata enumeration must retain offline/private files,
+                    // which have no ordinary native read layout to advertise.
+                    None
+                } else {
+                    Some(FileBlocks::new(
+                        status.clone(),
+                        self.get_block_locs(path, fs_dir, file)?,
+                    ))
+                }
             } else {
                 None
             };
@@ -2658,6 +2683,101 @@ mod tests {
         assert_eq!(file.status.id, source.id);
         assert!(link.blocks.is_some());
         assert!(file.blocks.is_some());
+    }
+
+    #[test]
+    fn cv_metadata_snapshot_pagination_matches_component_order() {
+        let fs = test_fs("snapshot-page-component-order");
+        for path in [
+            "/a/z", "/a.txt", "/a-1", "/a0", "/树/叶", "/树.txt", "/树-1", "/树0", "/é/中",
+            "/é.txt",
+        ] {
+            fs.create(path, true).unwrap();
+        }
+        let expected = [
+            "/", "/a", "/a/z", "/a-1", "/a.txt", "/a0", "/é", "/é/中", "/é.txt", "/树", "/树/叶",
+            "/树-1", "/树.txt", "/树0",
+        ];
+        let full = fs.cv_metadata_snapshot_page(None, 100).unwrap();
+        let full_paths: Vec<_> = full
+            .entries
+            .into_iter()
+            .map(|entry| entry.status.path)
+            .collect();
+        assert_eq!(full_paths, expected);
+        for page_size in [1, 2, 3] {
+            let mut token = None;
+            let mut paths = vec![];
+            let mut pages = 0;
+            loop {
+                pages += 1;
+                assert!(
+                    pages <= expected.len(),
+                    "snapshot pagination did not finish"
+                );
+                let page = fs.cv_metadata_snapshot_page(token, page_size).unwrap();
+                assert!(page.entries.len() <= page_size);
+                paths.extend(page.entries.into_iter().map(|entry| entry.status.path));
+                match page.next_page_token {
+                    Some(next) => token = Some(next),
+                    None => break,
+                }
+            }
+            assert_eq!(
+                paths, full_paths,
+                "page size {page_size} lost or repeated an inode"
+            );
+        }
+    }
+
+    #[test]
+    fn cv_metadata_snapshot_keeps_offline_and_private_files_without_native_layouts() {
+        use curvine_model::hsm::native::{Namespace, Residency};
+
+        let fs = test_fs("snapshot-managed-layouts");
+        fs.create("/ordinary", true).unwrap();
+        let namespace = Namespace {
+            ordinary_format: 2,
+            root_inode: 9999,
+            storage: "s".into(),
+            incarnation: "n".into(),
+            epoch: 1,
+        };
+        for (path, private) in [("/offline", false), ("/private", true)] {
+            let status = fs.create(path, true).unwrap();
+            let dir = fs.fs_dir.read();
+            let inode = dir.store.get_inode(status.id, None).unwrap().unwrap();
+            let mut record = crate::master::hsm::native_record(
+                &namespace,
+                path,
+                inode.as_file_ref().unwrap(),
+                None,
+            )
+            .unwrap()
+            .unwrap();
+            if private {
+                record.native_blocks = false;
+            } else {
+                record.state.residency = Residency::Offline;
+            }
+            let mut batch = dir.get_rocks_store().new_batch();
+            batch.hsm_put_record(status.id, &record).unwrap();
+            batch.commit().unwrap();
+        }
+        fs.fs_dir.write().hsm_enabled = true;
+        let page = fs.cv_metadata_snapshot_page(None, 100).unwrap();
+        for path in ["/offline", "/private", "/ordinary"] {
+            let entry = page
+                .entries
+                .iter()
+                .find(|entry| entry.status.path == path)
+                .unwrap();
+            assert!(!entry.status.is_dir);
+            assert_eq!(entry.blocks.is_some(), path == "/ordinary");
+        }
+        // Snapshot enumeration does not relax the data-read guard.
+        assert!(fs.get_block_locations("/offline").is_err());
+        assert!(fs.get_block_locations("/private").is_err());
     }
 
     #[test]
